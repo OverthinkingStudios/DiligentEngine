@@ -10,3 +10,7 @@
 [submodule "DiligentFX"]
 	path = DiligentFX
 	url = https://github.com/DiligentGraphics/DiligentFX.git
+[submodule "Earthworks"]
+	path = Earthworks
+	url = https://github.com/OverthinkingStudios/Earthworks.git
+	branch = main
