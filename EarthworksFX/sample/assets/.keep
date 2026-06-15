@@ -1,0 +1,3 @@
+Placeholder so add_sample_app has an assets directory to copy. Terrain shaders
+are copied from EarthworksFX/shaders next to the executable by the sample's
+POST_BUILD step.

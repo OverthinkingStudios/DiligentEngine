@@ -63,3 +63,9 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/DiligentCommunity")
     add_subdirectory(DiligentCommunity)
 endif()
+
+# --- Earthworks terrain port (additions-only fork change) -------------------
+option(DILIGENT_BUILD_EARTHWORKSFX "Build EarthworksFX terrain integration" ON)
+if(DILIGENT_BUILD_EARTHWORKSFX AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/EarthworksFX/CMakeLists.txt")
+    add_subdirectory(EarthworksFX)
+endif()
