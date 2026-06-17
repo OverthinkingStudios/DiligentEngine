@@ -4,8 +4,25 @@
 
 #include "TerrainSystemImpl.hpp"
 
+#include <glm/glm.hpp>
+
 namespace earthworksfx
 {
+
+namespace
+{
+// Diligent stores matrices row-major with a row-vector convention (v * M); glm
+// is column-major with M * v. Transposing on copy makes the two equivalent, so
+// the quadtree's glm math reproduces the same view/clip-space transforms.
+glm::mat4 ToGlm(const Diligent::float4x4& m)
+{
+    glm::mat4 g;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            g[c][r] = m.m[r][c];
+    return g;
+}
+} // namespace
 
 TerrainSystem::TerrainSystem() :
     m_Impl(std::make_unique<Impl>())
@@ -27,9 +44,9 @@ void TerrainSystem::LoadProject(const char* settingsPath)
         m_Impl->elevation.loadCatalog(settingsPath);
 }
 
-void TerrainSystem::Update(IDeviceContext* pContext, const float4x4& viewProj, const float3& camPos)
+void TerrainSystem::Update(IDeviceContext* pContext, const float4x4& view, const float4x4& proj, const float3& camPos)
 {
-    m_Impl->Update(pContext, viewProj, camPos);
+    m_Impl->Update(pContext, view, proj, camPos);
 }
 
 void TerrainSystem::Render(IDeviceContext* pContext, const TerrainFrameAttribs& Attribs)
@@ -37,27 +54,31 @@ void TerrainSystem::Render(IDeviceContext* pContext, const TerrainFrameAttribs& 
     m_Impl->Render(pContext, Attribs);
 }
 
+TerrainView TerrainSystem::GetView() const
+{
+    // Terrain is centered on the XZ origin (see TileBakePipeline / render_Tiles).
+    TerrainView v;
+    v.Center    = float3{0.f, m_Impl->centerHeight, 0.f};
+    v.WorldSize = m_Impl->worldSize;
+    v.MinHeight = m_Impl->minHeight;
+    v.MaxHeight = m_Impl->maxHeight;
+    return v;
+}
+
 // ---------------------------------------------------------------------------
 
-void TerrainSystem::Impl::Update(IDeviceContext* /*ctx*/, const float4x4& /*viewProj*/, const float3& /*camPos*/)
+void TerrainSystem::Impl::Update(IDeviceContext* /*ctx*/, const float4x4& view, const float4x4& proj, const float3& camPos)
 {
-    // Phase 1: bake the single static LOD-0 tile once, through the GPU sink so
-    // the Earthworks <-> EarthworksFX seam is exercised. Later phases drive the
-    // earthworks::TerrainQuadtree here and bake on split.
-    if (!bakedOnce)
-    {
-        earthworks::TileBakeRequest req{};
-        req.tileIndex    = kPhase1TileIdx;
-        req.lod          = 0;
-        req.x            = 0;
-        req.y            = 0;
-        req.elevationHash = 0;
-        req.imageHash     = 0;
-        req.neighborLodN = req.neighborLodE = req.neighborLodS = req.neighborLodW = -1;
+    // Feed the camera to the quadtree and run one LOD pass. New tiles created by
+    // a split are baked immediately through the GPU sink (one split per pass,
+    // matching the original cadence); merged tiles free their pool slots.
+    quadtree.clearCameras();
+    quadtree.setCamera(earthworks::CameraSlot_MainCenter,
+                       ToGlm(view), ToGlm(proj),
+                       glm::vec3{camPos.x, camPos.y, camPos.z},
+                       true, screenResolution);
 
-        static_cast<earthworks::ITileBakeSink*>(sinks.get())->Bake(req);
-        bakedOnce = true;
-    }
+    quadtree.update(sinks.get());
 }
 
 } // namespace earthworksfx

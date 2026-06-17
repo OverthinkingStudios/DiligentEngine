@@ -1,6 +1,14 @@
 // Jump-flood the sparse vertex seeds so every cell in the half-res grid points
 // at its nearest seed. Ported from
 // docs/source_extract/shaders/compute_tileJumpFlood.hlsl (debug output removed).
+//
+// Ping-pong rule (do not "fix" this): a thread only writes gOutVerts when it
+// finds a nearer seed in the step neighbourhood. Cells that are not written
+// keep whatever is already in the output texture — pass 2 retains vertex seeds
+// still in texVertsA; pass 3 retains pass-1 flood values still in texVertsB.
+// The first pass (step==4) into texVertsB must explicitly stamp 0 when no seed
+// is reachable so a prior tile bake cannot leave stale indices in the shared
+// ping-pong surfaces.
 
 #include "terrainDefines.hlsli"
 #include "terrainFunctions.hlsli"
@@ -38,4 +46,9 @@ void main(int2 crd : SV_DispatchThreadId)
             }
         }
     }
+
+    // First pass only (A->B, step==4): purge stale texVertsB from the previous
+    // tile bake. Later passes rely on unwritten cells retaining prior contents.
+    if (smallest >= 500000 && step == 4)
+        gOutVerts[crd] = 0;
 }

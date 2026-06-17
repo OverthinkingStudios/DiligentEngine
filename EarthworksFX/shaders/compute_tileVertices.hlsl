@@ -35,6 +35,11 @@ bool testPixel(const int2 crd, const uint size, const float cutoff)
 [numthreads(tile_cs_ThreadSize, tile_cs_ThreadSize, 1)]
 void main(int2 coord : SV_DispatchThreadId)
 {
+    // texVertsA is shared across all tile bakes; zero before seeding so a prior
+    // bake cannot leave stale indices that delaunay would connect to (0, 0).
+    if (coord.x < 128 && coord.y < 128)
+        gOutVerts[coord] = 0;
+
     if (coord.x == 0 && coord.y == 0)
     {
         uint  tileIdx      = (uint)constants.w;

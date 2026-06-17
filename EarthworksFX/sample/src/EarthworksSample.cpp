@@ -52,11 +52,22 @@ void EarthworksSample::Initialize(const SampleInitInfo& InitInfo)
     ci.WorldSize   = m_WorldSize;
     m_Terrain.Initialize(ci);
 
-    // Look down at the centered tile from a corner.
-    m_Camera.SetPos(float3{-m_WorldSize * 0.6f, m_WorldSize * 0.5f, -m_WorldSize * 0.6f});
-    m_Camera.SetRotation(PI_F * 0.25f, -0.5f);
-    m_Camera.SetMoveSpeed(m_WorldSize * 0.5f);
+    // Frame the camera on the real terrain: look at its center, sitting at 1.5x
+    // the center elevation, pulled back along the XZ diagonal so the whole tile
+    // is in view. Avoids the previous "hunt for the terrain" with a too-fast,
+    // hyper-sensitive camera. (Terrain is centered on the XZ origin.)
+    const earthworksfx::TerrainView view = m_Terrain.GetView();
+    if (view.WorldSize > 0.f)
+        m_WorldSize = view.WorldSize;
+
+    const float3 target = view.Center;            // (0, centerElevation, 0)
+    const float  camY   = view.Center.y * 1.5f;   // camera height = 1.5x center elevation
+    const float  back   = m_WorldSize * 0.6f;     // pull back to frame the tile
+    m_Camera.SetPos(float3{target.x - back, camY, target.z - back});
+    m_Camera.SetLookAt(target);                   // orient toward the center
+    m_Camera.SetMoveSpeed(m_WorldSize * 0.15f);
     m_Camera.SetSpeedUpScales(5.f, 10.f);
+    m_Camera.SetRotationSpeed(0.0025f);           // calmer mouse (default 0.01 felt hyper-sensitive)
 
     UpdateProjection();
 }
@@ -89,7 +100,7 @@ void EarthworksSample::Render()
     const float4x4 viewProj = view * proj;
     const float3   camPos   = m_Camera.GetPos();
 
-    m_Terrain.Update(m_pImmediateContext, viewProj, camPos);
+    m_Terrain.Update(m_pImmediateContext, view, proj, camPos);
 
     ITextureView* pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
     ITextureView* pDSV = m_pSwapChain->GetDepthBufferDSV();

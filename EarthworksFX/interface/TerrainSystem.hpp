@@ -35,6 +35,17 @@ struct TerrainInitInfo
     float WorldSize = 2000.0f;
 };
 
+// Framing info for the loaded terrain, in render world space. The terrain is
+// centered on the XZ origin and spans [-WorldSize/2, +WorldSize/2]; Center.y is
+// the elevation at the terrain center. Valid after Initialize().
+struct TerrainView
+{
+    Diligent::float3 Center{0, 0, 0}; // world center, Center.y = center elevation
+    float            WorldSize = 0.f; // horizontal extent (meters)
+    float            MinHeight = 0.f;
+    float            MaxHeight = 0.f;
+};
+
 struct TerrainFrameAttribs
 {
     Diligent::ITextureView* pColorRTV = nullptr;
@@ -59,11 +70,15 @@ public:
     // Load an Earthworks project (settings + catalogs). Optional for phase 1.
     void LoadProject(const char* settingsPath);
 
-    // CPU-side per-frame work (LOD pass / bake scheduling).
-    void Update(Diligent::IDeviceContext* pContext, const Diligent::float4x4& viewProj, const Diligent::float3& camPos);
+    // CPU-side per-frame work (LOD pass / bake scheduling). Takes view and proj
+    // separately so the quadtree can run its screen-space-error LOD heuristic.
+    void Update(Diligent::IDeviceContext* pContext, const Diligent::float4x4& view, const Diligent::float4x4& proj, const Diligent::float3& camPos);
 
     // GPU per-frame: clear -> build indirect args -> indirect draw.
     void Render(Diligent::IDeviceContext* pContext, const TerrainFrameAttribs& Attribs);
+
+    // Terrain extent + center elevation for camera framing. Valid after Initialize().
+    TerrainView GetView() const;
 
     // Opaque internal state (defined in TerrainSystemImpl.hpp). Public so the
     // EarthworksFX-internal GPU sinks can name it; instances stay private.

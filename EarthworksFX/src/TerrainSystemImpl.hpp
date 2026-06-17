@@ -26,6 +26,7 @@
 #include "earthworks/TerrainTypes.h"
 #include "earthworks/IGpuSinks.hpp"
 #include "earthworks/ElevationLoader.hpp"
+#include "earthworks/TerrainQuadtree.hpp"
 
 #include "TerrainSystem.hpp"
 
@@ -111,8 +112,12 @@ struct TerrainSystem::Impl
     void BakeTile(const earthworks::TileBakeRequest& req);
 
     // --- per frame (TerrainDrawPass.cpp / TerrainSystem.cpp) ---
-    void Update(IDeviceContext* ctx, const float4x4& viewProj, const float3& camPos);
+    void Update(IDeviceContext* ctx, const float4x4& view, const float4x4& proj, const float3& camPos);
     void Render(IDeviceContext* ctx, const TerrainFrameAttribs& attribs);
+
+    // GPU tile-pool slot for a quadtree node. Slot 0 is reserved (build-lookup
+    // skips it), so the CPU quadtree index maps to GPU slot index+1.
+    static uint32_t GpuSlot(uint32_t quadtreeIndex) { return quadtreeIndex + 1; }
 
     // --- device / config ---
     RefCntAutoPtr<IRenderDevice>                   device;
@@ -126,9 +131,18 @@ struct TerrainSystem::Impl
     std::string dataDir;
     float       worldSize = 2000.0f;
 
-    static constexpr uint32_t kNumTiles      = 4;   // small phase-1 pool
+    // Terrain framing, filled by UploadRootElevation (see TerrainSystem::GetView).
+    float centerHeight = 0.f;
+    float minHeight    = 0.f;
+    float maxHeight    = 0.f;
+
+    // GPU tile pool. Slot 0 is reserved (build-lookup skips it); the CPU quadtree
+    // owns kPoolSize nodes mapped to GPU slots 1..kPoolSize. kNumTiles must stay
+    // < 1000 (build-lookup guard) and bounds GPU memory (per slot: ~512 KB normals
+    // array slice + 256 KB vertex buffer).
+    static constexpr uint32_t kNumTiles      = 256;
+    static constexpr uint32_t kPoolSize      = kNumTiles - 1;
     static constexpr uint32_t kRootElevSize  = 1024;
-    static constexpr uint32_t kPhase1TileIdx = 1;   // >0 (build-lookup skips slot 0)
 
     // --- compute passes ---
     ComputePass bicubic;
@@ -175,9 +189,14 @@ struct TerrainSystem::Impl
 
     // --- domain ---
     earthworks::ElevationLoader elevation;
+    earthworks::TerrainQuadtree quadtree{kPoolSize};
     std::unique_ptr<GpuSinks>   sinks;
 
-    bool bakedOnce = false;
+    // Root tile world placement (terrain centered on the XZ origin).
+    float rootOriginX = 0.f;
+    float rootOriginZ = 0.f;
+    // Approximate viewport height used by the LOD screen-space-error metric.
+    float screenResolution = 1080.f;
 };
 
 // earthworks GPU sinks implemented by EarthworksFX.

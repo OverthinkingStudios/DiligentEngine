@@ -3,6 +3,7 @@
 
 #include "TerrainSystemImpl.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -44,7 +45,27 @@ void TerrainSystem::Impl::Initialize(const TerrainInitInfo& Info)
 
     CreateGpuResources();
     LoadShaders();
-    UploadRootElevation();
+    UploadRootElevation(); // may adopt the real LOD-0 world extent into worldSize
+
+    // Seed the quadtree with the LOD-0 root tile (terrain centered on XZ origin)
+    // and bake it so something draws before the first split.
+    rootOriginX = -worldSize * 0.5f;
+    rootOriginZ = -worldSize * 0.5f;
+    quadtree.initialize(worldSize, glm::vec3{rootOriginX, 0.f, rootOriginZ});
+    quadtree.setMaxLod(8); // bounds refinement against the GPU tile pool
+
+    if (earthworks::QuadtreeTile* root = quadtree.root())
+    {
+        earthworks::TileBakeRequest req{};
+        req.tileIndex     = root->index;
+        req.lod           = root->lod;
+        req.x             = root->x;
+        req.y             = root->y;
+        req.elevationHash = root->elevationHash;
+        req.imageHash     = root->imageHash;
+        req.neighborLodN = req.neighborLodE = req.neighborLodS = req.neighborLodW = -1;
+        static_cast<earthworks::ITileBakeSink*>(sinks.get())->Bake(req);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -122,8 +143,9 @@ void TerrainSystem::Impl::CreateGpuResources()
     texNormals = makeTex2D("Terrain.tileNormals", TEX_FORMAT_RGBA16_FLOAT, w, w,
                            BIND_UNORDERED_ACCESS | BIND_SHADER_RESOURCE, 1, nullptr);
 
-    // Vertex maps are zero-initialized (phase 1 bakes once; jump-flood relies on
-    // unseeded cells starting at 0).
+    // Vertex maps are zero-initialized; compute_tileVertices also clears texVertsA
+    // at the start of every bake because the ping-pong targets are shared across
+    // the whole tile pool.
     std::vector<uint16_t> zeros(static_cast<size_t>(hw) * hw, 0);
     texVertsA = makeTex2D("Terrain.vertsA", TEX_FORMAT_R16_UINT, hw, hw,
                           BIND_UNORDERED_ACCESS | BIND_SHADER_RESOURCE, 1, zeros.data());
@@ -338,7 +360,13 @@ void TerrainSystem::Impl::UploadRootElevation()
     bool                 loaded  = false;
 
     if (!dataDir.empty() && elevation.loadCatalog(dataDir))
+    {
         loaded = elevation.loadRootElevation(heights, srcSize);
+        // Render the root tile at its true world extent (manifest LOD-0 size),
+        // not the placeholder default, so the camera framing matches reality.
+        if (loaded && elevation.rootWorldSize() > 0.f)
+            worldSize = elevation.rootWorldSize();
+    }
 
     if (!loaded)
     {
@@ -360,6 +388,20 @@ void TerrainSystem::Impl::UploadRootElevation()
                 h += 12.f * std::sin(u * twoPi * 13.0f + 2.1f) * std::cos(v * twoPi * 11.0f);
                 heights[static_cast<size_t>(y) * N + x] = h + 200.f;
             }
+        }
+    }
+
+    // Framing stats from the (real or procedural) root grid. The center texel
+    // maps to the terrain center (world XZ origin); see render_Tiles placement.
+    if (srcSize > 0 && !heights.empty())
+    {
+        const size_t centerIdx = (static_cast<size_t>(srcSize) / 2) * srcSize + (srcSize / 2);
+        centerHeight           = heights[centerIdx];
+        minHeight = maxHeight = heights[0];
+        for (float h : heights)
+        {
+            minHeight = std::min(minHeight, h);
+            maxHeight = std::max(maxHeight, h);
         }
     }
 
