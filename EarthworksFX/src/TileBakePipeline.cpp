@@ -58,22 +58,26 @@ void TerrainSystem::Impl::BakeTile(const earthworks::TileBakeRequest& req)
     };
 
     // --- elevation bicubic -> texHeight ---
-    // The source is the whole-world root elevation texture; this tile samples the
-    // sub-region [origin, origin+tileSize] of it. (Once JP2 streaming lands, the
-    // source swaps to the decoded per-tile texture with elevSize = tileSize and
-    // offset 0 — see docs/terrain/05-real-terrain-data.md step 3.)
     {
         MapHelper<BicubicConstants> c(ctx, cbBicubic, MAP_WRITE, MAP_FLAG_DISCARD);
-        const float elevSize = worldSize;
-        const float S        = pixelSize / elevSize;
-        c->offset[0]  = (originX - rootOriginX) / elevSize; // = x / 2^lod
-        c->offset[1]  = (originZ - rootOriginZ) / elevSize; // = y / 2^lod
-        c->size[0]    = S;
-        c->size[1]    = S;
-        c->hgt_offset = 0.f;
-        c->hgt_scale  = 1.f;
-        c->isHeight   = 1;
-        c->pad0       = 0.f;
+        BicubicConstants bc{};
+        if (!BindElevationForBake(req, bc, pixelSize))
+        {
+            // No JP2 entry / decode: fall back to the LOD-0 root grid sub-region.
+            const float elevSize = worldSize;
+            const float S        = pixelSize / elevSize;
+            bc.offset[0]         = (originX - rootOriginX) / elevSize;
+            bc.offset[1]         = (originZ - rootOriginZ) / elevSize;
+            bc.size[0]           = S;
+            bc.size[1]           = S;
+            bc.hgt_offset        = 0.f;
+            bc.hgt_scale         = 1.f;
+            bc.useRoot           = 1;
+            bc.inputSlice        = 0;
+        }
+        bc.isHeight = 1;
+        bc.pad0     = 0;
+        *c          = bc;
     }
     dispatch(bicubic, csW, csW);
 

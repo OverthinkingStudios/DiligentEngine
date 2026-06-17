@@ -12,6 +12,12 @@ project(EarthworksFX CXX)
 # is earthworks/IGpuSinks.hpp.
 # ============================================================================
 
+# Pull in Earthworks (with optional OpenJPH for JP2 elevation streaming).
+option(EARTHWORKSFX_ENABLE_OPENJPH "Enable JP2 elevation decode via OpenJPH" ON)
+if(EARTHWORKSFX_ENABLE_OPENJPH)
+    set(EARTHWORKS_WITH_OPENJPH ON CACHE BOOL "Enable OpenJPH in Earthworks" FORCE)
+endif()
+
 # Earthworks is checked out as a top-level submodule of the fork (see
 # .gitmodules). Pull it in if a parent project has not already done so.
 if(NOT TARGET Earthworks)
@@ -25,6 +31,7 @@ file(GLOB EFX_SHADERS CONFIGURE_DEPENDS
 add_library(EarthworksFX STATIC
     src/TerrainSystem.cpp
     src/TerrainInit.cpp
+    src/TerrainElevationCache.cpp
     src/TileBakePipeline.cpp
     src/TerrainDrawPass.cpp
     src/GpuSinksImpl.cpp

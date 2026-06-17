@@ -1,12 +1,17 @@
 // Bicubic resample of the source elevation into the per-tile 256x256 height
 // texture. Ported from docs/source_extract/shaders/compute_tileBicubic.hlsl,
 // height (isHeight==1) path only — the orthophoto/albedo path is a later phase.
+//
+// gInputRoot (R32F LOD-0 grid) and gInputTiles (R16 JP2 cache array) are bound
+// once; per-tile selection is via useRoot / inputSlice in the cbuffer so bakes do
+// not rebind the SRB (which would allocate Vulkan descriptors from the dynamic heap).
 
 #include "terrainDefines.hlsli"
 
-SamplerState        linearSampler;
-Texture2D<float>    gInput;
-RWTexture2D<float>  gOutput;
+SamplerState           linearSampler;
+Texture2D<float>       gInputRoot;
+Texture2DArray<float>  gInputTiles;
+RWTexture2D<float>     gOutput;
 
 cbuffer gConstants
 {
@@ -15,8 +20,17 @@ cbuffer gConstants
     float  hgt_offset;
     float  hgt_scale;
     int    isHeight;
-    float  _pad0;
+    int    useRoot;
+    int    inputSlice;
+    int    _pad0;
 };
+
+float sampleInput(float2 uv)
+{
+    if (useRoot != 0)
+        return gInputRoot.SampleLevel(linearSampler, uv, 0).r;
+    return gInputTiles.SampleLevel(linearSampler, float3(uv, inputSlice), 0).r;
+}
 
 float4 cubic(float v)
 {
@@ -32,8 +46,15 @@ float4 cubic(float v)
 [numthreads(tile_cs_ThreadSize, tile_cs_ThreadSize, 1)]
 void main(int2 crd : SV_DispatchThreadId)
 {
-    float2 texSize;
-    gInput.GetDimensions(texSize.x, texSize.y);
+    uint w, h;
+    if (useRoot != 0)
+        gInputRoot.GetDimensions(w, h);
+    else
+    {
+        uint slices;
+        gInputTiles.GetDimensions(w, h, slices);
+    }
+    float2 texSize = float2(w, h);
     float2 invTexSize = 1.0 / texSize;
 
     float2 iTc = ((crd - 4.0) * size + offset) * texSize - 0.5;
@@ -51,10 +72,10 @@ void main(int2 crd : SV_DispatchThreadId)
 
     offsetB *= invTexSize.xxyy;
 
-    float sample0 = gInput.SampleLevel(linearSampler, offsetB.xz, 0).r;
-    float sample1 = gInput.SampleLevel(linearSampler, offsetB.yz, 0).r;
-    float sample2 = gInput.SampleLevel(linearSampler, offsetB.xw, 0).r;
-    float sample3 = gInput.SampleLevel(linearSampler, offsetB.yw, 0).r;
+    float sample0 = sampleInput(offsetB.xz);
+    float sample1 = sampleInput(offsetB.yz);
+    float sample2 = sampleInput(offsetB.xw);
+    float sample3 = sampleInput(offsetB.yw);
 
     float sx = s.x / (s.x + s.y);
     float sy = s.z / (s.z + s.w);

@@ -12,11 +12,9 @@ void GpuSinks::Bake(const earthworks::TileBakeRequest& req)
     m_Owner->BakeTile(req);
 }
 
-void GpuSinks::Upload(uint32_t /*hash*/, const earthworks::DecodedImage& /*img*/)
+void GpuSinks::Upload(uint32_t hash, const earthworks::DecodedImage& img)
 {
-    // Phase 1 synthesizes / loads the root elevation directly in
-    // TerrainInit.cpp::UploadRootElevation. Streaming decoded JP2 tiles into a
-    // GPU elevation cache is a later phase.
+    m_Owner->UploadElevation(hash, img);
 }
 
 } // namespace earthworksfx

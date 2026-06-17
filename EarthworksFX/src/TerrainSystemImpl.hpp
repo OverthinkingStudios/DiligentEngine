@@ -8,8 +8,10 @@
 
 #include <array>
 #include <cstdint>
+#include <list>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "RefCntAutoPtr.hpp"
@@ -44,9 +46,11 @@ struct BicubicConstants
     float hgt_offset;
     float hgt_scale;
     int   isHeight;
-    float pad0;
+    int   useRoot;     // 1 = gInputRoot, 0 = gInputTiles[inputSlice]
+    int   inputSlice;
+    int   pad0;
 };
-static_assert(sizeof(BicubicConstants) == 32, "BicubicConstants cbuffer layout");
+static_assert(sizeof(BicubicConstants) == 40, "BicubicConstants cbuffer layout");
 
 struct NormalsConstants
 {
@@ -96,6 +100,23 @@ struct ComputePass
 
 class GpuSinks; // fwd
 
+// LRU slice allocator for arrElevationCache (hash -> array slice index).
+struct ElevationSlicePool
+{
+    struct Entry
+    {
+        uint32_t hash;
+        uint32_t slice;
+    };
+
+    std::list<Entry>                                          order;
+    std::unordered_map<uint32_t, std::list<Entry>::iterator> map;
+    uint32_t                                                  nextSlice = 0;
+
+    uint32_t acquire(uint32_t hash);
+    bool     find(uint32_t hash, uint32_t& slice) const;
+};
+
 struct TerrainSystem::Impl
 {
     // --- lifecycle (TerrainInit.cpp) ---
@@ -103,6 +124,9 @@ struct TerrainSystem::Impl
     void CreateGpuResources();
     void LoadShaders();
     void UploadRootElevation();
+    void CreateElevationCache();
+    void UploadElevation(uint32_t hash, const earthworks::DecodedImage& img);
+    bool BindElevationForBake(const earthworks::TileBakeRequest& req, BicubicConstants& bicubicOut, float pixelSize);
 
     RefCntAutoPtr<IShader>        LoadShader(const char* file, SHADER_TYPE type, const char* name);
     RefCntAutoPtr<IBuffer>        CreateConstantBuffer(size_t size, const char* name);
@@ -143,6 +167,7 @@ struct TerrainSystem::Impl
     static constexpr uint32_t kNumTiles      = 256;
     static constexpr uint32_t kPoolSize      = kNumTiles - 1;
     static constexpr uint32_t kRootElevSize  = 1024;
+    static constexpr uint32_t kElevationCacheSlices = 64;
 
     // --- compute passes ---
     ComputePass bicubic;
@@ -169,7 +194,12 @@ struct TerrainSystem::Impl
     RefCntAutoPtr<IBuffer> cbDraw;
 
     // --- textures ---
-    RefCntAutoPtr<ITexture> texRootElevation; // source DEM (R32F)
+    RefCntAutoPtr<ITexture> texRootElevation; // LOD-0 root DEM (R32F)
+    RefCntAutoPtr<ITexture> arrElevationCache; // JP2 LRU pool (R16_UNORM 1024² slices)
+    RefCntAutoPtr<ITexture> texElevationStaging; // reusable upload surface (USAGE_STAGING)
+    ElevationSlicePool                        elevationPool;
+    std::unordered_map<uint32_t, std::vector<uint16_t>> elevationCpuCache;
+    std::vector<uint16_t>                               elevationDecodeScratch;
     RefCntAutoPtr<ITexture> texHeight;        // per-tile baked height (R32F)
     RefCntAutoPtr<ITexture> texNormals;       // per-tile normals (RGBA16F)
     RefCntAutoPtr<ITexture> texVertsA;        // half-res vertex map (R16U)

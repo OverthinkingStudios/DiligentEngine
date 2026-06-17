@@ -44,6 +44,7 @@ void TerrainSystem::Impl::Initialize(const TerrainInitInfo& Info)
     sinks = std::make_unique<GpuSinks>(this);
 
     CreateGpuResources();
+    CreateElevationCache();
     LoadShaders();
     UploadRootElevation(); // may adopt the real LOD-0 world extent into worldSize
 
@@ -255,7 +256,7 @@ void TerrainSystem::Impl::LoadShaders()
     bicubic.pPSO->CreateShaderResourceBinding(&bicubic.pSRB, true);
     srbVar(bicubic.pSRB, "gConstants")->Set(cbBicubic);
     srbVar(bicubic.pSRB, "gOutput")->Set(tuav(texHeight));
-    // gInput bound later in UploadRootElevation.
+    // gInputRoot / gInputTiles bound after UploadRootElevation + CreateElevationCache.
 
     // --- normals ---
     normals.pPSO->CreateShaderResourceBinding(&normals.pSRB, true);
@@ -424,8 +425,14 @@ void TerrainSystem::Impl::UploadRootElevation()
 
     device->CreateTexture(td, &init, &texRootElevation);
 
-    bicubic.pSRB->GetVariableByName(SHADER_TYPE_COMPUTE, "gInput")
-        ->Set(texRootElevation->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
+    if (bicubic.pSRB)
+    {
+        bicubic.pSRB->GetVariableByName(SHADER_TYPE_COMPUTE, "gInputRoot")
+            ->Set(texRootElevation->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
+        if (arrElevationCache)
+            bicubic.pSRB->GetVariableByName(SHADER_TYPE_COMPUTE, "gInputTiles")
+                ->Set(arrElevationCache->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
+    }
 }
 
 } // namespace earthworksfx
