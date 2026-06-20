@@ -12,6 +12,11 @@ void GpuSinks::Bake(const earthworks::TileBakeRequest& req)
     m_Owner->BakeTile(req);
 }
 
+void GpuSinks::InitSplitGpuTiles(const earthworks::TileForSplit (&children)[4])
+{
+    m_Owner->InitSplitGpuTiles(children);
+}
+
 void GpuSinks::Upload(uint32_t hash, const earthworks::DecodedImage& img)
 {
     m_Owner->UploadElevation(hash, img);

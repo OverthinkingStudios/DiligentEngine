@@ -53,7 +53,7 @@ void TerrainSystem::Impl::Initialize(const TerrainInitInfo& Info)
     rootOriginX = -worldSize * 0.5f;
     rootOriginZ = -worldSize * 0.5f;
     quadtree.initialize(worldSize, glm::vec3{rootOriginX, 0.f, rootOriginZ});
-    quadtree.setMaxLod(8); // bounds refinement against the GPU tile pool
+    quadtree.setMaxLod(15);
 
     if (earthworks::QuadtreeTile* root = quadtree.root())
     {
@@ -174,6 +174,7 @@ void TerrainSystem::Impl::CreateGpuResources()
     cbBicubic     = CreateConstantBuffer(sizeof(BicubicConstants), "cb.bicubic");
     cbNormals     = CreateConstantBuffer(sizeof(NormalsConstants), "cb.normals");
     cbVertices    = CreateConstantBuffer(sizeof(VerticesConstants), "cb.vertices");
+    cbSplitMerge  = CreateConstantBuffer(sizeof(SplitMergeConstants), "cb.splitMerge");
     cbJumpFlood   = CreateConstantBuffer(sizeof(JumpFloodConstants), "cb.jumpflood.ping");
     cbJumpFloodB  = CreateConstantBuffer(sizeof(JumpFloodConstants), "cb.jumpflood.pong");
     cbDelaunay    = CreateConstantBuffer(sizeof(DelaunayConstants), "cb.delaunay");
@@ -241,6 +242,7 @@ void TerrainSystem::Impl::LoadShaders()
     jumpFlood.pPSO   = makeCompute("compute_tileJumpFlood.hlsl", "CS.jumpFlood", false);
     jumpFloodB.pPSO  = jumpFlood.pPSO; // same PSO, distinct SRB
     delaunay.pPSO    = makeCompute("compute_tileDelaunay.hlsl", "CS.delaunay", false);
+    splitMerge.pPSO  = makeCompute("compute_tileSplitMerge.hlsl", "CS.splitMerge", false);
     clearPass.pPSO   = makeCompute("compute_tileClear.hlsl", "CS.clear", false);
     buildLookup.pPSO = makeCompute("compute_tileBuildLookup.hlsl", "CS.buildLookup", false);
 
@@ -283,6 +285,11 @@ void TerrainSystem::Impl::LoadShaders()
     srbVar(jumpFloodB.pSRB, "gConstants")->Set(cbJumpFloodB);
     srbVar(jumpFloodB.pSRB, "gInVerts")->Set(tsrv(texVertsB));
     srbVar(jumpFloodB.pSRB, "gOutVerts")->Set(tuav(texVertsA));
+
+    // --- split merge (quadtree split child gpuTile init) ---
+    splitMerge.pPSO->CreateShaderResourceBinding(&splitMerge.pSRB, true);
+    srbVar(splitMerge.pSRB, "gConstants")->Set(cbSplitMerge);
+    srbVar(splitMerge.pSRB, "tiles")->Set(uav(bufTiles));
 
     // --- delaunay (reads final flood output: texVertsB) ---
     delaunay.pPSO->CreateShaderResourceBinding(&delaunay.pSRB, true);

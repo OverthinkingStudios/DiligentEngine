@@ -97,10 +97,16 @@ void TerrainSystem::Impl::BakeTile(const earthworks::TileBakeRequest& req)
         vertScale *= 2.5f;
 
         MapHelper<VerticesConstants> c(ctx, cbVertices, MAP_WRITE, MAP_FLAG_DISCARD);
-        c->constants[0] = pixelSize * vertScale;
-        c->constants[1] = 0.f;
-        c->constants[2] = 0.f;
-        c->constants[3] = float(slot);
+        c->constants[0]    = pixelSize * vertScale;
+        c->constants[1]    = 0.f;
+        c->constants[2]    = 0.f;
+        c->constants[3]    = float(slot);
+        c->neighborLod[0]  = req.neighborLodN;
+        c->neighborLod[1]  = req.neighborLodE;
+        c->neighborLod[2]  = req.neighborLodS;
+        c->neighborLod[3]  = req.neighborLodW;
+        c->tileLod         = static_cast<int32_t>(req.lod);
+        c->pad[0] = c->pad[1] = c->pad[2] = 0;
     }
     dispatch(vertices, csW / 2, csW / 2);
 
@@ -140,6 +146,28 @@ void TerrainSystem::Impl::BakeTile(const earthworks::TileBakeRequest& req)
         copy.DstSlice = slot;
         ctx->CopyTexture(copy);
     }
+}
+
+void TerrainSystem::Impl::InitSplitGpuTiles(const earthworks::TileForSplit (&children)[4])
+{
+    IDeviceContext* ctx = immediate;
+
+    {
+        MapHelper<SplitMergeConstants> c(ctx, cbSplitMerge, MAP_WRITE, MAP_FLAG_DISCARD);
+        for (int i = 0; i < 4; ++i)
+        {
+            c->child[i]        = children[i];
+            c->child[i].index  = GpuSlot(children[i].index);
+        }
+    }
+
+    DispatchComputeAttribs da{};
+    da.ThreadGroupCountX = 1;
+    da.ThreadGroupCountY = 1;
+    da.ThreadGroupCountZ = 1;
+    ctx->SetPipelineState(splitMerge.pPSO);
+    ctx->CommitShaderResources(splitMerge.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    ctx->DispatchCompute(da);
 }
 
 } // namespace earthworksfx

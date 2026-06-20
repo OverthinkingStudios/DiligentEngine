@@ -2,6 +2,9 @@
 // LOD-scaled cutoff, packing the seed coordinate into the half-res vertex map.
 // Ported from docs/source_extract/shaders/compute_tileVertices.hlsl (debug
 // outputs removed).
+//
+// neighborLodN/E/S/W + tileLod constrain edge seeds when an adjacent tile is
+// coarser, preventing T-junction holes at LOD boundaries.
 
 #include "terrainDefines.hlsli"
 #include "terrainFunctions.hlsli"
@@ -16,7 +19,11 @@ RWStructuredBuffer<gpuTile>         tiles;
 cbuffer gConstants
 {
     float4 constants; // .x pixSize*vertScale  .w tileIndex
+    int4   neighborLod; // N, E, S, W
+    int    tileLod;
+    int3   _padNbor;
 };
+
 #define _PIXSIZE constants.x
 
 bool testPixel(const int2 crd, const uint size, const float cutoff)
@@ -30,6 +37,36 @@ bool testPixel(const int2 crd, const uint size, const float cutoff)
     float mid = gInHgt.Load(hCrd);
 
     return (abs(mid - (avs * 0.25)) > cutoff);
+}
+
+void stitchEdge(int nLod, int2 crd, int fixedAxis, int fixedVal)
+{
+    // No adjacent tile (world exterior) — leave adaptive-only edge behaviour.
+    if (nLod < 0)
+        return;
+
+    // Same-LOD siblings need dense edge seeds (step=1). Coarser neighbours
+    // need sparser seeds; finer neighbours need the coarse tile to subdivide.
+    int step = 1;
+    if (nLod > tileLod)
+        step = max(1, 1 << (nLod - tileLod));
+    else if (nLod < tileLod)
+        step = max(1, 1 << (tileLod - nLod));
+
+    if (fixedAxis == 0)
+    {
+        if (crd.y != fixedVal || (crd.x % step) != 0)
+            return;
+    }
+    else
+    {
+        if (crd.x != fixedVal || (crd.y % step) != 0)
+            return;
+    }
+
+    // Packed idx uses the flood-grid coordinate (7 bits per axis), matching
+    // render_Tiles: world xz from (idx & 0x7f) * 2.
+    gOutVerts[crd] = (uint(crd.y) << 7) | uint(crd.x);
 }
 
 [numthreads(tile_cs_ThreadSize, tile_cs_ThreadSize, 1)]
@@ -84,4 +121,10 @@ void main(int2 coord : SV_DispatchThreadId)
             gOutVerts[pixCrd] = (pixCrd.y << 7) + pixCrd.x;
         }
     }
+
+    // Align edge seeds to coarser neighbors (half-res vertex grid 0..127).
+    stitchEdge(neighborLod.x, coord, 0, 127); // N
+    stitchEdge(neighborLod.y, coord, 1, 127); // E
+    stitchEdge(neighborLod.z, coord, 0, 0);   // S
+    stitchEdge(neighborLod.w, coord, 1, 0);   // W
 }

@@ -61,7 +61,17 @@ struct NormalsConstants
 struct VerticesConstants
 {
     float constants[4]; // .x pixSize*vertScale  .w tileIndex
+    int32_t neighborLod[4]; // N, E, S, W — adjacent leaf lod, -1 if none / boundary
+    int32_t tileLod;
+    int32_t pad[3];
 };
+static_assert(sizeof(VerticesConstants) == 48, "VerticesConstants cbuffer layout");
+
+struct SplitMergeConstants
+{
+    earthworks::TileForSplit child[4];
+};
+static_assert(sizeof(SplitMergeConstants) == 4 * sizeof(earthworks::TileForSplit), "SplitMergeConstants layout");
 
 struct JumpFloodConstants
 {
@@ -134,9 +144,10 @@ struct TerrainSystem::Impl
 
     // --- bake (TileBakePipeline.cpp) ---
     void BakeTile(const earthworks::TileBakeRequest& req);
+    void InitSplitGpuTiles(const earthworks::TileForSplit (&children)[4]);
 
     // --- per frame (TerrainDrawPass.cpp / TerrainSystem.cpp) ---
-    void Update(IDeviceContext* ctx, const float4x4& view, const float4x4& proj, const float3& camPos);
+    void Update(IDeviceContext* ctx, const float4x4& view, const float4x4& proj, const float3& camPos, float screenResolution);
     void Render(IDeviceContext* ctx, const TerrainFrameAttribs& attribs);
 
     // GPU tile-pool slot for a quadtree node. Slot 0 is reserved (build-lookup
@@ -175,6 +186,7 @@ struct TerrainSystem::Impl
     ComputePass vertices;
     ComputePass jumpFlood; // ping (A->B)
     ComputePass jumpFloodB;// pong (B->A) — second SRB, same PSO
+    ComputePass splitMerge;
     ComputePass delaunay;
     ComputePass clearPass;
     ComputePass buildLookup;
@@ -187,6 +199,7 @@ struct TerrainSystem::Impl
     RefCntAutoPtr<IBuffer> cbBicubic;
     RefCntAutoPtr<IBuffer> cbNormals;
     RefCntAutoPtr<IBuffer> cbVertices;
+    RefCntAutoPtr<IBuffer> cbSplitMerge;
     RefCntAutoPtr<IBuffer> cbJumpFlood;   // ping
     RefCntAutoPtr<IBuffer> cbJumpFloodB;  // pong
     RefCntAutoPtr<IBuffer> cbDelaunay;
@@ -236,6 +249,7 @@ public:
     explicit GpuSinks(TerrainSystem::Impl* owner) : m_Owner(owner) {}
 
     void Bake(const earthworks::TileBakeRequest& req) override;
+    void InitSplitGpuTiles(const earthworks::TileForSplit (&children)[4]) override;
     void Upload(uint32_t hash, const earthworks::DecodedImage& img) override;
 
 private:

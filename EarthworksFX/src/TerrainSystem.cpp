@@ -44,9 +44,9 @@ void TerrainSystem::LoadProject(const char* settingsPath)
         m_Impl->elevation.loadCatalog(settingsPath);
 }
 
-void TerrainSystem::Update(IDeviceContext* pContext, const float4x4& view, const float4x4& proj, const float3& camPos)
+void TerrainSystem::Update(IDeviceContext* pContext, const float4x4& view, const float4x4& proj, const float3& camPos, float screenResolution)
 {
-    m_Impl->Update(pContext, view, proj, camPos);
+    m_Impl->Update(pContext, view, proj, camPos, screenResolution);
 }
 
 void TerrainSystem::Render(IDeviceContext* pContext, const TerrainFrameAttribs& Attribs)
@@ -67,7 +67,7 @@ TerrainView TerrainSystem::GetView() const
 
 // ---------------------------------------------------------------------------
 
-void TerrainSystem::Impl::Update(IDeviceContext* /*ctx*/, const float4x4& view, const float4x4& proj, const float3& camPos)
+void TerrainSystem::Impl::Update(IDeviceContext* /*ctx*/, const float4x4& view, const float4x4& proj, const float3& camPos, float screenResolution)
 {
     // Feed the camera to the quadtree and run one LOD pass. New tiles created by
     // a split are baked immediately through the GPU sink (one split per pass,

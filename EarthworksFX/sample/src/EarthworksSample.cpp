@@ -100,7 +100,8 @@ void EarthworksSample::Render()
     const float4x4 viewProj = view * proj;
     const float3   camPos   = m_Camera.GetPos();
 
-    m_Terrain.Update(m_pImmediateContext, view, proj, camPos);
+    const SwapChainDesc& scDesc = m_pSwapChain->GetDesc();
+    m_Terrain.Update(m_pImmediateContext, view, proj, camPos, static_cast<float>(scDesc.Height));
 
     ITextureView* pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
     ITextureView* pDSV = m_pSwapChain->GetDepthBufferDSV();

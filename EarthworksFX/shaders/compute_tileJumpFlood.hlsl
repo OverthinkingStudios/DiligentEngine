@@ -22,6 +22,13 @@ cbuffer gConstants
     uint3 _pad;
 };
 
+uint loadVert(int2 p)
+{
+    if (any(p < 0) || any(p > int2(127, 127)))
+        return 0;
+    return gInVerts[p];
+}
+
 [numthreads(tile_cs_ThreadSize, tile_cs_ThreadSize, 1)]
 void main(int2 crd : SV_DispatchThreadId)
 {
@@ -33,7 +40,7 @@ void main(int2 crd : SV_DispatchThreadId)
     {
         for (int x = -1; x <= 1; x++)
         {
-            V = gInVerts[crd + int2(x, y) * int(step)];
+            V = loadVert(crd + int2(x, y) * int(step));
             if (V != 0)
             {
                 const int2 delta = int2(V & 0x7f, (V >> 7) & 0x7f) - crd;

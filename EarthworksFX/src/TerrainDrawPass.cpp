@@ -24,17 +24,21 @@ void TerrainSystem::Impl::Render(IDeviceContext* ctx, const TerrainFrameAttribs&
     }
 
     // --- frustum/visibility flags (bit0 = resident, bit20 = surface tile) ---
-    // Draw every resident *leaf* tile (a node with children is an interior LOD
-    // node and is superseded by its four children). Frustum culling on the CPU
-    // is deferred — the GPU only emits triangles for flagged tiles, so off-screen
-    // leaves cost a flag, not a draw of their geometry beyond the clip test.
+    // Draw only "surface" leaves: a leaf whose parent is actively refined, or the
+    // root when it has no children (terrain.cpp testForSurfaceMain / bit 20).
     {
         MapHelper<BuildLookupConstants> c(ctx, cbBuildLookup, MAP_WRITE, MAP_FLAG_DISCARD);
         std::memset(c->frustumFlags, 0, sizeof(c->frustumFlags));
         for (const earthworks::QuadtreeTile* tile : quadtree.usedTiles())
         {
             if (tile->child[0] != nullptr)
-                continue; // interior node — its children are drawn instead
+                continue;
+
+            const bool isSurface = (tile->parent == nullptr) ||
+                                   tile->parent->main_ShouldSplit;
+            if (!isSurface)
+                continue;
+
             const uint32_t slot = GpuSlot(tile->index);
             if (slot < kNumTiles)
                 c->frustumFlags[slot] = 1u | (1u << 20);

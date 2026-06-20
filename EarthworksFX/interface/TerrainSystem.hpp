@@ -72,7 +72,7 @@ public:
 
     // CPU-side per-frame work (LOD pass / bake scheduling). Takes view and proj
     // separately so the quadtree can run its screen-space-error LOD heuristic.
-    void Update(Diligent::IDeviceContext* pContext, const Diligent::float4x4& view, const Diligent::float4x4& proj, const Diligent::float3& camPos);
+    void Update(Diligent::IDeviceContext* pContext, const Diligent::float4x4& view, const Diligent::float4x4& proj, const Diligent::float3& camPos, float screenResolution = 1080.f);
 
     // GPU per-frame: clear -> build indirect args -> indirect draw.
     void Render(Diligent::IDeviceContext* pContext, const TerrainFrameAttribs& Attribs);
