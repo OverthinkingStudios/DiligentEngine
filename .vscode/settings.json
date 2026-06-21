@@ -1,6 +1,13 @@
 {
     "cmake.buildDirectory": "${workspaceRoot}/build/${buildType}",
     "dotnet.defaultSolution": "disable",
+    "git.autoRepositoryDetection": "subFolders",
+    "git.detectSubmodules": true,
+    "git.detectSubmodulesLimit": 100,
+    "git.scanRepositories": [
+        "Earthworks",
+        "Earthworks/extern/OTSCommon"
+    ],
     "cmake.configureSettings": { "DILIGENT_BUILD_TESTS": "TRUE", "DILIGENT_NO_FORMAT_VALIDATION": "FALSE", "CMAKE_INSTALL_PREFIX": "install"}, 
     "files.associations": {
         "*.tcc": "cpp",
