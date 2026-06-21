@@ -1,4 +1,11 @@
 build
+build-earthworks-assimp-test/
+build-efx/
+
 out
 .vs
 docs/*
+*.obj
+
+
+EarthworksFX/assets/*
