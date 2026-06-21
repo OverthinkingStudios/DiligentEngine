@@ -30,6 +30,8 @@
 //#include "imgui.h"
 #include <filesystem>
 #include <iostream>
+#include "overthinkingEnv.h"
+#include "ots/Log.hpp"
 
 float3 global_sun_direction = float3(0.96592582628906f, -0.2588190451f, 0.f);
 
@@ -223,7 +225,9 @@ void Earthworks_4::onGuiRender(Gui* _gui)
 
 void Earthworks_4::onLoad(RenderContext* _renderContext)
 {
-    std::cout << "onLoad()\n";
+    overthinking::Env::assertEnvironment();
+
+    spdlog::info("Earthworks_4::onLoad()");
 
 
 

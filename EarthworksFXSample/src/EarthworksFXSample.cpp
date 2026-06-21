@@ -1,7 +1,9 @@
 #include "EarthworksFXSample.hpp"
+#include "overthinkingEnv.h"
 
 #include <cstdio>
 #include <filesystem>
+
 
 namespace Diligent
 {
@@ -87,6 +89,7 @@ DesiredApplicationSettings EarthworksFXSample::GetDesiredApplicationSettings(boo
 
 void EarthworksFXSample::Initialize(const SampleInitInfo& InitInfo)
 {
+    overthinking::Env::init("EarthworksFX", "EarthworksFX", overthinking::Env::Stage::Dev);
     SampleBase::Initialize(InitInfo);
 
     s_LogFile = std::fopen("log.txt", "w");
