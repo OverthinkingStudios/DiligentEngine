@@ -1,4 +1,4 @@
 #pragma once
 
-#include "FalcorCompat.hpp"
+#include "Falcor.h"
 using namespace Falcor;

@@ -21,6 +21,14 @@ float evalGGXDistribution(float3 N, float3 H, float roughness)
     return a2 / D_denom;
 }
 
+float evalGGXDistribution(float NoH, float roughness)
+{
+    float a2 = roughness * roughness;
+    float D_denom = (NoH * a2 - NoH) * NoH + 1.0f;
+    D_denom = M_PIf * D_denom * D_denom;
+    return a2 / D_denom;
+}
+
 float evalGGXDistribution(float3 H, float2 rgns)
 {
     // Numerically robust (w.r.t rgns=0) implementation of anisotropic GGX
@@ -40,7 +48,6 @@ float GeometrySchlickGGX(float NdotV, float k)
 {
     float nom   = NdotV;
     float denom = NdotV * (1.0 - k) + k;
-	
     return nom / denom;
 }
   
@@ -51,6 +58,13 @@ float GeometrySmith(float3 N, float3 V, float3 L, float k)
     float ggx1 = GeometrySchlickGGX(NdotV, k);
     float ggx2 = GeometrySchlickGGX(NdotL, k);
 	
+    return ggx1 * ggx2;
+}
+
+float GeometrySmith(float NoV, float NoL, float k)
+{
+    float ggx1 = GeometrySchlickGGX(NoV, k);
+    float ggx2 = GeometrySchlickGGX(NoL, k);
     return ggx1 * ggx2;
 }
 
@@ -161,56 +175,6 @@ void lightIBL( in SH_Attributes Attr, in layer_material mat, inout float3 diff, 
 		// FIXME regular linear sample fpor speed	
 	diff += mat.diff.rgb * mat.AO * mat.mask * gCube_Far.SampleLevel(gSmpAniso, mat.N*float3(1, 1, -1), 6).rgb;						//  70us
 	spec +=  mat.spec.rgb * mat.cavity * mat.mask * gCube_Far.SampleLevel(gSmpAniso, mat.R*float3(-1, -1, 1), cube_mip).rgb;			// 100us		R11G11B10Float  2048
-	/*
-	if (Attr.CURVATURE.z > 1.0f)
-	{
-		diff = float3(0, 0.3, 0.2);
-	}
-	
-	if (Attr.CURVATURE.z > 2.0f)
-	{
-		diff = float3(0, 0, 1);
-	}
-	
-	if (Attr.CURVATURE.z > 3.0f)
-	{
-		diff = float3(0, 1, 1);
-	}
-	
-	if (Attr.CURVATURE.z > 4.0f)
-	{
-		diff = float3(0, 1, 0);
-	}
-	
-	if (Attr.CURVATURE.z > 5.0f)
-	{
-		diff = float3(1, 1, 0);
-	}
-	
-	if (Attr.CURVATURE.z > 6.0f)
-	{
-		diff = float3(1, 0, 0);
-	}
-	*/
-	//diff *= 0.001f;
-	
-	//diff.r = mipScale;
-	
-	
-	//diff *= 0.00f;
-	//spec *= 0.00f;
-	
-	//diff.r = mat.fresnel;
-	//diff.rg += frac(Attr.uv * 10);//B * 0.5f + 0.5f;
-	//diff.rgb += frac(abs((Attr.N)) * 10);
-	//diff.rgb += frac(abs((mat.R)) * 10);
-	/*
-	if ( (dot(-Attr.E, mat.N)) >= 0)
-	{
-		spec.r = 1;
-		spec.gb *= 0.1;
-	}
-	*/
 }
 
 
@@ -233,8 +197,69 @@ void lightLayer( in SH_Attributes Attr, in layer_material mat, in float3 lightDi
 		float3 h = normalize(float3(dot(hW, mat.T), dot(hW, mat.B), dot(hW, mat.N)));
 		
 		float dist = evalGGXDistribution(h, saturate(rg) );								// Fixme, maybe add curvature compensation, but we can pre bake it into roughness
-		spec += lightIntensity * dist;// * specGeom * mat.cavity * mat.spec.rgb;			// FIXMe add large angle self shadowing
-	}
+        spec += lightIntensity * dist * specGeom * mat.cavity; // * mat.spec.rgb; // FIXMe add large angle self shadowing
+    }
 	
 }
 
+
+
+
+struct surface_veg
+{
+    float4 albedo;
+
+    float3 translucency;
+    float NoH;
+
+    float3 normal;
+    float NoS;
+
+    float fresnel;
+    float ao;
+    float roughness;
+    float NoE;
+};
+
+
+// SOFTNESS
+float3 pbr_Vegetation(surface_veg surface, float3 sunlight, float softness)
+{
+    float3 color = 0;
+    float3 light = sunlight * abs(surface.NoS); // total incident light
+    //return light * 0.2;
+
+        // environment
+    color += 2.0 * gEnv.SampleLevel(gSmpLinear, surface.normal * float3(1, 1, -1), 0).rgb * surface.albedo.rgb * surface.ao;
+
+    
+    
+    
+        // specular
+        // fixme gebruik GGX of so iets
+    const float pw = 4.f / (surface.roughness + 0.01);
+    color += pow(abs(surface.NoH), pw) * sunlight / pow(surface.roughness + +0.01, 1.5) * 0.08; // used to have surgface.fresnel as well
+    //color += pow(abs(surface.NoH), pw);
+/*
+    float k_direct = (surface.roughness + 1) * (surface.roughness + 1) / 8;
+    float specGeom = GeometrySmith(surface.NoE, surface.NoS, k_direct);
+    if (specGeom > 0)
+    {
+        float dist = evalGGXDistribution(surface.NoH, surface.roughness);
+        //color += surface.fresnel * light * dist * specGeom;
+    }
+*/
+    //surface.albedo.rgb = float3(0.01, 0.2, 0.01);
+    if (surface.NoS > 0)
+    {
+        // I know fresnel aaccounts for specular on edge but only if there are no hairs
+        color += light *  surface.albedo.rgb; // * (1.f - surface.fresnel);
+    }
+    else
+    {
+        color += light * surface.translucency.rgb;// * abs(1.f - surface.fresnel);
+    }
+
+    
+    return color;
+}

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "FalcorCompat.hpp"
+#include "Falcor.h"
 using namespace Falcor;
 #include"hlsl/terrain/groundcover_defines.hlsli"
 #include"hlsl/terrain/terrainDefines.hlsli"
@@ -210,8 +210,7 @@ public:
 
 	// runtime
     //Buffer::SharedPtr constantBuffer;
-	void rebuildRuntime(const std::filesystem::path& ecosystemPath);
-    std::filesystem::path ecosystemFilePath;
+	void rebuildRuntime();
     //void resetPlantIndex(uint lod);
 
     ecotopeGpuConstants constantbuffer;

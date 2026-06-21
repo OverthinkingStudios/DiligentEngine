@@ -7,7 +7,7 @@ RWStructuredBuffer<GC_feedback>			feedback;
 RWStructuredBuffer<t_DrawArguments> 	DrawArgs_Quads;
 RWStructuredBuffer<t_DrawArguments> 	DrawArgs_Terrain;
 RWStructuredBuffer<t_DrawArguments> 	DrawArgs_Plants;
-RWStructuredBuffer<t_DrawArguments> 	DrawArgs_ClippedLoddedPlants;
+//RWStructuredBuffer<t_DrawArguments> 	DrawArgs_ClippedLoddedPlants;   // 
 RWStructuredBuffer<t_DispatchArguments> DispatchArgs_Plants;
 
 RWStructuredBuffer<vegetation_feedback> feedback_Veg;
@@ -20,46 +20,55 @@ void main(uint dispatchId : SV_DispatchThreadId)
 {
 	// Clear the feedback
 	// -----------------------------------------------------------------------------------------------------
-	feedback[0].numQuadTiles = 0;
-	feedback[0].numQuadBlocks = 0;
-	feedback[0].numQuads = 0;
-    feedback[0].maxQuads = 0;
-
-	feedback[0].numPlantTiles = 0;
-	feedback[0].numPlantBlocks = 0;
-	feedback[0].numPlants = 0;
-    feedback[0].maxPlants = 0;
+	
     feedback[0].numPostClippedPlants = 0;
 	
-	feedback[0].numTerrainTiles = 0;
-	feedback[0].numTerrainBlocks = 0;
-	feedback[0].numTerrainVerts = 0;
-    feedback[0].maxTriangles = 0;
 	
-	feedback[0].numLookupBlocks_Quads = 0;
-	feedback[0].numLookupBlocks_Plants = 0;
-	feedback[0].numLookupBlocks_Terrain = 0;
+	
+    feedback[0].vegRibbonClippedPixels = 9;
+    feedback[0].vegRibbonOKPixels = 900;
 
 
     // Clear the draw arguments
     // -----------------------------------------------------------------------------------------------------
-    DrawArgs_Terrain[0].instanceCount = 0;
-    DrawArgs_Terrain[0].vertexCountPerInstance = 3;
+    for (int i = 0; i < numRenderViews; i++)
+    {
+        feedback[0].numLookupBlocks_Quads[i] = 0;
+        feedback[0].numLookupBlocks_Plants[i] = 0;
+        feedback[0].numLookupBlocks_Terrain[i] = 0;
 
-    DrawArgs_Quads[0].instanceCount = 0;
-    DrawArgs_Quads[0].vertexCountPerInstance = 64;
+        feedback[0].numTerrainTiles[i] = 0;
+        feedback[0].numTerrainBlocks[i] = 0;
+        feedback[0].numTerrainVerts[i] = 0;
+        feedback[0].maxTriangles[i] = 0;
 
-    DrawArgs_Plants[0].instanceCount = 0;
-    DrawArgs_Plants[0].vertexCountPerInstance = 128;
+        feedback[0].numQuadTiles[i] = 0;
+        feedback[0].numQuadBlocks[i] = 0;
+        feedback[0].numQuads[i] = 0;
+        feedback[0].maxQuads[i] = 0;
 
-    DrawArgs_ClippedLoddedPlants[0].instanceCount = 0;
-    DrawArgs_ClippedLoddedPlants[0].vertexCountPerInstance = 1598;//    2114; //542; // 768 for triangles 2114;//
+        feedback[0].numPlantTiles[i] = 0;
+        feedback[0].numPlantBlocks[i] = 0;
+        feedback[0].numPlants[i] = 0;
+        feedback[0].maxPlants[i] = 0;
 
-    DispatchArgs_Plants[0].numGroupX = 0;
-    DispatchArgs_Plants[0].numGroupY = 1;
-    DispatchArgs_Plants[0].numGroupZ = 1;
-    DispatchArgs_Plants[0].padd = 0;
+        DrawArgs_Terrain[i].instanceCount = 0;
+        DrawArgs_Terrain[i].vertexCountPerInstance = 3;
 
+        DrawArgs_Quads[i].instanceCount = 0;
+        DrawArgs_Quads[i].vertexCountPerInstance = 64;
+
+        DrawArgs_Plants[i].instanceCount = 0;
+        DrawArgs_Plants[i].vertexCountPerInstance = VEG_BLOCK_SIZE;// 128;
+
+        //DrawArgs_ClippedLoddedPlants[i].instanceCount = 0;
+        //DrawArgs_ClippedLoddedPlants[i].vertexCountPerInstance = 0;// 1598;//    2114; //542; // 768 for triangles 2114;//
+
+        DispatchArgs_Plants[i].numGroupX = 0;
+        DispatchArgs_Plants[i].numGroupY = 1;
+        DispatchArgs_Plants[i].numGroupZ = 1;
+        DispatchArgs_Plants[i].padd = 0;
+    }
 
 
     for (int j = 0; j < 20; j++)
@@ -68,6 +77,7 @@ void main(uint dispatchId : SV_DispatchThreadId)
         feedback[0].numSprite[j] = 0;
         feedback[0].numPlantsLOD[j] = 0;
         feedback[0].numTris[j] = 0;
+        feedback[0].numPix[j] = 0;
     }
 
 // veg feedback
@@ -93,4 +103,13 @@ void main(uint dispatchId : SV_DispatchThreadId)
     feedback_Veg[0].numLod[14] = 0;
     feedback_Veg[0].numLod[15] = 0;
 
+    feedback_Veg[0].numPixClip = 0;
+    feedback_Veg[0].numPixPass = 0;
+    feedback_Veg[0].numInstAdded = 0;
+    feedback_Veg[0].numInstRejected = 0;
+
+    for (int i = 0; i < 128; i++)
+    {
+        feedback_Veg[0].numBlock_Z[i] = 0;
+    }
 }

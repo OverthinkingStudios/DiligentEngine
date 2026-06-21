@@ -7,68 +7,10 @@
 #include <fstream>
 #include "imgui.h"
 
+// FIXME THIS ONE IS CRITICAL FOR SOME REAASON JSON error
 #pragma optimize("", off)
 
 #include "vegetationBuilder.h"
-
-namespace
-{
-
-bool splitAtTerrains(const std::filesystem::path& path,
-                     std::filesystem::path& prefix,
-                     std::filesystem::path& fromTerrains)
-{
-    prefix.clear();
-    fromTerrains.clear();
-    bool foundTerrains = false;
-    for (const auto& component : path)
-    {
-        if (!foundTerrains)
-        {
-            if (component == "terrains")
-            {
-                foundTerrains = true;
-                fromTerrains = component;
-            }
-            else
-            {
-                prefix /= component;
-            }
-        }
-        else
-        {
-            fromTerrains /= component;
-        }
-    }
-    return foundTerrains;
-}
-
-std::filesystem::path resolveStoredPath(const std::filesystem::path& storedPath,
-                                        const std::filesystem::path& ecosystemFilePath)
-{
-    if (storedPath.empty() || std::filesystem::exists(storedPath))
-        return storedPath;
-
-    if (!storedPath.is_absolute())
-        return storedPath;
-
-    std::filesystem::path storedPrefix;
-    std::filesystem::path storedFromTerrains;
-    std::filesystem::path ecosystemPrefix;
-    std::filesystem::path ecosystemFromTerrains;
-    if (!splitAtTerrains(storedPath, storedPrefix, storedFromTerrains))
-        return storedPath;
-    if (!splitAtTerrains(ecosystemFilePath, ecosystemPrefix, ecosystemFromTerrains))
-        return storedPath;
-
-    const std::filesystem::path resolved = ecosystemPrefix / storedFromTerrains;
-    if (std::filesystem::exists(resolved))
-        return resolved;
-
-    return storedPath;
-}
-
-} // namespace
 
 /*
 uint spriteCache::find_insert_plant(const std::filesystem::path _path)
@@ -360,11 +302,10 @@ void ecotopeSystem::load()
 void ecotopeSystem::load(std::string _path, std::string _resourcePath)
 {
     resPath = _resourcePath;
-    ecosystemFilePath = std::filesystem::path(_path);
     std::ifstream is(_path);
     cereal::JSONInputArchive archive(is);
     serialize(archive);
-    rebuildRuntime(ecosystemFilePath);
+    rebuildRuntime();
 
     for (int ect = 0; ect < ecotopes.size(); ect++)
     {
@@ -467,7 +408,7 @@ void ecotopeSystem::renderGUI(Gui* _pGui)
     }
     if (change)
     {
-        rebuildRuntime(ecosystemFilePath);
+        rebuildRuntime();
     }
 }
 
@@ -493,7 +434,7 @@ void ecotopeSystem::addEcotope() {
 
 
 
-void ecotopeSystem::rebuildRuntime(const std::filesystem::path& ecosystemPath) {
+void ecotopeSystem::rebuildRuntime() {
 
     change = true;
 
@@ -563,11 +504,8 @@ void ecotopeSystem::rebuildRuntime(const std::filesystem::path& ecosystemPath) {
                     //const std::string I = P.name.substr(0, P.name.find_last_of("_"));
                     //P.index = std::stoi(I);
                     // FIXME importBinary must not load the same one again needs a cache if I am going to use it like this
-                    const std::filesystem::path plantPath = resolveStoredPath(P.path, ecosystemPath);
-                    if (plantPath != P.path)
-                        P.path = plantPath.string();
-
-                    int idx = ecotopeSystem::pVegetation->importBinary(plantPath);   // return vlaue still wronf since we load 4 variations
+                    
+                    int idx =  ecotopeSystem::pVegetation->importBinary(P.path);   // return vlaue still wronf since we load 4 variations
                     if (idx >= 0)
                     {
                         P.index = idx;
@@ -586,13 +524,13 @@ void ecotopeSystem::rebuildRuntime(const std::filesystem::path& ecosystemPath) {
 
     if (piBuffer == nullptr)
     {
-        piBuffer = Buffer::createTyped(Diligent::TEX_FORMAT_R32_UINT, sizeof(uint) * 12 * 16 * 65, Resource::BindFlags::ShaderResource);
+        piBuffer = Buffer::createTyped(ResourceFormat::R32Uint, sizeof(uint) * 12 * 16 * 65, Resource::BindFlags::ShaderResource);
     }
     piBuffer->setBlob(plantIndex, 0, sizeof(uint) * 24 * 16 * 64);
 
     if (pdBuffer == nullptr)
     {
-        pdBuffer = Buffer::createTyped(Diligent::TEX_FORMAT_R32_UINT, sizeof(uint) * 12 * 16 * 65, Resource::BindFlags::ShaderResource);
+        pdBuffer = Buffer::createTyped(ResourceFormat::R32Uint, sizeof(uint) * 12 * 16 * 65, Resource::BindFlags::ShaderResource);
     }
     pdBuffer->setBlob(plantDensity, 0, sizeof(uint) * 24 * 16);
 }

@@ -17,6 +17,8 @@
 #define numPlantsPerTile  4096
 
 
+
+
 struct Terrain_vertex
 {
 	uint	idx;
@@ -30,3 +32,5 @@ struct centerFeedback {
 	float A;
 	float B;
 };
+
+

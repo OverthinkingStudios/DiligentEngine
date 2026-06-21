@@ -4,10 +4,10 @@
 
 void computeShader::load(const std::filesystem::path& _path)
 {
-    Program::DefineList defines;
-    defines.add("CHUNK_SIZE", "256");   // Dummy values just so we can get reflection data. We'll set the actual values in execute().
+    //Program::DefineList defines;
+    defineList.add("CHUNK_SIZE", "256");   // Dummy values just so we can get reflection data. We'll set the actual values in execute().
 
-	program = ComputeProgram::createFromFile(_path, "main", defines);
+	program = ComputeProgram::createFromFile(_path, "main", defineList);
 	state = ComputeState::create();
 	state->setProgram( program );
 	vars = ComputeVars::create( program.get() );

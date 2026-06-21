@@ -1,4 +1,23 @@
+// This file is hlsl only and should not be included in c+= code, but acompanies groundcover_defines.hlsli
 
+
+// lookup packing
+inline uint lu_Pack(uint tile, uint offset, uint used)
+{
+    return ((tile & 0xfff) << 20) + ((offset & 0xfff) << 8) + (used & 0xff);
+}
+inline uint lu_Tile(uint data)
+{
+    return data >> 20;
+}
+inline uint lu_Used(uint data)
+{
+    return data & 0xff;
+}
+inline uint lu_Index(uint data, uint tileSpacing, uint dataScale)
+{
+    return ((data >> 20) * tileSpacing) + (((data >> 8) & 0xfff) * dataScale);
+}
 
 
 

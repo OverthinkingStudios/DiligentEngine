@@ -2,7 +2,7 @@
 
 
 
-#include "FalcorCompat.hpp"		// for glm includes float4 etc
+#include "Falcor.h"		// for glm includes float4 etc
 #include<unordered_map>
 #include<list>
 
@@ -21,6 +21,8 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 
+using namespace std::chrono;
+
 #include "ecotope.h"
 
 
@@ -36,6 +38,59 @@ using namespace Falcor;
 #define archive_float3(v) {archive(CEREAL_NVP(v.x)); archive(CEREAL_NVP(v.y)); archive(CEREAL_NVP(v.z));}
 #define archive_float4(v) {archive(CEREAL_NVP(v.x)); archive(CEREAL_NVP(v.y)); archive(CEREAL_NVP(v.z)); archive(CEREAL_NVP(v.w));}
 
+
+
+class logBlock
+{
+public:
+    uint type;
+    std::chrono::time_point<std::chrono::high_resolution_clock>  startTime;
+};
+
+class JLogger
+{
+private:
+    std::stack<logBlock>    stack;
+    FILE* file;
+    std::chrono::time_point<std::chrono::high_resolution_clock>  startTime;
+
+public:
+    using SharedPtr = std::shared_ptr<JLogger>;
+
+    static const JLogger::SharedPtr& instancePtr();
+    
+    void startBlock(char* _name, uint _type);
+    void endBlock();
+    void open(char* _name);
+    void close();
+
+    void tab(int depth);
+    void time();
+    void time_stack();
+    void type(uint _type);
+    void log(uint _type, std::string _text);
+    void logMulti(uint _type, std::string _text);
+};
+
+class logBlockEvent
+{
+public:
+    logBlockEvent(char* _name, uint _type)
+    {
+        JLogger::instancePtr()->startBlock(_name, _type);
+    }
+
+    ~logBlockEvent()
+    {
+        JLogger::instancePtr()->endBlock();
+    }
+
+private:
+};
+
+#define LOG_BLOCK(_name, _type) logBlockEvent _logEvent##__LINE__(_name, _type)
+#define LOG_LINE(_type, _text) JLogger::instancePtr()->log(_type, _text)
+#define LOG_MULTI(_type, _text) JLogger::instancePtr()->log(_type, _text)
 
 // FIXME move to hlsl
 class  triVertex {
@@ -458,6 +513,24 @@ public:
 	static bool needsRefresh;
 	static ecotopeSystem *pEcotopes;
 	static FILE *_logfile;
+    static std::chrono::time_point<std::chrono::high_resolution_clock>  logStartTime;
+
+    static void logTimeX()
+    {
+        auto a = high_resolution_clock::now();
+        float delta_ms = (float)duration_cast<microseconds>(a - terrafectorSystem::logStartTime).count() / 1000.;
+        fprintf(_logfile, "%3.3fms    :    ", delta_ms);
+    }
+    /*
+    static void logTab()
+    {
+        fprintf(_logfile, "    ");
+    }
+    static void logHeader()
+    {
+        //fprintf(_logfile, "%3.3fms    :    ", delta_ms);
+    }
+    */
 	terrafectorElement root = terrafectorElement(tf_heading, "root");
 
     static lodTriangleMesh_LoadCombiner loadCombine_LOD2;       // will only be used if flagged by artists - large ecotopes only - roughly 40 -> 20 meter pixels this is the far horizon

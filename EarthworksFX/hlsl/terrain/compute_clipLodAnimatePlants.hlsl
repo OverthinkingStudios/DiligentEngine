@@ -2,6 +2,7 @@
 #include "groundcover_defines.hlsli"
 #include "groundcover_functions.hlsli"	
 #include "vegetation_defines.hlsli"
+#include "terrainDefines.hlsli"
 
 
 StructuredBuffer<gpuTile>           tiles;
@@ -28,31 +29,33 @@ cbuffer gConstantBuffer
 };
 
 
-//32 LIKELY BETETR
+//32 LIKELY BETTER
 [numthreads(64, 1, 1)]			
 void main(uint plantId : SV_GroupThreadID, uint blockId : SV_GroupID)
 {
-    const uint tileIDX = tileLookup[blockId].tile & 0xffff;
-    const uint numQuad = tileLookup[blockId].tile >> 16;
+    const uint tileIDX = lu_Tile(tileLookup[blockId]);
+    const uint numQuad = lu_Used(tileLookup[blockId]);
+    const uint tileStart = lu_Index(tileLookup[blockId], numPlantsPerTile, 64);
 
 
     if (plantId < numQuad)
     {
         // clip
-        instance_PLANT instance = plantBuffer[tileLookup[blockId].offset + plantId];
+        instance_PLANT instance = plantBuffer[tileStart + plantId];
         const uint idx = PLANT_INDEX(instance.s_r_idx);
         const plant PLANT = plant_buffer[idx];
         float3 position = unpack_pos(instance.xyz, tiles[tileIDX].origin, tiles[tileIDX].scale_1024);
         float scale = SCALE(instance.s_r_idx);
         float4 viewBS = mul(float4(position + float3(0, PLANT.size.y * 0.5, 0), 1), view);
         float radius = 1 * (PLANT.size.x + PLANT.size.y); // or something like that, or precalc radius
-        float4 test = saturate(mul(clip, viewBS) + float4(radius, radius, radius, radius));
+        //float4 test = saturate(mul(clip, viewBS);// +float4(radius, radius, radius, radius));
+        float4 test = saturate(mul(clip, viewBS)  - 1);
         bool inFrust = all(test);
         // FIXME move middle upwards, expand on thsi a bit, as well as teh 4 4 4 4 above
 
         
         
-        feedback_Veg[0].numBillboard = feedback[0].numQuads;
+        //feedback_Veg[0].numBillboard = feedback[0].numQuads;
         // extract and save
         
         if (inFrust)
@@ -100,8 +103,10 @@ void main(uint plantId : SV_GroupThreadID, uint blockId : SV_GroupID)
 
             
                 InterlockedAdd(feedback_Veg[0].numBlocks, PLANT.lods[lod].numBlocks, slot);
+
+                //?? WRONG use depth slices
                 InterlockedAdd(drawArgs_Plants[0].instanceCount, PLANT.lods[lod].numBlocks, slot);
-                drawArgs_Plants[0].vertexCountPerInstance = VEG_BLOCK_SIZE; // FIXME move to a clear shader once
+                //drawArgs_Plants[0].vertexCountPerInstance = 8;// VEG_BLOCK_SIZE; // FIXME move to a clear shader once
             
  
             

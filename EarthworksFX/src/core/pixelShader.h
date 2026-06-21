@@ -1,5 +1,5 @@
 #pragma once
-#include "FalcorCompat.hpp"
+#include "Falcor.h"
 
 using namespace Falcor;
 
@@ -11,7 +11,8 @@ public:
 	void drawIndexedInstanced(RenderContext* _renderContext, uint32_t _index, uint32_t _instance);
     void drawInstanced(RenderContext* _renderContext, uint32_t _index, uint32_t _instance);
     void setFbo(Fbo::SharedPtr _fbo) { state->setFbo(_fbo); }
-    void add(std::string _name, std::string _val) { defineList.add(_name, _val); }
+    void add(std::string _name, std::string _val);
+    void remove(std::string _name);
 
 	const GraphicsProgram::SharedPtr Program() { return program; }
     Buffer::SharedPtr ConstantBuffer() { return constantBuffer; }

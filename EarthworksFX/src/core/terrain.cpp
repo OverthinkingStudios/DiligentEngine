@@ -29,7 +29,7 @@
 #include "imgui.h"
 #include <imgui_internal.h>
 #include <random>
-// TODO: Falcor TextRenderer removed
+//#include "Utils/UI/TextRenderer.h"
 #include "assimp/Exporter.hpp"
 using namespace Assimp;
 #include <chrono>
@@ -38,51 +38,6 @@ using namespace std::chrono;
 #pragma optimize("", off)
 
 #define TOOLTIP(x)  if (ImGui::IsItemHovered()) {ImGui::SetTooltip(x);}
-
-namespace
-{
-
-static bool bootstrapTerrainSettingsFromFolder(const std::filesystem::path& workingDir,
-                                               const std::filesystem::path& terrainRoot,
-                                               _terrainSettings& outSettings,
-                                               FILE* logFile)
-{
-    const std::filesystem::path absRoot = std::filesystem::absolute(workingDir / terrainRoot);
-    const std::filesystem::path manifest = absRoot / "elevations.txt";
-    if (!std::filesystem::exists(manifest))
-        return false;
-
-    outSettings.name       = terrainRoot.filename().string();
-    outSettings.dirRoot    = absRoot.string();
-    outSettings.dirGis     = outSettings.dirRoot;
-    outSettings.dirExport  = outSettings.dirRoot;
-    outSettings.dirResource = std::filesystem::absolute(workingDir / "terrains/_resources").string();
-
-    if (logFile)
-    {
-        fprintf(logFile, "bootstrapped terrain settings from %s\n", manifest.string().c_str());
-        fprintf(logFile, "  dirRoot     - %s\n", outSettings.dirRoot.c_str());
-        fprintf(logFile, "  dirResource - %s\n\n", outSettings.dirResource.c_str());
-    }
-    return true;
-}
-
-static void makeTerrainPathsAbsolute(const std::filesystem::path& workingDir, _terrainSettings& settings, FILE* logFile)
-{
-    settings.dirRoot     = std::filesystem::absolute(workingDir / settings.dirRoot).string();
-    settings.dirGis      = std::filesystem::absolute(workingDir / settings.dirGis).string();
-    settings.dirResource = std::filesystem::absolute(workingDir / settings.dirResource).string();
-
-    if (logFile)
-    {
-        fprintf(logFile, "absolute terrain paths:\n");
-        fprintf(logFile, "  root     - %s\n", settings.dirRoot.c_str());
-        fprintf(logFile, "  gis      - %s\n", settings.dirGis.c_str());
-        fprintf(logFile, "  resource - %s\n\n", settings.dirResource.c_str());
-    }
-}
-
-} // namespace
 
 
 
@@ -488,7 +443,7 @@ void quadtree_tile::set(uint _lod, uint _x, uint _y, float _size, float4 _origin
 
 
 
-    
+
 
 terrainManager::terrainManager()
 {
@@ -512,8 +467,9 @@ terrainManager::~terrainManager()
 
 void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
 {
+    LOG_BLOCK("terrainManager::onLoad", 0);
+
     std::filesystem::path currentPath = std::filesystem::current_path();
-    fprintf(_logfile, "root directory - %s\n\n", currentPath.string().c_str());
 
     // Move the constructor code here
     std::ifstream is("lastFile.xml");
@@ -521,36 +477,104 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
         cereal::XMLInputArchive archive(is);
         archive(CEREAL_NVP(lastfile));
 
+        fprintf(_logfile, " loading lastfile.xml\n");
+        fflush(_logfile);
+
         mRoadNetwork.lastUsedFilename = lastfile.road;
         mRoadStampCollection.lastUsedFilename = lastfile.stamps;
     }
     else
     {
-        fprintf(_logfile, "lastFile.xml not found, using default lastfile paths (terrains/switserland_Steg)\n\n");
+        fprintf(_logfile, " ERROR - unable to load lastfile.xml, shutting down\n");
+        fflush(_logfile);
+        LOG_LINE(3, "unable to load lastfile.xml, shutting down");
+        gpFramework->getWindow()->shutdown();
+        return;
     }
 
-    fprintf(_logfile, "terrain name - %s\n\n", lastfile.terrain.c_str());
-    const std::filesystem::path terrainSettingsPath = std::filesystem::path{lastfile.terrain};
-    const std::filesystem::path appendedPath = currentPath / terrainSettingsPath;
+    std::string appendedName = currentPath.string() + lastfile.terrain;
     std::ifstream isT(lastfile.terrain);
-    std::ifstream isT_2(appendedPath);
+    std::ifstream isT_2(appendedName);
+
+    fprintf(_logfile, " %s\n", lastfile.terrain.c_str());
+
+    fprintf(_logfile, "  %s\n", appendedName.c_str());
+    fflush(_logfile);
     if (isT.good()) {
-        fprintf(_logfile, "loading absolute terrain {%s}\n\n", lastfile.terrain.c_str());
+        terrafectorSystem::logTimeX();
+        fprintf(_logfile, " loading absolute terrain %s\n", lastfile.terrain.c_str());
+        fflush(_logfile);
         cereal::JSONInputArchive archive(isT);
         settings.serialize(archive, 100);
-        makeTerrainPathsAbsolute(currentPath, settings, _logfile);
+
+        std::ifstream a(lastfile.dir_Terrains);
+        std::ifstream b(lastfile.dir_Resource);
+        std::ifstream c(lastfile.dir_GIS);
+
+        if (!std::filesystem::exists(lastfile.dir_Terrains))
+        {
+            fprintf(_logfile, "filedialog dir_Terrains\n");
+            fflush(_logfile);
+            std::filesystem::path path;
+            FileDialogFilterVec filters = { {} };
+            if (openFileDialog(filters, path))
+            {
+                lastfile.dir_Terrains = path.parent_path().string();
+            }
+        }
+
+        if (!std::filesystem::exists(lastfile.dir_Resource))
+        {
+            fprintf(_logfile, "filedialog dir_Resource\n");
+            fflush(_logfile);
+            std::filesystem::path path;
+            FileDialogFilterVec filters = { {} };
+            if (openFileDialog(filters, path))
+            {
+                lastfile.dir_Resource = path.parent_path().string();
+            }
+        }
+
+        if (!std::filesystem::exists(lastfile.dir_GIS))
+        {
+            fprintf(_logfile, "filedialog dir_GIS\n");
+            fflush(_logfile);
+            std::filesystem::path path;
+            FileDialogFilterVec filters = { {} };
+            if (openFileDialog(filters, path))
+            {
+                lastfile.dir_GIS = path.parent_path().string();
+            }
+        }
+
+        settings.dirRoot = lastfile.dir_Terrains + settings.dirRoot;
+        settings.dirResource = lastfile.dir_Resource;
+        settings.dirGis = lastfile.dir_GIS;
+
+        fprintf(_logfile, "root - %s\n", settings.dirRoot.c_str());
+        fprintf(_logfile, "gis - %s\n", settings.dirGis.c_str());
+        fprintf(_logfile, "resource - %s\n\n", settings.dirResource.c_str());
+        fflush(_logfile);
     }
     else if (isT_2.good())
     {
         cereal::JSONInputArchive archive(isT_2);
         settings.serialize(archive, 100);
 
-        fprintf(_logfile, "loading relative terrain {%s}\n", appendedPath.string().c_str());
-        makeTerrainPathsAbsolute(currentPath, settings, _logfile);
-    }
-    else if (bootstrapTerrainSettingsFromFolder(currentPath, "terrains/switserland_Steg", settings, _logfile))
-    {
-        lastfile.terrain = (std::filesystem::path{"terrains/switserland_Steg"} / "terrainSettings.json").string();
+        fprintf(_logfile, "loading relative terrain, prepending root directory - %s\n", appendedName.c_str());
+        fprintf(_logfile, "root - %s\n", settings.dirRoot.c_str());
+        fprintf(_logfile, "gis - %s\n", settings.dirGis.c_str());
+        fprintf(_logfile, "resource - %s\n\n", settings.dirResource.c_str());
+        fflush(_logfile);
+
+        settings.dirRoot = currentPath.string() + settings.dirRoot;
+        settings.dirGis = currentPath.string() + settings.dirGis;
+        settings.dirResource = currentPath.string() + settings.dirResource;
+
+        fprintf(_logfile, "root - %s\n", settings.dirRoot.c_str());
+        fprintf(_logfile, "gis - %s\n", settings.dirGis.c_str());
+        fprintf(_logfile, "resource - %s\n\n", settings.dirResource.c_str());
+        fflush(_logfile);
     }
     else
     {
@@ -559,27 +583,18 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
         if (openFileDialog(filters, path))
         {
             lastfile.terrain = path.string();
-            std::ifstream isTSettings(lastfile.terrain);
-            if (isTSettings.good()) {
-                cereal::JSONInputArchive archive(isTSettings);
+            std::ifstream isT(lastfile.terrain);
+            if (isT.good()) {
+                cereal::JSONInputArchive archive(isT);
                 settings.serialize(archive, 100);
-                makeTerrainPathsAbsolute(currentPath, settings, _logfile);
             }
             else
             {
-                fprintf(_logfile, "ERROR - unable to load terrainSettings.json, shutting down\n");
-                fprintf(_logfile, "shutting down\n");
+                fprintf(_logfile, " ERROR - unable to load a terrain  (/terrain/__somewhere__.terrainSettings.json)\n");
+                fprintf(_logfile, " shutting down\n");
                 gpFramework->getWindow()->shutdown();
                 return;
             }
-        }
-        else if (!bootstrapTerrainSettingsFromFolder(currentPath, std::filesystem::path{lastfile.terrain}.parent_path(), settings, _logfile))
-        {
-            fprintf(_logfile, "ERROR - no terrainSettings.json and no terrains/<id>/elevations.txt under pwd\n");
-            fprintf(_logfile, "expected: terrains/switserland_Steg/elevations.txt\n");
-            fprintf(_logfile, "shutting down\n");
-            gpFramework->getWindow()->shutdown();
-            return;
         }
     }
 
@@ -587,11 +602,17 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
     terrafectorSystem::pEcotopes = &mEcosystem;
     ecotopeSystem::pVegetation = &plants_Root;
 
+    if (terrainMode == _terrainMode::vegetation)
+    {
+        //fprintf(_logfile, "terrain.onLoad() - abandn - VEGETATION mode\n");
+        //return;
+    }
 
-    fprintf(_logfile, "terrain.onLoad()\n");
+    fprintf(_logfile, "\nterrain.onLoad()\n");
     fflush(_logfile);
 
     terrafectors._logfile = _logfile;
+
     {
         Sampler::Desc samplerDesc;
         samplerDesc.setAddressingMode(Sampler::AddressMode::Clamp, Sampler::AddressMode::Clamp, Sampler::AddressMode::Clamp).setFilterMode(Sampler::Filter::Linear, Sampler::Filter::Linear, Sampler::Filter::Linear).setMaxAnisotropy(8);
@@ -607,19 +628,18 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
         sampler_Ribbons = Sampler::create(samplerDesc);
     }
 
-
     {
-        split.debug_texture = Texture::create2D(tile_numPixels, tile_numPixels, Diligent::TEX_FORMAT_RGBA8_UNORM, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess);
-        //split.bicubic_upsample_texture = Texture::create2D(tile_numPixels, tile_numPixels, Diligent::TEX_FORMAT_R32_FLOAT, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess);
-        split.normals_texture = Texture::create2D(tile_numPixels, tile_numPixels, Diligent::TEX_FORMAT_R11G11B10_FLOAT, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess);
-        split.vertex_A_texture = Texture::create2D(tile_numPixels / 2, tile_numPixels / 2, Diligent::TEX_FORMAT_R16_UINT, 1, 1, nullptr, Resource::BindFlags::ShaderResource | Falcor::Resource::BindFlags::UnorderedAccess);
-        split.vertex_B_texture = Texture::create2D(tile_numPixels / 2, tile_numPixels / 2, Diligent::TEX_FORMAT_R16_UINT, 1, 1, nullptr, Resource::BindFlags::ShaderResource | Falcor::Resource::BindFlags::UnorderedAccess);
+        split.debug_texture = Texture::create2D(tile_numPixels, tile_numPixels, Falcor::ResourceFormat::RGBA8Unorm, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess);
+        //split.bicubic_upsample_texture = Texture::create2D(tile_numPixels, tile_numPixels, Falcor::ResourceFormat::R32Float, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess);
+        split.normals_texture = Texture::create2D(tile_numPixels, tile_numPixels, Falcor::ResourceFormat::R11G11B10Float, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess);
+        split.vertex_A_texture = Texture::create2D(tile_numPixels / 2, tile_numPixels / 2, Falcor::ResourceFormat::R16Uint, 1, 1, nullptr, Resource::BindFlags::ShaderResource | Falcor::Resource::BindFlags::UnorderedAccess);
+        split.vertex_B_texture = Texture::create2D(tile_numPixels / 2, tile_numPixels / 2, Falcor::ResourceFormat::R16Uint, 1, 1, nullptr, Resource::BindFlags::ShaderResource | Falcor::Resource::BindFlags::UnorderedAccess);
     }
 
     {
         std::vector<glm::uint16> vertexData(tile_numPixels / 2 * tile_numPixels / 2);
         memset(vertexData.data(), 0, tile_numPixels / 2 * tile_numPixels / 2 * sizeof(glm::uint16));	  // set to zero's
-        split.vertex_clear = Texture::create2D(tile_numPixels / 2, tile_numPixels / 2, Diligent::TEX_FORMAT_R16_UINT, 1, 1, vertexData.data(), Resource::BindFlags::ShaderResource);
+        split.vertex_clear = Texture::create2D(tile_numPixels / 2, tile_numPixels / 2, Falcor::ResourceFormat::R16Uint, 1, 1, vertexData.data(), Resource::BindFlags::ShaderResource);
 
         // kante
         for (uint i = 1; i < 128; i += 2)
@@ -645,7 +665,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
             vertexData[(i << 7) + 5] = (i << 7) + 5;
             vertexData[(i << 7) + 125] = (i << 7) + 125;
         }
-        split.vertex_preload = Texture::create2D(tile_numPixels / 2, tile_numPixels / 2, Diligent::TEX_FORMAT_R16_UINT, 1, 1, vertexData.data(), Resource::BindFlags::ShaderResource);
+        split.vertex_preload = Texture::create2D(tile_numPixels / 2, tile_numPixels / 2, Falcor::ResourceFormat::R16Uint, 1, 1, vertexData.data(), Resource::BindFlags::ShaderResource);
     }
 
     {
@@ -665,42 +685,42 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
         {
             random[i] = distribution(generator);    // FIXME for 12 ecotopes
         }
-        split.noise_u16 = Texture::create2D(256, 256, Diligent::TEX_FORMAT_R16_UINT, 1, 1, random.data());
+        split.noise_u16 = Texture::create2D(256, 256, ResourceFormat::R16Uint, 1, 1, random.data());
 
         // frame buffer
         Fbo::Desc desc;
-        desc.setDepthStencilTarget(Diligent::TEX_FORMAT_D24_UNORM_S8_UINT);			// keep for now, not sure why, but maybe usefult for cuts
-        desc.setColorTarget(0u, Diligent::TEX_FORMAT_R32_FLOAT, true);		// elevation
-        desc.setColorTarget(1u, Diligent::TEX_FORMAT_R11G11B10_FLOAT, true);	// albedo
-        desc.setColorTarget(2u, Diligent::TEX_FORMAT_R11G11B10_FLOAT, true);	// pbr
-        desc.setColorTarget(3u, Diligent::TEX_FORMAT_R11G11B10_FLOAT, true);	// alpha
-        desc.setColorTarget(4u, Diligent::TEX_FORMAT_RGBA8_UNORM, true);		// ecotopes  ? R11G11B10Float 
-        desc.setColorTarget(5u, Diligent::TEX_FORMAT_RGBA8_UNORM, true);		// ecotopes
-        desc.setColorTarget(6u, Diligent::TEX_FORMAT_RGBA8_UNORM, true);		// ecotopes
-        desc.setColorTarget(7u, Diligent::TEX_FORMAT_RGBA8_UNORM, true);		// ecotopes
+        desc.setDepthStencilTarget(ResourceFormat::D24UnormS8);			// keep for now, not sure why, but maybe usefult for cuts
+        desc.setColorTarget(0u, ResourceFormat::R32Float, true);		// elevation
+        desc.setColorTarget(1u, ResourceFormat::R11G11B10Float, true);	// albedo
+        desc.setColorTarget(2u, ResourceFormat::R11G11B10Float, true);	// pbr
+        desc.setColorTarget(3u, ResourceFormat::R11G11B10Float, true);	// alpha
+        desc.setColorTarget(4u, ResourceFormat::RGBA8Unorm, true);		// ecotopes  ? R11G11B10Float 
+        desc.setColorTarget(5u, ResourceFormat::RGBA8Unorm, true);		// ecotopes
+        desc.setColorTarget(6u, ResourceFormat::RGBA8Unorm, true);		// ecotopes
+        desc.setColorTarget(7u, ResourceFormat::RGBA8Unorm, true);		// ecotopes
         split.tileFbo = Fbo::create2D(tile_numPixels, tile_numPixels, desc, 1, 8);
         split.bakeFbo = Fbo::create2D(split.bakeSize, split.bakeSize, desc, 1, 8);
-        bake.copy_texture = Texture::create2D(split.bakeSize, split.bakeSize, Diligent::TEX_FORMAT_R32_FLOAT, 1, 1, nullptr, Resource::BindFlags::None);
+        bake.copy_texture = Texture::create2D(split.bakeSize, split.bakeSize, Falcor::ResourceFormat::R32Float, 1, 1, nullptr, Resource::BindFlags::None);
 
         Fbo::Desc descVegBake;
-        desc.setDepthStencilTarget(Diligent::TEX_FORMAT_D24_UNORM_S8_UINT);			// keep for now, not sure why, but maybe usefult for cuts
-        desc.setColorTarget(0u, Diligent::TEX_FORMAT_RGBA8_UNORM, true);		// albedo
-        desc.setColorTarget(1u, Diligent::TEX_FORMAT_RGBA8_UNORM, true);	    // normal
-        desc.setColorTarget(2u, Diligent::TEX_FORMAT_R11G11B10_FLOAT, true);	// pbr
-        desc.setColorTarget(3u, Diligent::TEX_FORMAT_R11G11B10_FLOAT, true);	// extra
+        desc.setDepthStencilTarget(ResourceFormat::D24UnormS8);			// keep for now, not sure why, but maybe usefult for cuts
+        desc.setColorTarget(0u, ResourceFormat::RGBA8Unorm, true);		// albedo
+        desc.setColorTarget(1u, ResourceFormat::RGBA8Unorm, true);	    // normal
+        desc.setColorTarget(2u, ResourceFormat::R11G11B10Float, true);	// pbr
+        desc.setColorTarget(3u, ResourceFormat::R11G11B10Float, true);	// extra
         bakeFbo_plants = Fbo::create2D(1024, 1024, desc, 1, 1);
 
-        compressed_Normals_Array = Texture::create2D(tile_numPixels, tile_numPixels, Diligent::TEX_FORMAT_R11G11B10_FLOAT, numTiles, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);	  // Now an array	  at 1024 tiles its 256 Mb , Fair bit but do-ablwe
-        //compressed_Albedo_Array = Texture::create2D(tile_numPixels, tile_numPixels, Diligent::TEX_FORMAT_BC6H_UF16, numTiles, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-        compressed_Albedo_Array = Texture::create2D(tile_numPixels, tile_numPixels, Diligent::TEX_FORMAT_R11G11B10_FLOAT, numTiles, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-        compressed_PBR_Array = Texture::create2D(tile_numPixels, tile_numPixels, Diligent::TEX_FORMAT_BC6H_UF16, numTiles, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-        height_Array = Texture::create2D(tile_numPixels, tile_numPixels, Diligent::TEX_FORMAT_R32_FLOAT, numTiles, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);	  // Now an array	  1024 tiles is 64 MB - really nice and small
+        compressed_Normals_Array = Texture::create2D(tile_numPixels, tile_numPixels, Falcor::ResourceFormat::R11G11B10Float, numTiles, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);	  // Now an array	  at 1024 tiles its 256 Mb , Fair bit but do-ablwe
+        //compressed_Albedo_Array = Texture::create2D(tile_numPixels, tile_numPixels, Falcor::ResourceFormat::BC6HU16, numTiles, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+        compressed_Albedo_Array = Texture::create2D(tile_numPixels, tile_numPixels, Falcor::ResourceFormat::R11G11B10Float, numTiles, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+        compressed_PBR_Array = Texture::create2D(tile_numPixels, tile_numPixels, Falcor::ResourceFormat::BC6HU16, numTiles, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+        height_Array = Texture::create2D(tile_numPixels, tile_numPixels, Falcor::ResourceFormat::R32Float, numTiles, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);	  // Now an array	  1024 tiles is 64 MB - really nice and small
 
-        split.drawArgs_quads = Buffer::createStructured(sizeof(t_DrawArguments), 1, Resource::BindFlags::UnorderedAccess | Resource::BindFlags::IndirectArg);
-        split.drawArgs_plants = Buffer::createStructured(sizeof(t_DrawArguments), 1, Resource::BindFlags::UnorderedAccess | Resource::BindFlags::IndirectArg);
-        split.drawArgs_clippedloddedplants = Buffer::createStructured(sizeof(t_DrawArguments), 1, Resource::BindFlags::UnorderedAccess | Resource::BindFlags::IndirectArg);
-        split.drawArgs_tiles = Buffer::createStructured(sizeof(t_DrawArguments), 1, Resource::BindFlags::UnorderedAccess | Resource::BindFlags::IndirectArg);
-        split.dispatchArgs_plants = Buffer::createStructured(sizeof(t_DispatchArguments), 1, Resource::BindFlags::UnorderedAccess | Resource::BindFlags::IndirectArg);
+        split.drawArgs_quads = Buffer::createStructured(sizeof(t_DrawArguments), numRenderViews, Resource::BindFlags::UnorderedAccess | Resource::BindFlags::IndirectArg);
+        //split.drawArgs_plants = Buffer::createStructured(sizeof(t_DrawArguments), 1, Resource::BindFlags::UnorderedAccess | Resource::BindFlags::IndirectArg);
+        //split.drawArgs_clippedloddedplants = Buffer::createStructured(sizeof(t_DrawArguments), numRenderViews, Resource::BindFlags::UnorderedAccess | Resource::BindFlags::IndirectArg);
+        split.drawArgs_tiles = Buffer::createStructured(sizeof(t_DrawArguments), numRenderViews, Resource::BindFlags::UnorderedAccess | Resource::BindFlags::IndirectArg);
+        split.dispatchArgs_plants = Buffer::createStructured(sizeof(t_DispatchArguments), numRenderViews, Resource::BindFlags::UnorderedAccess | Resource::BindFlags::IndirectArg);
 
         split.buffer_feedback = Buffer::createStructured(sizeof(GC_feedback), 1);
         split.buffer_feedback_read = Buffer::createStructured(sizeof(GC_feedback), 1, Resource::BindFlags::None, Buffer::CpuAccess::Read);
@@ -711,15 +731,19 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
         split.buffer_instance_plants = Buffer::createStructured(sizeof(instance_PLANT), numTiles * numPlantsPerTile);
         split.buffer_clippedloddedplants = Buffer::createStructured(sizeof(xformed_PLANT), 1024 * 1024); //32 bytes
 
-        split.buffer_lookup_terrain = Buffer::createStructured(sizeof(tileLookupStruct), 524288);   // enopugh for 32M tr  overkill FIXME - LOG
-        split.buffer_lookup_quads = Buffer::createStructured(sizeof(instance_PLANT), 131072);     // enough for 8M far plants
-        split.buffer_lookup_plants = Buffer::createStructured(sizeof(instance_PLANT), 131072);
+        for (int i = 0; i < numRenderViews; i++)
+        {
+            split.buffer_lookup_terrain[i] = Buffer::createStructured(sizeof(tileLookupStruct), lookupSizeTerrain[i]);
+            split.buffer_lookup_quads[i] = Buffer::createStructured(sizeof(tileLookupStruct), lookupSizeBillboard[i]);
+            split.buffer_lookup_plants[i] = Buffer::createStructured(sizeof(tileLookupStruct), lookupSizePlants[i]);
+        }
 
         split.buffer_terrain = Buffer::createStructured(sizeof(Terrain_vertex), numVertPerTile * numTiles);
 
-        terrainShader.load("hlsl/terrain/render_Tiles.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
+        terrainShader.load("Samples/Earthworks_4/hlsl/terrain/render_Tiles.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
         terrainShader.Vars()->setBuffer("tiles", split.buffer_tiles);
-        terrainShader.Vars()->setBuffer("tileLookup", split.buffer_lookup_terrain);
+        // not here, irt depends on teh view we render
+        //terrainShader.Vars()->setBuffer("tileLookup", split.buffer_lookup_terrain);
 
         terrainShader.Vars()->setTexture("gAlbedoArray", compressed_Albedo_Array);
         terrainShader.Vars()->setTexture("gPBRArray", compressed_PBR_Array);
@@ -736,12 +760,12 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
         spriteTexture = Texture::createFromFile(settings.dirRoot + "/ecosystem/sprite_diff.DDS", true, true);
         spriteNormalsTexture = Texture::createFromFile(settings.dirRoot + "/ecosystem/sprite_norm.DDS", true, false);
 
-        terrainSpiteShader.load("hlsl/terrain/render_tile_sprite.hlsl", "vsMain", "psMain", Vao::Topology::PointList, "gsMain");
+        terrainSpiteShader.load("Samples/Earthworks_4/hlsl/terrain/render_tile_sprite.hlsl", "vsMain", "psMain", Vao::Topology::PointList, "gsMain");
         terrainSpiteShader.Vars()->setBuffer("tiles", split.buffer_tiles);
-        terrainSpiteShader.Vars()->setBuffer("tileLookup", split.buffer_lookup_quads);
+        //terrainSpiteShader.Vars()->setBuffer("tileLookup", split.buffer_lookup_quads);
         terrainSpiteShader.Vars()->setBuffer("instanceBuffer", split.buffer_instance_quads);        // WHY BOTH
         terrainSpiteShader.Vars()->setSampler("gSampler", sampler_ClampAnisotropic);
-        terrainSpiteShader.Vars()->setSampler("gSmpLinearClamp", sampler_Clamp);
+        terrainSpiteShader.Vars()->setSampler("gSmpLinearClamp", sampler_Ribbons);
 
 
 
@@ -751,19 +775,10 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
 
 
 
-
-        /*
-        Texture::SharedPtr tex = Texture::createFromFile(settings.dirResource + "/textures/bark/Oak1_albedo.dds", false, true);
-        ribbonTextures.emplace_back(tex);
-        tex = Texture::createFromFile(settings.dirResource + "/textures/bark/Oak1_sprite_normal.dds", false, false);
-        ribbonTextures.emplace_back(tex);
-
-        tex = Texture::createFromFile(settings.dirResource + "/textures/twigs/dandelion_leaf1_albedo.dds", false, true);
-        ribbonTextures.emplace_back(tex);
-        tex = Texture::createFromFile(settings.dirResource + "/textures/twigs/dandelion_leaf1_normal.dds", false, false);
-        ribbonTextures.emplace_back(tex);
-        */
         {
+            /*
+            LOG_BLOCK("loading buildings /rappersville", 0);
+            terrafectorSystem::logTimeX();
             fprintf(_logfile, "load %s\n", (settings.dirRoot + "/buildings/rappersville").c_str());
             fflush(_logfile);
 
@@ -791,29 +806,33 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
             rappersvilleData->setBlob(VERTS.data(), 0, numVerts * sizeof(_buildingVertex));
 
 
-            rappersvilleShader.load("hlsl/terrain/render_Buildings_Far.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
+            rappersvilleShader.load("Samples/Earthworks_4/hlsl/terrain/render_Buildings_Far.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
             rappersvilleShader.Vars()->setBuffer("vertexBuffer", rappersvilleData);
 
             numrapperstri = numVerts / 3;
             //drawArgs_rappersville = Buffer::createStructured(sizeof(t_DrawArguments), 1, Resource::BindFlags::UnorderedAccess | Resource::BindFlags::IndirectArg);
+            */
         }
 
 
         {
+            /*
+            LOG_BLOCK("gliderwingData", 0);
             gliderwingData[0] = Buffer::createStructured(sizeof(_buildingVertex), 16384); // will be arounf 1300 so just enough
             gliderwingData[1] = Buffer::createStructured(sizeof(_buildingVertex), 16384); // will be arounf 1300 so just enough
 
-            gliderwingShader.load("hlsl/terrain/render_GliderWing.hlsl", "vsMain", "psMain", Vao::Topology::TriangleStrip);
+            gliderwingShader.load("Samples/Earthworks_4/hlsl/terrain/render_GliderWing.hlsl", "vsMain", "psMain", Vao::Topology::TriangleStrip);
 
 
             RasterizerState::Desc rsDesc;
             rsDesc.setFillMode(RasterizerState::FillMode::Solid).setCullMode(RasterizerState::CullMode::Front);
             rasterstateGliderWing = RasterizerState::create(rsDesc);
+            */
         }
 
 
 
-        ribbonShader.load("hlsl/terrain/render_ribbons.hlsl", "vsMain", "psMain", Vao::Topology::LineStrip, "gsMain");
+        ribbonShader.load("Samples/Earthworks_4/hlsl/terrain/render_ribbons.hlsl", "vsMain", "psMain", Vao::Topology::LineStrip, "gsMain");
         ribbonShader.Vars()->setBuffer("instanceBuffer", ribbonData[0]);
         ribbonShader.Vars()->setBuffer("materials", _plantMaterial::static_materials_veg.sb_vegetation_Materials);
         ribbonShader.Vars()->setBuffer("instances", split.buffer_clippedloddedplants);
@@ -823,7 +842,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
 
 
 
-        compute_bakeFloodfill.load("hlsl/terrain/compute_bakeFloodfill.hlsl");
+        compute_bakeFloodfill.load("Samples/Earthworks_4/hlsl/terrain/compute_bakeFloodfill.hlsl");
 
 
 
@@ -831,19 +850,25 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
 
         triangleData = Buffer::createStructured(sizeof(triangleVertex), 16384); // just a nice amount for now
 
-        triangleShader.load("hlsl/terrain/render_triangles.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
+        triangleShader.load("Samples/Earthworks_4/hlsl/terrain/render_triangles.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
         triangleShader.Vars()->setBuffer("instanceBuffer", triangleData);        // WHY BOTH
         triangleShader.Vars()->setBuffer("instances", split.buffer_clippedloddedplants);
         triangleShader.Vars()->setSampler("gSampler", sampler_ClampAnisotropic);
         triangleShader.Vars()->setSampler("gSmpLinearClamp", sampler_ClampAnisotropic);
 
+        triangleData_VegHuman = Buffer::createStructured(sizeof(triangleVertex), 16384); // just a nice amount for now
+        veghumanShader.load("Samples/Earthworks_4/hlsl/terrain/render_triangles.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
+        veghumanShader.Vars()->setBuffer("instanceBuffer", triangleData);
+        veghumanShader.Vars()->setBuffer("instances", split.buffer_clippedloddedplants);
+        veghumanShader.Vars()->setSampler("gSampler", sampler_ClampAnisotropic);
+        veghumanShader.Vars()->setSampler("gSmpLinearClamp", sampler_ClampAnisotropic);
 
         {
-#if 0 // EARTHWORKSFX_DEFERRED_CFD
+            LOG_BLOCK("thermalsData", 0);
             thermalsData = Buffer::createStructured(sizeof(float4), numThermals * 100); // just a nice amount for now
             //            thermalsData->setBlob(thermals.data(), 0, numThermals * 100 * sizeof(float4));
 
-            thermalsShader.load("hlsl/terrain/render_thermalRibbons.hlsl", "vsMain", "psMain", Vao::Topology::LineStrip, "gsMain");
+            thermalsShader.load("Samples/Earthworks_4/hlsl/terrain/render_thermalRibbons.hlsl", "vsMain", "psMain", Vao::Topology::LineStrip, "gsMain");
             thermalsShader.Vars()->setBuffer("vertexBuffer", thermalsData);        // WHY BOTH
             thermalsShader.Vars()->setSampler("gSampler", sampler_ClampAnisotropic);
         }
@@ -851,44 +876,44 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
 
         std::cout << "      cfd\n";
         {
-            cfd.sliceVTexture[0] = Texture::create2D(128, 128, Diligent::TEX_FORMAT_RGB32_FLOAT, 1, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVTexture[1] = Texture::create2D(128, 128, Diligent::TEX_FORMAT_RGB32_FLOAT, 1, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceDataTexture[0] = Texture::create2D(128, 128, Diligent::TEX_FORMAT_RGB32_FLOAT, 1, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceDataTexture[1] = Texture::create2D(128, 128, Diligent::TEX_FORMAT_RGB32_FLOAT, 1, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            LOG_BLOCK("cfd", 0);
+            cfd.sliceVTexture[0] = Texture::create2D(128, 128, Falcor::ResourceFormat::RGB32Float, 1, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVTexture[1] = Texture::create2D(128, 128, Falcor::ResourceFormat::RGB32Float, 1, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceDataTexture[0] = Texture::create2D(128, 128, Falcor::ResourceFormat::RGB32Float, 1, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceDataTexture[1] = Texture::create2D(128, 128, Falcor::ResourceFormat::RGB32Float, 1, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
 
             // FIXME kry die afmetinsg van .cfd af
-            cfd.sliceVolumeTexture[0][0] = Texture::create3D(128, 32, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVolumeTexture[0][1] = Texture::create3D(128, 32, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVolumeTexture[0][2] = Texture::create3D(128, 32, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[0][0] = Texture::create3D(128, 32, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[0][1] = Texture::create3D(128, 32, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[0][2] = Texture::create3D(128, 32, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
 
-            cfd.sliceVolumeTexture[1][0] = Texture::create3D(128, 64, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVolumeTexture[1][1] = Texture::create3D(128, 64, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVolumeTexture[1][2] = Texture::create3D(128, 64, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[1][0] = Texture::create3D(128, 64, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[1][1] = Texture::create3D(128, 64, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[1][2] = Texture::create3D(128, 64, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
 
-            cfd.sliceVolumeTexture[2][0] = Texture::create3D(128, 128, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVolumeTexture[2][1] = Texture::create3D(128, 128, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVolumeTexture[2][2] = Texture::create3D(128, 128, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[2][0] = Texture::create3D(128, 128, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[2][1] = Texture::create3D(128, 128, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[2][2] = Texture::create3D(128, 128, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
 
-            cfd.sliceVolumeTexture[3][0] = Texture::create3D(128, 128, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVolumeTexture[3][1] = Texture::create3D(128, 128, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVolumeTexture[3][2] = Texture::create3D(128, 128, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[3][0] = Texture::create3D(128, 128, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[3][1] = Texture::create3D(128, 128, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[3][2] = Texture::create3D(128, 128, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
 
-            cfd.sliceVolumeTexture[4][0] = Texture::create3D(128, 128, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVolumeTexture[4][1] = Texture::create3D(128, 128, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVolumeTexture[4][2] = Texture::create3D(128, 128, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[4][0] = Texture::create3D(128, 128, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[4][1] = Texture::create3D(128, 128, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[4][2] = Texture::create3D(128, 128, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
 
-            cfd.sliceVolumeTexture[5][0] = Texture::create3D(128, 128, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVolumeTexture[5][1] = Texture::create3D(128, 128, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
-            cfd.sliceVolumeTexture[5][2] = Texture::create3D(128, 128, 128, Diligent::TEX_FORMAT_B5G6R5_UNORM, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[5][0] = Texture::create3D(128, 128, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[5][1] = Texture::create3D(128, 128, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
+            cfd.sliceVolumeTexture[5][2] = Texture::create3D(128, 128, 128, Falcor::ResourceFormat::R5G6B5Unorm, 1, nullptr, Falcor::Resource::BindFlags::ShaderResource);
 
-            cfdSliceShader.load("hlsl/terrain/render_cfdSlice.hlsl", "vsMain", "psMain", Vao::Topology::TriangleStrip);
+            cfdSliceShader.load("Samples/Earthworks_4/hlsl/terrain/render_cfdSlice.hlsl", "vsMain", "psMain", Vao::Topology::TriangleStrip);
             cfdSliceShader.Vars()->setSampler("gSampler", sampler_Trilinear);
             cfdSliceShader.Vars()->setSampler("gSamplerClamp", sampler_ClampAnisotropic);
             cfdSliceShader.Vars()->setTexture("gV", cfd.sliceVTexture[0]);
             cfdSliceShader.Vars()->setTexture("gData", cfd.sliceDataTexture[0]);
             cfdSliceShader.Vars()->setTexture("gV_1", cfd.sliceVTexture[1]);
             cfdSliceShader.Vars()->setTexture("gData_1", cfd.sliceDataTexture[1]);
-#endif
         }
 
 
@@ -898,288 +923,382 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
         vegetation.dappledLightTexture = Texture::createFromFile(settings.dirResource + "/vegetation/dappled_noise_01.jpg", false, true);
         triangleShader.Vars()->setTexture("gSky", vegetation.skyTexture);
         ribbonShader.Vars()->setTexture("gEnv", vegetation.envTexture);
-        //vegetationShader.Vars()->setTexture("gEnv", vegetation.envTexture);
-        //vegetationShader_Bake.Vars()->setTexture("gEnv", vegetation.envTexture);
-
-        
-
-        // Grass from disk ###########################################################################################################
-
-        unsigned int flags =
-            aiProcess_FlipUVs |
-            aiProcess_Triangulate |
-            aiProcess_PreTransformVertices |
-            //aiProcess_JoinIdenticalVertices |
-            aiProcess_GenBoundingBoxes;
 
 
-        triangleVertex testribbonsFile[50 * 128];
-        memset(testribbonsFile, 0, 50 * 128 * sizeof(triangleVertex));
-        uint vertCount = 0;
-        Assimp::Importer importer;
-        const aiScene* scene = nullptr;
-        char name[256];
 
-        //for (int F = 1; F <= 16; F++)
+
+        // Loadss the sky triangles - DO BERTEER ###########################################################################################################
         {
-            sprintf(name, (settings.dirResource + "/cube.fbx").c_str());
 
-            scene = importer.ReadFile(name, flags);
-            if (scene)
+            LOG_BLOCK("Load sky triangles - do better", 0);
+            unsigned int flags =
+                aiProcess_FlipUVs |
+                aiProcess_Triangulate |
+                aiProcess_PreTransformVertices |
+                //aiProcess_JoinIdenticalVertices |
+                aiProcess_GenBoundingBoxes;
+
+
+            triangleVertex testribbonsFile[50 * 128];
+            memset(testribbonsFile, 0, 50 * 128 * sizeof(triangleVertex));
+            uint vertCount = 0;
+            Assimp::Importer importer;
+            const aiScene* scene = nullptr;
+            char name[256];
+
+            //for (int F = 1; F <= 16; F++)
             {
-                aiMesh* M = scene->mMeshes[0];
-                uint numSegments = M->mNumFaces;
-                for (uint j = 0; j < numSegments; j++)
+                sprintf(name, (settings.dirResource + "/cube.fbx").c_str());
+
+                scene = importer.ReadFile(name, flags);
+                if (scene)
                 {
-                    aiFace face = M->mFaces[j];
-                    for (int idx = 0; idx < 3; idx++)
+                    aiMesh* M = scene->mMeshes[0];
+                    uint numSegments = M->mNumFaces;
+                    for (uint j = 0; j < numSegments; j++)
                     {
-                        aiVector3D V = M->mVertices[face.mIndices[idx]];
-                        aiVector3D N = M->mNormals[face.mIndices[idx]];
-                        aiVector3D U = M->mTextureCoords[0][face.mIndices[idx]];
-                        testribbonsFile[vertCount].pos = float3(V.x, V.y, V.z) * 0.01f;
-                        testribbonsFile[vertCount].norm = float3(N.x, N.y, N.z);
-                        testribbonsFile[vertCount].u = U.x;
-                        testribbonsFile[vertCount].v = U.y;
-                        vertCount++;
+                        aiFace face = M->mFaces[j];
+                        for (int idx = 0; idx < 3; idx++)
+                        {
+                            aiVector3D V = M->mVertices[face.mIndices[idx]];
+                            aiVector3D N = M->mNormals[face.mIndices[idx]];
+                            aiVector3D U = M->mTextureCoords[0][face.mIndices[idx]];
+                            testribbonsFile[vertCount].pos = float3(V.x, V.y, V.z) * 0.01f;
+                            testribbonsFile[vertCount].norm = float3(N.x, N.y, N.z);
+                            testribbonsFile[vertCount].u = U.x;
+                            testribbonsFile[vertCount].v = U.y;
+                            vertCount++;
+                        }
                     }
                 }
             }
+
+
+            triangleData->setBlob(testribbonsFile, 0, 50 * 128 * sizeof(triangleVertex));
+
         }
 
+        // vegetation human shape
+        /*
+        {
+            unsigned int flags =     aiProcess_FlipUVs | aiProcess_Triangulate | aiProcess_PreTransformVertices |  aiProcess_GenBoundingBoxes;
 
-        triangleData->setBlob(testribbonsFile, 0, 50 * 128 * sizeof(triangleVertex));
+            triangleVertex testribbonsFile[50 * 128];
+            memset(testribbonsFile, 0, 50 * 128 * sizeof(triangleVertex));
+            uint vertCount = 0;
+            Assimp::Importer importer;
+            const aiScene* scene = nullptr;
+            char name[256];
 
+            {
+                sprintf(name, (settings.dirResource + "/vegetationHuman.fbx").c_str());
+
+                scene = importer.ReadFile(name, flags);
+                if (scene)
+                {
+                    aiMesh* M = scene->mMeshes[0];
+                    uint numSegments = M->mNumFaces;
+                    for (uint j = 0; j < numSegments; j++)
+                    {
+                        aiFace face = M->mFaces[j];
+                        for (int idx = 0; idx < 3; idx++)
+                        {
+                            aiVector3D V = M->mVertices[face.mIndices[idx]];
+                            aiVector3D N = M->mNormals[face.mIndices[idx]];
+                            aiVector3D U = M->mTextureCoords[0][face.mIndices[idx]];
+                            testribbonsFile[vertCount].pos = float3(V.x, V.y, V.z) * 0.01f;
+                            testribbonsFile[vertCount].norm = float3(N.x, N.y, N.z);
+                            testribbonsFile[vertCount].u = U.x;
+                            testribbonsFile[vertCount].v = U.y;
+                            vertCount++;
+                        }
+                    }
+                }
+            }
+
+            triangleData_VegHuman->setBlob(testribbonsFile, 0, 50 * 128 * sizeof(triangleVertex));
+        }
+        */
 
 
         std::cout << "      shaders\n";
+        {
+            LOG_BLOCK("shaders", 0);
 
-        compute_TerrainUnderMouse.load("hlsl/terrain/compute_terrain_under_mouse.hlsl");
-        compute_TerrainUnderMouse.Vars()->setSampler("gSampler", sampler_Clamp);
-        compute_TerrainUnderMouse.Vars()->setTexture("gHeight", height_Array);
-        compute_TerrainUnderMouse.Vars()->setBuffer("tiles", split.buffer_tiles);
-        compute_TerrainUnderMouse.Vars()->setBuffer("groundcover_feedback", split.buffer_feedback);
+            compute_TerrainUnderMouse.load("Samples/Earthworks_4/hlsl/terrain/compute_terrain_under_mouse.hlsl");
+            compute_TerrainUnderMouse.Vars()->setSampler("gSampler", sampler_Clamp);
+            compute_TerrainUnderMouse.Vars()->setTexture("gHeight", height_Array);
+            compute_TerrainUnderMouse.Vars()->setBuffer("tiles", split.buffer_tiles);
+            compute_TerrainUnderMouse.Vars()->setBuffer("groundcover_feedback", split.buffer_feedback);
 
-        // clear
-        split.compute_tileClear.load("hlsl/terrain/compute_tileClear.hlsl");
-        split.compute_tileClear.Vars()->setBuffer("feedback", split.buffer_feedback);
-        split.compute_tileClear.Vars()->setBuffer("DrawArgs_Terrain", split.drawArgs_tiles);
-        split.compute_tileClear.Vars()->setBuffer("DrawArgs_Quads", split.drawArgs_quads);
-        split.compute_tileClear.Vars()->setBuffer("DrawArgs_Plants", split.drawArgs_plants);
-        split.compute_tileClear.Vars()->setBuffer("DrawArgs_ClippedLoddedPlants", split.drawArgs_clippedloddedplants);
-        split.compute_tileClear.Vars()->setBuffer("DispatchArgs_Plants", split.dispatchArgs_plants);
-
-
-        // plants clip lod animate
-        split.compute_clipLodAnimatePlants.load("hlsl/terrain/compute_clipLodAnimatePlants.hlsl");
-        split.compute_clipLodAnimatePlants.Vars()->setBuffer("tiles", split.buffer_tiles);
-        split.compute_clipLodAnimatePlants.Vars()->setBuffer("tileLookup", split.buffer_lookup_plants);
-        split.compute_clipLodAnimatePlants.Vars()->setBuffer("plantBuffer", split.buffer_instance_plants);
-        split.compute_clipLodAnimatePlants.Vars()->setBuffer("output", split.buffer_clippedloddedplants);
-        split.compute_clipLodAnimatePlants.Vars()->setBuffer("drawArgs_Plants", split.drawArgs_clippedloddedplants);
-        split.compute_clipLodAnimatePlants.Vars()->setBuffer("feedback", split.buffer_feedback);
-        
-        
-
-        // split merge
-        split.compute_tileSplitMerge.load("hlsl/terrain/compute_tileSplitMerge.hlsl");
-        split.compute_tileSplitMerge.Vars()->setBuffer("tiles", split.buffer_tiles);
-        split.compute_tileSplitMerge.Vars()->setBuffer("feedback", split.buffer_feedback);
-
-        // generate
-        split.compute_tileGenerate.load("hlsl/terrain/compute_tileGenerate.hlsl");
-        split.compute_tileGenerate.Vars()->setBuffer("quad_instance", split.buffer_instance_quads);
-        split.compute_tileGenerate.Vars()->setBuffer("tiles", split.buffer_tiles);
-        split.compute_tileGenerate.Vars()->setTexture("gNoise", split.noise_u16);
-        split.compute_tileGenerate.Vars()->setTexture("gHgt", split.tileFbo->getColorTexture(0));
-        split.compute_tileGenerate.Vars()->setTexture("gEct1", split.tileFbo->getColorTexture(4));
-        split.compute_tileGenerate.Vars()->setTexture("gEct2", split.tileFbo->getColorTexture(5));
-        split.compute_tileGenerate.Vars()->setTexture("gEct3", split.tileFbo->getColorTexture(6));
-        split.compute_tileGenerate.Vars()->setTexture("gEct4", split.tileFbo->getColorTexture(7));
-
-        // passthrough
-        split.compute_tilePassthrough.load("hlsl/terrain/compute_tilePassthrough.hlsl");
-        split.compute_tilePassthrough.Vars()->setBuffer("quad_instance", split.buffer_instance_quads);
-        split.compute_tilePassthrough.Vars()->setBuffer("plant_i", split.buffer_instance_plants);
-        split.compute_tilePassthrough.Vars()->setBuffer("feedback", split.buffer_feedback);
-        split.compute_tilePassthrough.Vars()->setBuffer("tiles", split.buffer_tiles);
-        split.compute_tilePassthrough.Vars()->setTexture("gHgt", split.tileFbo->getColorTexture(0));
-        split.compute_tilePassthrough.Vars()->setTexture("gNoise", split.noise_u16);
-
-        // build lookup
-        split.compute_tileBuildLookup.load("hlsl/terrain/compute_tileBuildLookup.hlsl");
-        split.compute_tileBuildLookup.Vars()->setBuffer("tiles", split.buffer_tiles);
-        split.compute_tileBuildLookup.Vars()->setBuffer("tileLookup", split.buffer_lookup_quads);
-        split.compute_tileBuildLookup.Vars()->setBuffer("plantLookup", split.buffer_lookup_plants);
-        split.compute_tileBuildLookup.Vars()->setBuffer("terrainLookup", split.buffer_lookup_terrain);
-        split.compute_tileBuildLookup.Vars()->setBuffer("DrawArgs_Quads", split.drawArgs_quads);
-        split.compute_tileBuildLookup.Vars()->setBuffer("DrawArgs_Plants", split.drawArgs_plants);
-        split.compute_tileBuildLookup.Vars()->setBuffer("DrawArgs_Terrain", split.drawArgs_tiles);
-        split.compute_tileBuildLookup.Vars()->setBuffer("feedback", split.buffer_feedback);
-        split.compute_tileBuildLookup.Vars()->setBuffer("DispatchArgs_Plants", split.dispatchArgs_plants);
-
-        // bicubic
-        split.compute_tileBicubic.load("hlsl/terrain/compute_tileBicubic.hlsl");
-        split.compute_tileBicubic.Vars()->setSampler("linearSampler", sampler_Clamp);
-        split.compute_tileBicubic.Vars()->setTexture("gOutput", split.tileFbo->getColorTexture(0));
-        split.compute_tileBicubic.Vars()->setTexture("gOutputAlbedo", split.tileFbo->getColorTexture(1));
-        split.compute_tileBicubic.Vars()->setTexture("gOutputPermanence", split.tileFbo->getColorTexture(3));
-        split.compute_tileBicubic.Vars()->setTexture("gDebug", split.debug_texture);
-        //split.compute_tileBicubic.Vars()->setTexture("gOuthgt_TEMPTILLTR", split.tileFbo->getColorTexture(0));
-
-        // ecotopes
-        split.compute_tileEcotopes.load("hlsl/terrain/compute_tileEcotopes.hlsl");
-        split.compute_tileEcotopes.Vars()->setSampler("linearSampler", sampler_Clamp);
-        split.compute_tileEcotopes.Vars()->setTexture("gHeight", split.tileFbo->getColorTexture(0));
-        split.compute_tileEcotopes.Vars()->setTexture("gAlbedo", split.tileFbo->getColorTexture(1));
-        split.compute_tileEcotopes.Vars()->setTexture("gInPermanence", split.tileFbo->getColorTexture(3));
-        split.compute_tileEcotopes.Vars()->setTexture("gInEct_0", split.tileFbo->getColorTexture(4));
-        split.compute_tileEcotopes.Vars()->setTexture("gInEct_1", split.tileFbo->getColorTexture(5));
-        split.compute_tileEcotopes.Vars()->setTexture("gInEct_2", split.tileFbo->getColorTexture(6));
-        split.compute_tileEcotopes.Vars()->setTexture("gInEct_3", split.tileFbo->getColorTexture(7));
-        split.compute_tileEcotopes.Vars()->setTexture("gNoise", split.noise_u16);
-        split.compute_tileEcotopes.Vars()->setBuffer("tiles", split.buffer_tiles);
-        split.compute_tileEcotopes.Vars()->setBuffer("quad_instance", split.buffer_instance_quads);
-        split.compute_tileEcotopes.Vars()->setBuffer("feedback", split.buffer_feedback);
+            // clear
+            split.compute_tileClear.load("Samples/Earthworks_4/hlsl/terrain/compute_tileClear.hlsl");
+            split.compute_tileClear.Vars()->setBuffer("feedback", split.buffer_feedback);
+            split.compute_tileClear.Vars()->setBuffer("DrawArgs_Terrain", split.drawArgs_tiles);
+            split.compute_tileClear.Vars()->setBuffer("DrawArgs_Quads", split.drawArgs_quads);
+            //split.compute_tileClear.Vars()->setBuffer("DrawArgs_Plants", split.drawArgs_plants);
+            //split.compute_tileClear.Vars()->setBuffer("DrawArgs_ClippedLoddedPlants", split.drawArgs_clippedloddedplants);
+            split.compute_tileClear.Vars()->setBuffer("DispatchArgs_Plants", split.dispatchArgs_plants);
 
 
-        // normals
-        split.compute_tileNormals.load("hlsl/terrain/compute_tileNormals.hlsl");
-        split.compute_tileNormals.Vars()->setTexture("gInHgt", split.tileFbo->getColorTexture(0));
-        split.compute_tileNormals.Vars()->setTexture("gOutNormals", split.normals_texture);
-        split.compute_tileNormals.Vars()->setTexture("gOutput", split.debug_texture);
-        split.compute_tileNormals.Vars()->setBuffer("tiles", split.buffer_tiles);
+            // plants clip lod animate
+            split.compute_clipLodAnimatePlants.load("Samples/Earthworks_4/hlsl/terrain/compute_clipLodAnimatePlants.hlsl");
+            split.compute_clipLodAnimatePlants.Vars()->setBuffer("tiles", split.buffer_tiles);
+            //split.compute_clipLodAnimatePlants.Vars()->setBuffer("tileLookup", split.buffer_lookup_plants); FO later per view
+            split.compute_clipLodAnimatePlants.Vars()->setBuffer("plantBuffer", split.buffer_instance_plants);
+            split.compute_clipLodAnimatePlants.Vars()->setBuffer("output", split.buffer_clippedloddedplants);
+            //split.compute_clipLodAnimatePlants.Vars()->setBuffer("drawArgs_Plants", split.drawArgs_clippedloddedplants);
+            split.compute_clipLodAnimatePlants.Vars()->setBuffer("feedback", split.buffer_feedback);
 
-        // vertices
-        split.compute_tileVerticis.load("hlsl/terrain/compute_tileVertices.hlsl");
-        split.compute_tileVerticis.Vars()->setSampler("linearSampler", sampler_Clamp);
-        split.compute_tileVerticis.Vars()->setTexture("gInHgt", split.tileFbo->getColorTexture(0));
-        split.compute_tileVerticis.Vars()->setTexture("gOutVerts", split.vertex_A_texture);
-        split.compute_tileVerticis.Vars()->setTexture("gDebug", split.debug_texture);
-        split.compute_tileVerticis.Vars()->setBuffer("tileCenters", split.buffer_tileCenters);
-        split.compute_tileVerticis.Vars()->setBuffer("tiles", split.buffer_tiles);
 
-        // jumpflood
-        // It may even be faster to set this up twice and hop between the two
-        split.compute_tileJumpFlood.load("hlsl/terrain/compute_tileJumpFlood.hlsl");
-        split.compute_tileJumpFlood.Vars()->setTexture("gDebug", split.debug_texture);
 
-        // delaunay
-        split.compute_tileDelaunay.load("hlsl/terrain/compute_tileDelaunay.hlsl");
-        split.compute_tileDelaunay.Vars()->setTexture("gInHgt", split.tileFbo->getColorTexture(0));
-        split.compute_tileDelaunay.Vars()->setTexture("gInVerts", split.vertex_B_texture);
-        split.compute_tileDelaunay.Vars()->setBuffer("VB", split.buffer_terrain);
-        split.compute_tileDelaunay.Vars()->setBuffer("tiles", split.buffer_tiles);
-        //split.compute_tileDelaunay.Vars()->setBuffer("tileDrawargsArray", split.drawArgs_tiles);
+            // split merge
+            split.compute_tileSplitMerge.load("Samples/Earthworks_4/hlsl/terrain/compute_tileSplitMerge.hlsl");
+            split.compute_tileSplitMerge.Vars()->setBuffer("tiles", split.buffer_tiles);
+            split.compute_tileSplitMerge.Vars()->setBuffer("feedback", split.buffer_feedback);
 
-        // elevation mipmap
-        /*
-        split.compute_tileElevationMipmap.load("hlsl/terrain/compute_tileElevationMipmap.hlsl");
-        split.compute_tileElevationMipmap.Vars()->setTexture("gInHgt", split.tileFbo->getColorTexture(0));
-        split.compute_tileElevationMipmap.Vars()->setTexture("gDebug", split.debug_texture);
-        const auto& mipmapReflector = split.compute_tileElevationMipmap.Reflector()->getDefaultParameterBlock();
-        ParameterBlock::BindLocation bind_mip1 = mipmapReflector->getResourceBinding("gMip1");
-        ParameterBlock::BindLocation bind_mip2 = mipmapReflector->getResourceBinding("gMip2");
-        ParameterBlock::BindLocation bind_mip3 = mipmapReflector->getResourceBinding("gMip3");
-        split.compute_tileElevationMipmap.Vars()->setUav(bind_mip1, split.tileFbo->getColorTexture(0)->getUAV(1));
-        split.compute_tileElevationMipmap.Vars()->setUav(bind_mip2, split.tileFbo->getColorTexture(0)->getUAV(2));
-        split.compute_tileElevationMipmap.Vars()->setUav(bind_mip3, split.tileFbo->getColorTexture(0)->getUAV(3));
-        */
-        // BC6H compressor
-        split.bc6h_texture = Texture::create2D(tile_numPixels / 4, tile_numPixels / 4, Diligent::TEX_FORMAT_RGBA32_UINT, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess);
-        split.compute_bc6h.load("hlsl/terrain/compute_bc6h.hlsl");
-        split.compute_bc6h.Vars()->setTexture("gOutput", split.bc6h_texture);
+            // generate
+            split.compute_tileGenerate.load("Samples/Earthworks_4/hlsl/terrain/compute_tileGenerate.hlsl");
+            split.compute_tileGenerate.Vars()->setBuffer("quad_instance", split.buffer_instance_quads);
+            split.compute_tileGenerate.Vars()->setBuffer("tiles", split.buffer_tiles);
+            split.compute_tileGenerate.Vars()->setTexture("gNoise", split.noise_u16);
+            split.compute_tileGenerate.Vars()->setTexture("gHgt", split.tileFbo->getColorTexture(0));
+            split.compute_tileGenerate.Vars()->setTexture("gEct1", split.tileFbo->getColorTexture(4));
+            split.compute_tileGenerate.Vars()->setTexture("gEct2", split.tileFbo->getColorTexture(5));
+            split.compute_tileGenerate.Vars()->setTexture("gEct3", split.tileFbo->getColorTexture(6));
+            split.compute_tileGenerate.Vars()->setTexture("gEct4", split.tileFbo->getColorTexture(7));
+
+            // passthrough
+            split.compute_tilePassthrough.load("Samples/Earthworks_4/hlsl/terrain/compute_tilePassthrough.hlsl");
+            split.compute_tilePassthrough.Vars()->setBuffer("quad_instance", split.buffer_instance_quads);
+            split.compute_tilePassthrough.Vars()->setBuffer("plant_i", split.buffer_instance_plants);
+            split.compute_tilePassthrough.Vars()->setBuffer("feedback", split.buffer_feedback);
+            split.compute_tilePassthrough.Vars()->setBuffer("tiles", split.buffer_tiles);
+            split.compute_tilePassthrough.Vars()->setTexture("gHgt", split.tileFbo->getColorTexture(0));
+            split.compute_tilePassthrough.Vars()->setTexture("gNoise", split.noise_u16);
+
+            // build lookup
+            split.compute_tileBuildLookup.load("Samples/Earthworks_4/hlsl/terrain/compute_tileBuildLookup.hlsl");
+            split.compute_tileBuildLookup.Vars()->setBuffer("tiles", split.buffer_tiles);
+            split.compute_tileBuildLookup.Vars()->setBuffer("DrawArgs_Quads", split.drawArgs_quads);
+            split.compute_tileBuildLookup.Vars()->setBuffer("DrawArgs_Terrain", split.drawArgs_tiles);
+            split.compute_tileBuildLookup.Vars()->setBuffer("feedback", split.buffer_feedback);
+            split.compute_tileBuildLookup.Vars()->setBuffer("DispatchArgs_Plants", split.dispatchArgs_plants);
+            split.compute_tileBuildLookup.Vars()->setBuffer("tileCenters", split.buffer_tileCenters);  // to clear unused tile
+            auto& block = split.compute_tileBuildLookup.Vars()->getParameterBlock("viewRenderData");
+            ShaderVar terrainLookup = block->findMember("terrainLookup");
+            ShaderVar plantLookup = block->findMember("plantLookup");
+            ShaderVar quadLookup = block->findMember("quadLookup");
+            for (int i = 0; i < numRenderViews; i++)
+            {
+                terrainLookup[i] = split.buffer_lookup_terrain[i];
+                plantLookup[i] = split.buffer_lookup_plants[i];
+                quadLookup[i] = split.buffer_lookup_quads[i];
+            }
+
+            // bicubic
+            split.compute_tileBicubic.load("Samples/Earthworks_4/hlsl/terrain/compute_tileBicubic.hlsl");
+            split.compute_tileBicubic.Vars()->setSampler("linearSampler", sampler_Clamp);
+            split.compute_tileBicubic.Vars()->setTexture("gOutput", split.tileFbo->getColorTexture(0));
+            split.compute_tileBicubic.Vars()->setTexture("gOutputAlbedo", split.tileFbo->getColorTexture(1));
+            split.compute_tileBicubic.Vars()->setTexture("gOutputPermanence", split.tileFbo->getColorTexture(3));
+            split.compute_tileBicubic.Vars()->setTexture("gDebug", split.debug_texture);
+            //split.compute_tileBicubic.Vars()->setTexture("gOuthgt_TEMPTILLTR", split.tileFbo->getColorTexture(0));
+
+            // ecotopes
+            split.compute_tileEcotopes.load("Samples/Earthworks_4/hlsl/terrain/compute_tileEcotopes.hlsl");
+            split.compute_tileEcotopes.Vars()->setSampler("linearSampler", sampler_Clamp);
+            split.compute_tileEcotopes.Vars()->setTexture("gHeight", split.tileFbo->getColorTexture(0));
+            split.compute_tileEcotopes.Vars()->setTexture("gAlbedo", split.tileFbo->getColorTexture(1));
+            split.compute_tileEcotopes.Vars()->setTexture("gInPermanence", split.tileFbo->getColorTexture(3));
+            split.compute_tileEcotopes.Vars()->setTexture("gInEct_0", split.tileFbo->getColorTexture(4));
+            split.compute_tileEcotopes.Vars()->setTexture("gInEct_1", split.tileFbo->getColorTexture(5));
+            split.compute_tileEcotopes.Vars()->setTexture("gInEct_2", split.tileFbo->getColorTexture(6));
+            split.compute_tileEcotopes.Vars()->setTexture("gInEct_3", split.tileFbo->getColorTexture(7));
+            split.compute_tileEcotopes.Vars()->setTexture("gNoise", split.noise_u16);
+            split.compute_tileEcotopes.Vars()->setBuffer("tiles", split.buffer_tiles);
+            split.compute_tileEcotopes.Vars()->setBuffer("quad_instance", split.buffer_instance_quads);
+            split.compute_tileEcotopes.Vars()->setBuffer("feedback", split.buffer_feedback);
+
+
+            // normals
+            split.compute_tileNormals.load("Samples/Earthworks_4/hlsl/terrain/compute_tileNormals.hlsl");
+            split.compute_tileNormals.Vars()->setTexture("gInHgt", split.tileFbo->getColorTexture(0));
+            split.compute_tileNormals.Vars()->setTexture("gOutNormals", split.normals_texture);
+            split.compute_tileNormals.Vars()->setTexture("gOutput", split.debug_texture);
+            split.compute_tileNormals.Vars()->setBuffer("tiles", split.buffer_tiles);
+
+            // vertices
+            split.compute_tileVerticis.load("Samples/Earthworks_4/hlsl/terrain/compute_tileVertices.hlsl");
+            split.compute_tileVerticis.Vars()->setSampler("linearSampler", sampler_Clamp);
+            split.compute_tileVerticis.Vars()->setTexture("gInHgt", split.tileFbo->getColorTexture(0));
+            split.compute_tileVerticis.Vars()->setTexture("gOutVerts", split.vertex_A_texture);
+            split.compute_tileVerticis.Vars()->setTexture("gDebug", split.debug_texture);
+            split.compute_tileVerticis.Vars()->setBuffer("tileCenters", split.buffer_tileCenters);
+            split.compute_tileVerticis.Vars()->setBuffer("tiles", split.buffer_tiles);
+
+            // jumpflood
+            // It may even be faster to set this up twice and hop between the two
+            split.compute_tileJumpFlood.load("Samples/Earthworks_4/hlsl/terrain/compute_tileJumpFlood.hlsl");
+            split.compute_tileJumpFlood.Vars()->setTexture("gDebug", split.debug_texture);
+
+            // delaunay
+            split.compute_tileDelaunay.load("Samples/Earthworks_4/hlsl/terrain/compute_tileDelaunay.hlsl");
+            split.compute_tileDelaunay.Vars()->setTexture("gInHgt", split.tileFbo->getColorTexture(0));
+            split.compute_tileDelaunay.Vars()->setTexture("gInVerts", split.vertex_B_texture);
+            split.compute_tileDelaunay.Vars()->setBuffer("VB", split.buffer_terrain);
+            split.compute_tileDelaunay.Vars()->setBuffer("tiles", split.buffer_tiles);
+            //split.compute_tileDelaunay.Vars()->setBuffer("tileDrawargsArray", split.drawArgs_tiles);
+
+            // elevation mipmap
+            /*
+            split.compute_tileElevationMipmap.load("Samples/Earthworks_4/hlsl/terrain/compute_tileElevationMipmap.hlsl");
+            split.compute_tileElevationMipmap.Vars()->setTexture("gInHgt", split.tileFbo->getColorTexture(0));
+            split.compute_tileElevationMipmap.Vars()->setTexture("gDebug", split.debug_texture);
+            const auto& mipmapReflector = split.compute_tileElevationMipmap.Reflector()->getDefaultParameterBlock();
+            ParameterBlock::BindLocation bind_mip1 = mipmapReflector->getResourceBinding("gMip1");
+            ParameterBlock::BindLocation bind_mip2 = mipmapReflector->getResourceBinding("gMip2");
+            ParameterBlock::BindLocation bind_mip3 = mipmapReflector->getResourceBinding("gMip3");
+            split.compute_tileElevationMipmap.Vars()->setUav(bind_mip1, split.tileFbo->getColorTexture(0)->getUAV(1));
+            split.compute_tileElevationMipmap.Vars()->setUav(bind_mip2, split.tileFbo->getColorTexture(0)->getUAV(2));
+            split.compute_tileElevationMipmap.Vars()->setUav(bind_mip3, split.tileFbo->getColorTexture(0)->getUAV(3));
+            */
+            // BC6H compressor
+            split.bc6h_texture = Texture::create2D(tile_numPixels / 4, tile_numPixels / 4, Falcor::ResourceFormat::RGBA32Uint, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess);
+            split.compute_bc6h.load("Samples/Earthworks_4/hlsl/terrain/compute_bc6h.hlsl");
+            split.compute_bc6h.Vars()->setTexture("gOutput", split.bc6h_texture);
+        }
 
     }
 
 
 
-    allocateTiles(numTiles);
+    {
+        LOG_BLOCK("stuff", 0);
+        allocateTiles(numTiles);
 
-    elevationCache.resize(45);
-    loadElevationHash(pRenderContext);
+        LOG_LINE(1, "elevationCache.resize");
+        elevationCache.resize(45);
+        loadElevationHash(pRenderContext);
 
-    imageCache.resize(45);
-    loadImageHash(pRenderContext);
+        LOG_LINE(1, "imageCache.resize");
+        imageCache.resize(45);
+        loadImageHash(pRenderContext);
 
-    init_TopdownRender();
+        init_TopdownRender();
 
-    mSpriteRenderer.onLoad();
+        mSpriteRenderer.onLoad();
+    }
+
 
 
     terrafectorEditorMaterial::rootFolder = settings.dirResource + "/";
+    ecotopeSystem::resPath = settings.dirResource + "/";
+    fprintf(_logfile, "terrafectorEditorMaterial::rootFolder = %s\n", terrafectorEditorMaterial::rootFolder.c_str());
+    fflush(_logfile);
+
+    {
+        LOG_BLOCK("more stuff", 0);
+        _plantMaterial::static_materials_veg.sb_vegetation_Materials = Buffer::createStructured(sizeof(sprite_material), 1024 * 8);      // just a lot
 
 
-    _plantMaterial::static_materials_veg.sb_vegetation_Materials = Buffer::createStructured(sizeof(sprite_material), 1024 * 8);      // just a lot
-    plants_Root.onLoad();
-    plants_Root.vegetationShader.Vars()->setTexture("gEnv", vegetation.envTexture);
-    plants_Root.billboardShader.Vars()->setTexture("gEnv", vegetation.envTexture);
-    plants_Root.vegetationShader.Vars()->setTexture("gDappledLight", vegetation.dappledLightTexture);
+        plants_Root.envTexture = vegetation.envTexture;
+        plants_Root.dappledLightTexture = vegetation.dappledLightTexture;
 
 
-    
-    terrainSpiteShader.Vars()->setBuffer("plant_buffer", plants_Root.plantData);
-    terrainSpiteShader.Vars()->setBuffer("materials", _plantMaterial::static_materials_veg.sb_vegetation_Materials);
+        plants_Root.onLoad();
+        /*
+        plants_Root.vegetationShader.Vars()->setTexture("gEnv", vegetation.envTexture);
+        //plants_Root.vegetationShader.Vars()->setBuffer("feedback", split.buffer_feedback);
+        plants_Root.vegetationShader.Vars()->setBuffer("feedback_Veg", plants_Root.buffer_feedback);
+        plants_Root.vegetationShader.Vars()->setTexture("gDappledLight", vegetation.dappledLightTexture);
 
-    
-    split.compute_clipLodAnimatePlants.Vars()->setBuffer("block_buffer", plants_Root.blockData);
-    split.compute_clipLodAnimatePlants.Vars()->setBuffer("plant_buffer", plants_Root.plantData);
-    split.compute_clipLodAnimatePlants.Vars()->setBuffer("drawArgs_Plants", plants_Root.drawArgs_vegetation);
-    split.compute_clipLodAnimatePlants.Vars()->setBuffer("feedback_Veg", plants_Root.buffer_feedback);
-    split.compute_clipLodAnimatePlants.Vars()->setBuffer("instance_out", plants_Root.instanceData);
-
-    split.compute_tilePassthrough.Vars()->setBuffer("plant_buffer", plants_Root.plantData);
-
-    split.compute_tileClear.Vars()->setBuffer("feedback_Veg", plants_Root.buffer_feedback);
-    split.compute_tileClear.Vars()->setBuffer("DrawArgs_Plants", plants_Root.drawArgs_vegetation);
-    
-
-    mEcosystem.terrainSize = settings.size;
-    //mEcosystem.load(settings.dirRoot + "/ecosystem/steg.ecosystem", settings.dirResource + "/");    // FIXME MOVE To lastFILE
-    
-    terrafectors.loadPath(settings.dirRoot + "/terrafectors", settings.dirRoot + "/bake", false);
-    mRoadNetwork.rootPath = settings.dirRoot + "/";
-
-    /*std::cout << "      paraglider\n";
-
-    AirSim.setup();
-    paraBuilder.setxfoilDir(settings.dirResource + "/xfoil");
-    paraBuilder.xfoil_shape("naca4415");
-    paraBuilder.buildCp();
-    paraBuilder.buildWing();
-
-    //paraBuilder.buildLinesFILE_NOVA_AONIC_medium();
-    paraBuilder.buildLines();
-    paraBuilder.generateLines();
-
-    paraBuilder.builWingConstraints();
-    //paraBuilder.builLineConstraints();
-
-    paraBuilder.visualsPack(paraRuntime.ribbon, paraRuntime.packedRibbons, paraRuntime.ribbonCount, paraRuntime.changed);
-
-    paraRuntime.setxfoilDir(settings.dirResource + "/xfoil");
-    paraRuntime.setWing("naca4415");
-
-    //paraRuntime.setWind(settings.dirRoot + "/gis/_export/root4096.bil", glm::normalize(float3(-1, 0, 0.4f)));
-    paraRuntime.loadWind(settings.dirRoot + "\\cfd\\");
-
-    paraRuntime.setup(paraBuilder.x, paraBuilder.w, paraBuilder.cross, paraBuilder.spanSize, paraBuilder.chordSize, paraBuilder.constraints, false, cameraViews[CameraType_Main_Center].view);
-    paraRuntime.Cp = paraBuilder.Cp;
-    memcpy(paraRuntime.CPbrakes, paraBuilder.CPbrakes, sizeof(float) * 6 * 11 * 25);
-    //paraRuntime.CPbrakes = paraBuilder.CPbrakes;
-    paraRuntime.linesLeft = paraBuilder.linesLeft;
-    paraRuntime.linesRight = paraBuilder.linesRight;
-    glider.loaded = true;
+        plants_Root.billboardShader.Vars()->setTexture("gEnv", vegetation.envTexture);
+        plants_Root.billboardShader.Vars()->setBuffer("feedback_Veg", plants_Root.buffer_feedback);
+        */
 
 
 
-    newGliderRuntime.importBin();
-    newGliderRuntime.solve(0.000f, -1);
-    //newGliderRuntime.process_xfoil_Cp(settings.dirResource + "/xfoil/Omega/");
-    newGliderRuntime.loadXFoil_Cp(settings.dirResource + "/xfoil/Omega/", 52);  // FIXXXME rib numer is a little hardcoded, and process this to a singel file
-    glider.newGliderLoaded = true;
+        terrainSpiteShader.Vars()->setBuffer("plant_buffer", plants_Root.plantData);
+        terrainSpiteShader.Vars()->setBuffer("materials", _plantMaterial::static_materials_veg.sb_vegetation_Materials);
 
-    */
+
+        split.compute_clipLodAnimatePlants.Vars()->setBuffer("block_buffer", plants_Root.blockData);
+        split.compute_clipLodAnimatePlants.Vars()->setBuffer("plant_buffer", plants_Root.plantData);
+        split.compute_clipLodAnimatePlants.Vars()->setBuffer("drawArgs_Plants", plants_Root.drawArgs_vegetation);
+        split.compute_clipLodAnimatePlants.Vars()->setBuffer("feedback_Veg", plants_Root.buffer_feedback);
+        split.compute_clipLodAnimatePlants.Vars()->setBuffer("instance_out", plants_Root.instanceData);
+
+        split.compute_tilePassthrough.Vars()->setBuffer("plant_buffer", plants_Root.plantData);
+
+        split.compute_tileClear.Vars()->setBuffer("feedback_Veg", plants_Root.buffer_feedback);
+        split.compute_tileClear.Vars()->setBuffer("DrawArgs_Plants", plants_Root.drawArgs_vegetation);
+    }
+
+
+    {
+        LOG_BLOCK("mEcosystem.load - needs a name set", 0);
+        mEcosystem.terrainSize = settings.size;
+        //mEcosystem.load(settings.dirRoot + "/ecosystem/steg.ecosystem", settings.dirResource + "/");    // FIXME MOVE To lastFILE
+    }
+
+    {
+        LOG_BLOCK("terrafectors.loadPath", 0);
+        terrafectors.loadPath(settings.dirRoot + "/terrafectors", settings.dirRoot + "/bake", false);
+        mRoadNetwork.rootPath = settings.dirRoot + "/";
+    }
+
+    {
+        /*
+        LOG_BLOCK("paraglider", 0);
+        std::cout << "      paraglider\n";
+
+        terrafectorSystem::logTimeX();
+        fprintf(_logfile, "start of paraBuilder\n");
+
+
+        AirSim.setup();
+        paraBuilder.setxfoilDir(settings.dirResource + "/xfoil");
+        paraBuilder.xfoil_shape("naca4415");
+        paraBuilder.buildCp();
+        paraBuilder.buildWing();
+
+        //paraBuilder.buildLinesFILE_NOVA_AONIC_medium();
+        paraBuilder.buildLines();
+        paraBuilder.generateLines();
+
+        paraBuilder.builWingConstraints();
+        //paraBuilder.builLineConstraints();
+
+        paraBuilder.visualsPack(paraRuntime.ribbon, paraRuntime.packedRibbons, paraRuntime.ribbonCount, paraRuntime.changed);
+
+        paraRuntime.setxfoilDir(settings.dirResource + "/xfoil");
+        paraRuntime.setWing("naca4415");
+
+        //paraRuntime.setWind(settings.dirRoot + "/gis/_export/root4096.bil", glm::normalize(float3(-1, 0, 0.4f)));
+        paraRuntime.loadWind(settings.dirRoot + "\\cfd\\");
+
+        paraRuntime.setup(paraBuilder.x, paraBuilder.w, paraBuilder.cross, paraBuilder.spanSize, paraBuilder.chordSize, paraBuilder.constraints, false, cameraViews[CameraType_Main_Center].view);
+        paraRuntime.Cp = paraBuilder.Cp;
+        memcpy(paraRuntime.CPbrakes, paraBuilder.CPbrakes, sizeof(float) * 6 * 11 * 25);
+        //paraRuntime.CPbrakes = paraBuilder.CPbrakes;
+        paraRuntime.linesLeft = paraBuilder.linesLeft;
+        paraRuntime.linesRight = paraBuilder.linesRight;
+        glider.loaded = true;
+
+
+
+        newGliderRuntime.importBin();
+        newGliderRuntime.solve(0.000f, -1);
+        //newGliderRuntime.process_xfoil_Cp(settings.dirResource + "/xfoil/Omega/");
+        newGliderRuntime.loadXFoil_Cp(settings.dirResource + "/xfoil/Omega/", 52);  // FIXXXME rib numer is a little hardcoded, and process this to a singel file
+        glider.newGliderLoaded = true;
+        */
+    }
+
+    terrafectorSystem::logTimeX();
+    fprintf(_logfile, "end of paraBuilder\n");
+
     //_swissBuildings buildings;
     //buildings.process(settings.dirRoot + "/buildings/testQGISDXF.dxf");
     //buildings.processGeoJSON(settings.dirRoot + "/buildings/QGIS.geojson");
@@ -1210,17 +1329,17 @@ void terrainManager::init_TopdownRender()
 {
 
     terrafectorEditorMaterial::static_materials.sb_Terrafector_Materials = Buffer::createStructured(sizeof(TF_material), 2048); // FIXME hardcoded
-    split.shader_spline3D.load("hlsl/terrain/render_spline.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
+    split.shader_spline3D.load("Samples/Earthworks_4/hlsl/terrain/render_spline.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
     split.shader_spline3D.Vars()->setBuffer("materials", terrafectorEditorMaterial::static_materials.sb_Terrafector_Materials);
     split.shader_spline3D.Vars()->setSampler("gSmpLinear", sampler_Trilinear);
     //split.shader_spline3D.Program()->getReflector()
-    split.shader_splineTerrafector.load("hlsl/terrain/render_splineTerrafector.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
+    split.shader_splineTerrafector.load("Samples/Earthworks_4/hlsl/terrain/render_splineTerrafector.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
     //split.shader_splineTerrafector.State()->setFbo(split.tileFbo);
     split.shader_splineTerrafector.Vars()->setBuffer("materials", terrafectorEditorMaterial::static_materials.sb_Terrafector_Materials);
 
 
     // mesh terrafector shader
-    split.shader_meshTerrafector.load("hlsl/terrain/render_meshTerrafector.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
+    split.shader_meshTerrafector.load("Samples/Earthworks_4/hlsl/terrain/render_meshTerrafector.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
     split.shader_meshTerrafector.Vars()->setSampler("gSmpLinear", sampler_Trilinear);
     //split.shader_meshTerrafector.Vars()["PerFrameCB"]["gConstColor"] = false;
     split.shader_meshTerrafector.State()->setFbo(split.tileFbo);
@@ -1352,6 +1471,7 @@ uint32_t getHashFromTileCoords(unsigned int lod, unsigned int y, unsigned int x)
 void terrainManager::loadElevationHash(RenderContext* pRenderContext)
 {
     std::string fullpath = settings.dirRoot + "/elevations.txt";
+    LOG_LINE(1, fullpath.c_str());
     elevationTileHashmap.clear();
     reset();
 
@@ -1363,17 +1483,19 @@ void terrainManager::loadElevationHash(RenderContext* pRenderContext)
         int texSize;
         char filename[256];
         int items = 1;
+        uint linesProcessed = 0;
         do {
             items = fscanf(pFileHgt, "%d %d %d %d %f %f %f %f %f %s\n", &map.lod, &map.y, &map.x, &texSize, &map.origin.x, &map.origin.y, &map.size, &map.hgt_offset, &map.hgt_scale, filename);
             if (items > 0)
             {
+                linesProcessed++;
                 uint32_t hash = getHashFromTileCoords(map.lod, map.y, map.x);
 
                 fullpath = settings.dirRoot + "/" + filename;
                 if (map.lod == 0)
                 {
                     std::vector<float> data;
-                    data.resize(texSize * texSize * 2);
+                    data.resize(texSize * texSize * 2);  //the extra ios space for the miopmaps
 
 
                     FILE* pData = fopen(fullpath.c_str(), "rb");
@@ -1382,8 +1504,15 @@ void terrainManager::loadElevationHash(RenderContext* pRenderContext)
                         fread(data.data(), sizeof(float), texSize * texSize, pData);
                         fclose(pData);
                     }
-
-                    split.rootElevation = Texture::create2D(texSize, texSize, Diligent::TEX_FORMAT_R32_FLOAT, 1, 8, data.data(), Resource::BindFlags::ShaderResource | Resource::BindFlags::RenderTarget);
+                    /*
+                    for (int y = 0; y < texSize; y++)
+                    {
+                        for (int x = 0; x < texSize; x++)
+                        {
+                            data[y * texSize + x] = 1000.f;
+                        }
+                    }*/
+                    split.rootElevation = Texture::create2D(texSize, texSize, Falcor::ResourceFormat::R32Float, 1, 8, data.data(), Resource::BindFlags::ShaderResource | Resource::BindFlags::RenderTarget);
                     split.rootElevation->generateMips(pRenderContext);
                     map.hgt_offset = 0;
                     map.hgt_scale = 1;
@@ -1396,6 +1525,7 @@ void terrainManager::loadElevationHash(RenderContext* pRenderContext)
                 }
             }
         } while (items > 0);
+
 
         fclose(pFileHgt);
     }
@@ -1425,7 +1555,9 @@ void terrainManager::loadImageHash(RenderContext* pRenderContext)
     }
     */
 
+    LOG_LINE(1, "imageDirectory load...");
     std::string fullpath = settings.dirRoot + "/orthophotos.json";
+    LOG_LINE(1, fullpath.c_str());
     imageDirectory.load(fullpath);
     imageDirectory.cache0(settings.dirRoot + "/orthophoto/");
     //and load 0, 0, 0
@@ -1465,546 +1597,522 @@ void replaceAllterrain(std::string& str, const std::string& from, const std::str
     }
 }
 
-/*
-void terrainManager::onGuiRendercfd(Gui::Window& _window, Gui* pGui, float2 _screen)
+void terrainManager::onGuiRender_Debug(Gui* _gui)
 {
-    cfd.clipmap.slicelod = __max(0, cfd.clipmap.slicelod);
-    cfd.clipmap.slicelod = __min(5, cfd.clipmap.slicelod);
-    auto& lod = cfd.clipmap.lods[cfd.clipmap.slicelod];
-
-    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-
-
-    //_renderContext->updateTextureData(cfd.sliceVTexture.get(), cfd.clipmap.sliceV);
-
-
-    for (int y = 0; y < lod.height; y++)
+    ImGui::PushFont(_gui->getFont("default"));
     {
-        for (int x = 0; x < lod.width; x++)
+        ImGui::Text("Debug info");
+        ImGui::Columns(3);
         {
-            uint nIndex = (cfd.clipmap.sliceIndex + lod.offset.z) * lod.smap.width + (x + lod.offset.x);
-            float4 N = lod.normals[nIndex];
-            float Hcell = N.w - lod.offset.y;
+            ImGui::Text("%d of %d tiles used", (int)m_used.size(), (int)m_tiles.size());
+            ImGui::NewLine();
+            ImGui::Text("info for main_CENTER");   // see if we can expand for any chosen view
 
-            uint idx = (y * 128 + x);
+            ImGui::NewLine();
+            ImGui::SameLine(50, 0);
+            ImGui::Text("#");
+            ImGui::SameLine(100, 0);
+            ImGui::Text("tri - k");
+            ImGui::SameLine(200, 0);
+            ImGui::Text("bb - k");
+            ImGui::SameLine(300, 0);
+            ImGui::Text("plant");
 
-            if (y > Hcell - 1)
+
+            for (uint L = 0; L < 18; L++)
             {
-                if ((cfd.clipmap.arrayVisualize[idx] >> 24) > 10)
-                {
-                    ImVec2 bl = { x * 8.f + 400 ,  _screen.y - 50 - y * 8.f };
-                    ImVec2 tr = bl;
-                    tr.x += 8;
-                    tr.y -= 8;
+                ImGui::Text("%3d", L);
+                ImGui::SameLine(50, 0);
+                ImGui::Text("%5d", split.feedback.numTiles[L]);
+                ImGui::SameLine(100, 0);
+                ImGui::Text("%5d", (int)((float)split.feedback.numTris[L] / 1000.f));
+                ImGui::SameLine(200, 0);
+                ImGui::Text("%d", (int)((float)split.feedback.numSprite[L] / 1000.f));
+                ImGui::SameLine(300, 0);
+                ImGui::Text("%5d", split.feedback.numPlantsLOD[L]);
 
-                    draw_list->AddRectFilled(bl, tr, cfd.clipmap.arrayVisualize[idx]);
+            }
+        }
+        ImGui::NextColumn();
+        {
+            ImGui::Text("Tile based total per view");
+            ImGui::Text(".");
+            ImGui::SameLine(100, 0);
+            ImGui::Text("terrain");
+            ImGui::SameLine(250, 0);
+            ImGui::Text("bb");
+            ImGui::SameLine(400, 0);
+            ImGui::Text("plants");
+
+            for (int i = 0; i < numRenderViews; i++)
+            {
+                ImGui::Text(viewNames[i].c_str());
+                if (1 << i & viewMask)
+                {
+                    ImGui::SameLine(100, 0);
+                    ImGui::Text("%d k", split.feedback.numTerrainVerts[i] / 1000);
+                    ImGui::SameLine(250, 0);
+                    ImGui::Text("%d k", split.feedback.numQuads[i] / 1000);
+                    ImGui::SameLine(400, 0);
+                    ImGui::Text("%d", split.feedback.numPlants[i]);
+                    // FIXME test and warn for buffer overruns
                 }
+            }
+            ImGui::Text("%d ok, %d clip", split.feedback.vegRibbonOKPixels, split.feedback.vegRibbonClippedPixels);
+
+        }
+        ImGui::NextColumn();
+        {
+            float start = 1.f;
+            float end = 3000.f;
+            float base = 3000.f / 1.f;
+            float step = 1.07f;
+            float m_SliceStep = pow(base, 1.0f / (400.f - 1.0f));
+            float m_SliceZero = 1.f / m_SliceStep;
+            // should really log some more memory useage and maybe GPU speed here
+            float Z = m_SliceZero;
+            float depth = m_SliceStep;
+            for (int i = 0; i < 128; i++)
+            {
+                Z = start * pow(step, i);
+                float ZZ = start * pow(step, i + 1) - Z;
+                ImGui::Text("%4.2f,  %4.2f,   %d", Z, ZZ, plants_Root.feedback.numBlock_Z[i]);
             }
         }
     }
-
-
-
-
-
-    {
-        ImVec4 col = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-        const ImU32 col32 = ImColor(col);
-
-        draw_list->AddLine(ImVec2(400, _screen.y - 50), ImVec2(400 + 1024, _screen.y - 50), col32);
-
-        uint nIndex = (cfd.clipmap.sliceIndex + lod.offset.z) * lod.smap.width + (0 + lod.offset.x);
-        float4 N = lod.normals[nIndex];
-        float Hcell = N.w - lod.offset.y;
-        float Hcell_old = Hcell;
-
-        for (int x = 1; x < lod.width; x++)
-        {
-            nIndex = (cfd.clipmap.sliceIndex + lod.offset.z) * lod.smap.width + (x + lod.offset.x);
-            N = lod.normals[nIndex];
-            Hcell = N.w - lod.offset.y;
-
-            draw_list->AddLine(ImVec2(404 + (x - 1) * 8.f, _screen.y - 50 - Hcell_old * 8), ImVec2(404 + x * 8.f, _screen.y - 50 - Hcell * 8), col32, 1);
-
-            Hcell_old = Hcell;
-
-        }
-    }
-   
+    ImGui::PopFont();
 }
 
 
 
-void terrainManager::onGuiRendercfd_skewT(Gui::Window& _window, Gui* pGui, float2 _screen)
+void terrainManager::onGuiRender_Right_Ecotope(Gui* _gui, Gui::Window& _window)
 {
+    mEcosystem.renderGUI(_gui);
+    if (ImGui::BeginPopupContextWindow(false))
+    {
+        if (ImGui::Selectable("New Ecotope")) { mEcosystem.addEcotope(); }
+        if (ImGui::Selectable("Load")) { mEcosystem.load(); }
+        if (ImGui::Selectable("Save")) { mEcosystem.save(); }
+        ImGui::EndPopup();
+    }
+
+    ImGui::NewLine();
+    ImGui::NewLine();
+    ImGui::Separator();
+    ImGui::Text("%d plants, %d tex, %2.2f Mb", plants_Root.importPathVector.size(), _plantMaterial::static_materials_veg.textureVector.size(), _plantMaterial::static_materials_veg.texMb);
+
+    // do billobard as well
+    ImGui::NewLine();
+    ImGui::Text("billboards %d", plants_Root.feedback.numBillboard);
+    auto& profiler = Profiler::instance();
+    auto event = profiler.getEvent("/onFrameUpdate/update/update_dirty/clip_lod_animate");
+    billboardGpuTime = event->getGpuTimeAverage();
+    ImGui::Text("gpu %1.3fms", billboardGpuTime);
+
+    //ImGui::Text("pixels %d, %d", plants_Root.feedback.numPixClip, plants_Root.feedback.numPixPass);
+    //ImGui::Text("INST %d, %d", plants_Root.feedback.numInstAdded, plants_Root.feedback.numInstAdded);
+    ImGui::NewLine();
+    float numTri = (float)plants_Root.feedback.numBlocks * VEG_BLOCK_SIZE * 2.f / 1000000.f;
+    ImGui::Text("plants %d in, %d out ", plants_Root.feedback.numPlant, plants_Root.feedback.numFrustDiscard);
+    ImGui::Text("%d, %d, %d, %d ", plants_Root.feedback.numLod[0], plants_Root.feedback.numLod[1], plants_Root.feedback.numLod[2], plants_Root.feedback.numLod[3]);
+    ImGui::Text("%2.2f M tri, %d blocks", numTri, plants_Root.feedback.numBlocks);
+    ImGui::Text("gpu %1.3fms", plants_Root.gputime);
+    ImGui::Text("clipLOD %d inst", plants_Root.feedback.numInstanceAddedComputeClipLod);
+
+
+
+    ImGui::NewLine();
+    ImGui::NewLine();
+    ImGui::Separator();
+    ImGui::Text("T     %1.1fms", stream.terrainCacheTime);
+    ImGui::Text("T tex %1.1fms", stream.terrainCacheJPHTime);
+    ImGui::Text("I     %1.1fms", stream.imageCacheTime);
+    ImGui::Text("I tex %1.1fms", stream.imageCacheJPHTime);
+    ImGui::Text("I io  %1.1fms", stream.imageCacheIOTime);
+}
+
+
+void terrainManager::onGuiRender_Right_Terrafector(Gui* _gui, Gui::Window& _window)
+{
+    //terrafectors.renderGui(_gui);
+    ImGui::NewLine();
+    //roadMaterialCache::getInstance().renderGui(_gui);
+
+    ImGui::Text("Stamps");
+    ImGui::Text("%d - stamps", mRoadStampCollection.stamps.size());
+    ImGui::Text("%d - materials", mRoadStampCollection.materialMap.size());
+
+
+    if (ImGui::Button("Load - Previous"))
+    {
+        loadStamp();
+    }
+    if (ImGui::Button("Load"))
+    {
+        FileDialogFilterVec filters = { {"stamps"} };
+        if (openFileDialog(filters, mRoadStampCollection.lastUsedFilename))
+        {
+            loadStamp();
+            reset(true);
+        }
+    }
+    if (ImGui::Button("Save"))
+    {
+        FileDialogFilterVec filters = { {"stamps"} };
+        if (saveFileDialog(filters, mRoadStampCollection.lastUsedFilename))
+        {
+            saveStamp();
+        }
+    }
+}
+
+
+
+void terrainManager::onGuiRender_Right_Roads(Gui* _gui, Gui::Window& _window)
+{
+    auto& style = ImGui::GetStyle();
+    style.Colors[ImGuiCol_Button] = ImVec4(0.03f, 0.03f, 0.3f, 0.5f);
+    mRoadNetwork.renderGUI(_gui);
+
+
+    //if (ImGui::Button("bake - EVO", ImVec2(W, 0))) { bake(false); }
+    //if (ImGui::Button("bake - MAX", ImVec2(W, 0))) { bake(true); }
+
+    if (ImGui::Button("bezier -> lod4")) { bezierRoadstoLOD(4); }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Forces update of road GPU branchData");
+
+    if (ImGui::Checkbox("show baked", &bSplineAsTerrafector)) { reset(true); }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("'b'");
+    ImGui::Checkbox("show road icons", &showRoadOverlay);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("'n'");
+    ImGui::Checkbox("show road splines", &showRoadSpline);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("'m'");
+
+    ImGui::NewLine();
 
     
-    ImVec2 offset = { 400, 200 };
-    ImGui::SetCursorPos(offset);
-
-    static bool IsHovered = false;
-    static int editMode = 0;
-
-    const ImU32 col32 = ImColor(ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
-    const ImU32 col32R = ImColor(ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
-    const ImU32 col32B = ImColor(ImVec4(0.0f, 0.0f, 1.0f, 1.0f));
-    const ImU32 col32GR = ImColor(ImVec4(0.4f, 0.4f, 0.4f, 0.2f));
-    const ImU32 col32YEL = ImColor(ImVec4(0.4f, 0.4f, 0.0f, 1.0f));
-
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(1.f, 1.f, 1.f, 0.75f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.f, 0.f, 0.f, 1.f));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 10));
-    ImGui::BeginChildFrame(987651, ImVec2(1000, 1120));
-    ImGui::PopStyleVar();//ImGuiStyleVar_FramePadding
-    ImGui::PushFont(pGui->getFont("roboto_20_bold"));
-    {
-        ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-        for (int T = -60; T <= 40; T += 2)
-        {
-            ImVec2 start = { 300.f + 20.f * T, 1000.f };
-            ImGui::SetCursorPos(start);
-            ImGui::Text("%d", T);
-
-            start.x += offset.x;
-            start.y += offset.y;
-            ImVec2 end = start;
-            end.x += 500;
-            end.y -= 1000;
-            float width = 1.f;
-            if (T % 10 == 0) width = 2.f;
-            if (T == 0) width = 3.f;
-            draw_list->AddLine(start, end, col32, width);
-
-            // dry lapse
-            float Tmp = (float)T;
-            ImVec2 P = start;
-            ImVec2 P1 = P;
-            for (int alt = 0; alt < 5000; alt += 100)
-            {
-                Tmp -= 100 * 0.0098f;
-                P1 = P;
-                P.y -= 20;
-                P.x = offset.x + 300 + (alt + 100) * 0.1f + Tmp * 20.f;
-                draw_list->AddLine(P1, P, col32GR, 3);
-            }
-
-            // moist lapse
-            Tmp = (float)T;
-            P = start;
-            P1 = P;
-            for (int alt = 0; alt < 5000; alt += 100)
-            {
-                Tmp -= moistLapse(to_K(Tmp), (float)alt) * 100.f;
-                P1 = P;
-                P.y -= 20;
-                P.x = offset.x + 300 + (alt + 100) * 0.1f + Tmp * 20.f;
-                draw_list->AddLine(P1, P, col32GR, 3);
-            }
-        }
-
-        float3 data = cfd.skewT_data[0];
-        ImVec2 P = { offset.x + 300 + data.x * 20.f, offset.y + 1000 };
-
-
-        for (int j = 1; j < 100; j++)
-        {
-            data = cfd.skewT_data[j];
-            ImVec2 P1 = { offset.x + 300 + data.x * 20.f + j * 5, offset.y + 1000 - j * 10 };
-            draw_list->AddLine(P, P1, col32R, 2);
-            P = P1;
-        }
-
-        data = cfd.skewT_data[0];
-        P = { offset.x + 300 + data.y * 20.f, offset.y + 1000 };
-        for (int j = 1; j < 100; j++)
-        {
-            data = cfd.skewT_data[j];
-            ImVec2 P1 = { offset.x + 300 + data.y * 20.f + j * 5, offset.y + 1000 - j * 10 };
-            draw_list->AddLine(P, P1, col32B, 2);
-            P = P1;
-        }
-
-        // velocity
-        data = cfd.skewT_V[0];
-        float V = glm::length(data);
-        P = { offset.x + 10 + V * 20.f, offset.y + 1000 };
-        for (int j = 1; j < 100; j++)
-        {
-            data = cfd.skewT_V[j];
-            V = glm::length(data);
-            ImVec2 P1 = { offset.x + 10 + V * 20.f, offset.y + 1000 - j * 10 };
-            draw_list->AddLine(P, P1, col32B, 2);
-            P = P1;
-
-            if (j % 2 == 0)
-            {
-                float3 dir = glm::normalize(data);
-                draw_list->AddCircle(P, 3, col32B, 5);
-                P1.x += dir.x * pow(V, 0.5f) * 10;
-                P1.y += dir.z * pow(V, 0.5f) * 10;
-                draw_list->AddLine(P, P1, col32B, 2);
-            }
-        }
-
-        // wind direction
-        data = cfd.skewT_V[0];
-        float3 dir = glm::normalize(data);
-        int angle = (int)(360.f - atan2(dir.x, dir.z) * 57.2958f) % 360;
-        P = { offset.x + 10 + angle * 2.f, offset.y + 1000 };
-        for (int j = 1; j < 100; j++)
-        {
-            data = cfd.skewT_V[j];
-            dir = glm::normalize(data);
-            angle = (int)(360.f - atan2(dir.x, dir.z) * 57.2958f) % 360;
-            ImVec2 P1 = { offset.x + 10 + angle * 2.f, offset.y + 1000 - j * 10 };
-            draw_list->AddLine(P, P1, col32YEL, 2);
-            P = P1;
-        }
-
-
-        // Mouse overlay
-        ImVec2 mouse = ImGui::GetMousePos();
-        mouse.x += offset.x;
-        draw_list->AddLine(ImVec2(offset.x, mouse.y), ImVec2(offset.x + 1000, mouse.y), col32, 1);
-
-        int alt = (int)(5000 - 5 * (mouse.y - offset.y));
-        if (alt > 0)
-        {
-            ImGui::SetCursorPos(ImVec2(950, mouse.y - offset.y));
-            ImGui::Text("%d m", alt);
-
-            ImVec2 p = ImGui::GetMousePos();
-            float dy = 1000 + offset.y - p.y;
-            uint idx = __max(0, __min(99, (int)(dy / 10)));
-
-
-            float vspeed = glm::length(cfd.skewT_V[idx]);
-            int angle = (int)(360.f - atan2(cfd.skewT_V[idx].x, cfd.skewT_V[idx].z) * 57.2958f) % 360;
-            float C_Temp = cfd.skewT_data[idx].x;
-            float C_Dew = cfd.skewT_data[idx].y;
-            ImVec2 PVel = { 50 + vspeed * 20.f, mouse.y - offset.y };
-
-            ImVec2 PTemp = { 310 + C_Temp * 20.f + idx * 5, mouse.y - offset.y - 20 };
-            ImVec2 PDew = { 310 + C_Dew * 20.f + idx * 5, mouse.y - offset.y - 20 };
-            ImGui::SetCursorPos(PTemp);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.f, 0.f, 1.f));
-            ImGui::Text("%dºC", (int)C_Temp);
-            ImGui::PopStyleColor();
-
-            ImGui::SetCursorPos(PDew);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.f, 0.f, 1.f, 1.f));
-            ImGui::Text("%dºC", (int)C_Dew);
-            ImGui::PopStyleColor();
-
-            ImGui::SetCursorPos(PVel);
-            ImGui::Text("%2.1fkt %dº", vspeed * 1.94384f, (int)angle);
-
-
-            ImVec2 cursor = ImGui::GetMousePos();
-            cursor.x -= offset.x;
-            cursor.y -= offset.y;
-            IsHovered = false;
-            if ((cursor.x > 0) && (cursor.x < 1000) && (cursor.y > 0) && (cursor.y < 1000))
-            {
-                IsHovered = true;
-            }
-            //ImGui::SetTooltip("%f %f", cursor.x, cursor.y);
-
-            // mouse click
-            if (cfd.editMode && IsHovered)
-            {
-
-
-                float T = (p.x - offset.x - 300 - (dy * 0.5f)) / 20.f;
-
-
-                if (ImGui::IsMouseDown(0))
-                {
-                    if (ImGui::IsKeyDown((int)Input::Key::LeftControl))     // Smooth
-                    {
-                        uint idA = __max(1, idx) - 1;
-                        uint idB = __min(99, idx + 1);
-                        switch (editMode)                                   // Normal
-                        {
-                        case 0:
-                            cfd.skewT_data[idx].x = (cfd.skewT_data[idA].x + cfd.skewT_data[idx].x + cfd.skewT_data[idB].x) / 3;
-                            cfd.editChanged = true;
-                            break;
-                        case 1:
-                            cfd.skewT_data[idx].y = (cfd.skewT_data[idA].y + cfd.skewT_data[idx].y + cfd.skewT_data[idB].y) / 3;
-                            cfd.editChanged = true;
-                            break;
-                        case 2:
-                        case 3:
-                            cfd.skewT_V[idx] = (cfd.skewT_V[idA] + cfd.skewT_V[idx] + cfd.skewT_V[idB]) / 3.f;
-                            cfd.editChanged = true;
-                            break;
-                        }
-                    }
-                    else
-                    {
-                        switch (editMode)                                   // Normal
-                        {
-                        case 0:
-                            cfd.skewT_data[idx].x = T;
-                            cfd.editChanged = true;
-                            break;
-                        case 1:
-                            cfd.skewT_data[idx].y = T;
-                            cfd.editChanged = true;
-                            break;
-                        case 2:
-                        {
-                            float V = __max(0.001f, (p.x - offset.x - 10) / 20.f);
-                            float3 newV = glm::normalize(cfd.skewT_V[idx]) * V;
-                            cfd.skewT_V[idx] = newV;
-                            cfd.editChanged = true;
-                        }
-                        break;
-                        case 3:
-                        {
-                            float angle = (p.x - offset.x - 10) / 114.591f;
-                            float v = glm::length(cfd.skewT_V[idx]);
-                            cfd.skewT_V[idx] = v * float3(sin(-angle), 0, cos(-angle));
-                            cfd.editChanged = true;
-                        }
-                        break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!cfd.editMode)
-        {
-            // move to edit, copy data
-            cfd.skewT_data = cfd.clipmap.skewTData;
-            cfd.skewT_V = cfd.clipmap.skewTV;
-            for (int i = 0; i < 100; i++)
-            {
-                if (glm::length(cfd.skewT_V[i]) < 0.001f)
-                {
-                    cfd.skewT_V[i].x += 0.001f;
-                }
-            }
-        }
-
-
-
-
-        ImGui::SetCursorPos(ImVec2(10, 1030));
-        ImGui::Text(cfd.rootFile.c_str());
-        ImGui::NewLine();
-        ImGui::SameLine(10, 0);
-        if (!cfd.editMode) {
-            if (ImGui::Button("Edit Mode"))
-            {
-                cfd.editMode = true;
-                cfd.editChanged = false;
-            }
-        }
-        else {
-            if (ImGui::Button("Cancel Edit"))
-            {
-                cfd.editMode = false;
-                cfd.editChanged = false;
-            }
-            if (cfd.editChanged) {
-                TOOLTIP("There are unsaved changes\nClicking this button will discard them");
-            }
-
-            ImGui::SameLine(180, 0);
-            if (ImGui::Button("Load"))
-            {
-                std::filesystem::path path = cfd.rootPath;
-
-                FileDialogFilterVec filters = { {"skewT_5000"} };
-                if (openFileDialog(filters, path))
-                {
-                    std::ifstream ifs;
-                    ifs.open(path, std::ios::binary);
-                    if (ifs)
-                    {
-                        ifs.read((char*)&cfd.skewT_data, sizeof(float3) * 100);
-                        ifs.read((char*)&cfd.skewT_V, sizeof(float3) * 100);
-                        ifs.close();
-                    }
-                }
-                cfd.editChanged = false;
-                cfd.rootPath = path.parent_path().string() + "\\";
-                cfd.rootFile = path.filename().string();
-                fprintf(terrafectorSystem::_logfile, "\n%s\n", path.string().c_str());
-                fprintf(terrafectorSystem::_logfile, "%s\n", path.parent_path().string().c_str());
-                fprintf(terrafectorSystem::_logfile, "%s\n", path.root_path().string().c_str());
-                fprintf(terrafectorSystem::_logfile, "path %s   name %s\n", cfd.rootPath.c_str(), cfd.rootFile.c_str());
-            }
-            ImGui::SameLine(0, 20);
-            if (ImGui::Button("Save"))
-            {
-                std::filesystem::path path = cfd.rootPath;
-                FileDialogFilterVec filters = { {"skewT_5000"} };
-                if (saveFileDialog(filters, path))
-                {
-                    std::ofstream ofs;
-                    ofs.open(path, std::ios::binary);
-                    if (ofs)
-                    {
-                        ofs.write((char*)&cfd.skewT_data, sizeof(float3) * 100);
-                        ofs.write((char*)&cfd.skewT_V, sizeof(float3) * 100);
-                        ofs.close();
-                    }
-                }
-                cfd.editChanged = false;
-                cfd.rootPath = path.parent_path().string() + "\\";
-                cfd.rootFile = path.filename().string();
-            }
-            ImGui::SameLine(0, 50);
-            if (ImGui::Button("Set atmosphere"))
-            {
-                cfd.clipmap.loadSkewT(cfd.rootPath + cfd.rootFile);
-                cfd.clipmap.windrequest = true;
-            }
-            TOOLTIP("Set this to atmosphere and restart cfd\nThis will only work of the file was saved, cannot set it from memory.");
-
-            ImGui::SameLine(0, 50);
-            ImGui::PushItemWidth(200);
-            if (ImGui::Combo("###modeSelector", &editMode, "Temperature\0Humidity\0Wind speed\0Wind direction\0")) { ; }
-            ImGui::PopItemWidth();
-
-        }
-
-
-    }
-    ImGui::PopFont();
-    ImGui::EndChildFrame();
-    IsHovered = ImGui::IsItemHovered() || ImGui::IsItemClicked();//EndChildFrame();
-
-    ImVec2 rectMin = ImGui::GetItemRectMin();
-    ImVec2 rectMax = ImGui::GetItemRectMax();
-    ImVec2 cursor = ImGui::GetCursorPos();
-    IsHovered = false;
-    if (cursor.x > 0 && cursor.x < 1000 && cursor.y > 0 && cursor.y < 1000)
-    {
-        IsHovered = true;
+    style.ButtonTextAlign = ImVec2(0.0, 0.5);
+    if (ImGui::DragFloat("overlay", &gis_overlay.strenght, 0.01f, 0, 1, "%1.2f strength")) {
+        terrainShader.Vars()["PerFrameCB"]["gisOverlayStrength"] = gis_overlay.strenght;
     }
 
-    ImGui::PopStyleColor();
-    ImGui::PopStyleColor();
-    //ImGui::PopStyleVar(); // frame padding
+    if (ImGui::DragFloat("redStrength", &gis_overlay.redStrength, 0.01f, 0, 1)) {
+        terrainShader.Vars()["PerFrameCB"]["redStrength"] = gis_overlay.redStrength;
+    }
+    if (ImGui::DragFloat("redScale", &gis_overlay.redScale, 0.01f, 0, 100)) {
+        terrainShader.Vars()["PerFrameCB"]["redScale"] = gis_overlay.redScale;
+    }
+    if (ImGui::DragFloat("redOffset", &gis_overlay.redOffset, 0.01f, 0, 1)) {
+        terrainShader.Vars()["PerFrameCB"]["redOffset"] = gis_overlay.redOffset;
+    }
+
+    if (ImGui::DragFloat("overlay Strength", &gis_overlay.terrafectorOverlayStrength, 0.01f, 0, 1)) {
+        reset(true);
+    }
+    if (ImGui::DragFloat("roads alpha", &gis_overlay.splineOverlayStrength, 0.01f, 0, 1));
+
+    ImGui::Checkbox("bakeBakeOnlyData", &gis_overlay.bakeBakeOnlyData);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Disabeling this will produce a WRONG result\nIt is only here for speed testing as it mimics EVO pipeline");
+
+
+
+
+
+    ImGui::Separator();
+    float W = ImGui::GetWindowWidth() - 5;
+    ImGui::DragInt("# of splits", &bake.roadMaxSplits, 1, 8, 128);
+    if (ImGui::Button("roads -> fbx", ImVec2(W, 0))) { mRoadNetwork.exportRoads(bake.roadMaxSplits); }
+
+    if (ImGui::Button("bridges -> fbx", ImVec2(W, 0))) { mRoadNetwork.exportBridges(); }
+    ImGui::DragInt2("lod", &exportLodMin, 1, 0, 20);
+    //ImGui::DragInt("lod-MAX", &exportLodMax, 1, 0, 20);
+    if (exportLodMax < exportLodMin) exportLodMax = exportLodMin;
+    if (ImGui::Button("grab frame to fbx", ImVec2(W, 0))) { sceneToMax(); }
+
+
+    if (ImGui::Button("roads/materials -> EVO", ImVec2(W, 0))) {
+
+
+        //mRoadNetwork.exportBinary();
+        terrafectors.exportMaterialBinary(settings.dirRoot + "/bake", lastfile.EVO + "/");
+
+
+        char command[512];
+        sprintf(command, "attrib -r %s/Terrafectors/TextureList.gpu", (settings.dirExport).c_str());
+        std::string sCmd = command;
+        replaceAllterrain(sCmd, "/", "\\");
+        system(sCmd.c_str());
+
+        sprintf(command, "%s/bake/TextureList.gpu %s/Terrafectors", settings.dirRoot.c_str(), (settings.dirExport).c_str());
+        sCmd = command;
+        replaceAllterrain(sCmd, "/", "\\");
+        sCmd = "copy / Y " + sCmd;
+        system(sCmd.c_str());
+
+        sprintf(command, "attrib -r %s/Terrafectors/Materials.gpu", (settings.dirExport).c_str());
+        sCmd = command;
+        replaceAllterrain(sCmd, "/", "\\");
+        system(sCmd.c_str());
+
+        sprintf(command, "%s/bake/Materials.gpu %s/Terrafectors", settings.dirRoot.c_str(), (settings.dirExport).c_str());
+        sCmd = command;
+        replaceAllterrain(sCmd, "/", "\\");
+        sCmd = "copy / Y " + sCmd;
+        system(sCmd.c_str());
+
+        // terrafectors and roads as well, might become one file in future
+        sprintf(command, "attrib -r %s/Terrafectors/terrafector*", (settings.dirExport).c_str());
+        sCmd = command;
+        replaceAllterrain(sCmd, "/", "\\");
+        system(sCmd.c_str());
+
+        sprintf(command, "%s/bake/terrafector* %s/Terrafectors", settings.dirRoot.c_str(), (settings.dirExport).c_str());
+        sCmd = command;
+        replaceAllterrain(sCmd, "/", "\\");
+        sCmd = "copy / Y " + sCmd;
+        system(sCmd.c_str());
+
+
+        sprintf(command, "attrib -r %s/Terrafectors/roadbezier*", (settings.dirExport).c_str());
+        sCmd = command;
+        replaceAllterrain(sCmd, "/", "\\");
+        system(sCmd.c_str());
+
+        sprintf(command, "%s/bake/roadbezier* %s/Terrafectors", settings.dirRoot.c_str(), (settings.dirExport).c_str());
+        sCmd = command;
+        replaceAllterrain(sCmd, "/", "\\");
+        sCmd = "copy / Y " + sCmd;
+        system(sCmd.c_str());
+    }
+
+
+    ImGui::DragFloat("jp2 quality", &bake.quality, 0.0001f, 0.0001f, 0.01f, "%3.5f");
+    if (ImGui::Button("bake - EVO", ImVec2(W, 0))) { bake_start(false); }
+    if (ImGui::Button("bake - fakeVeg", ImVec2(W, 0))) { bake_start(true); }
+
+
+    ImGui::NewLine();
+    ImGui::Separator();
+    ImGui::Text("profile");
+    auto& profiler = Profiler::instance();
+    {
+        auto event = profiler.getEvent("/onFrameUpdate/update/update_dirty");
+        float gputime = event->getGpuTimeAverage();
+        ImGui::Text("update dirty %2.3fms", gputime);
+    }
+    {
+        auto event = profiler.getEvent("/onFrameRender/terrainManager");
+        float gputime = event->getGpuTimeAverage();
+        ImGui::Text("render terrain %2.3fms", gputime);
+    }
+    {
+        auto event = profiler.getEvent("/onFrameRender/billboards");
+        float gputime = event->getGpuTimeAverage();
+        ImGui::Text("render quads %2.3fms", gputime);
+    }
+    {
+        auto event = profiler.getEvent("/onFrameRender/vegetation");
+        float gputime = event->getGpuTimeAverage();
+        ImGui::Text("render plants %2.3fms", gputime);
+        // do lod plants as well
+    }
+
+
+    ImGui::NewLine();
+    ImGui::Separator();
+    ImGui::Text("Artificial Intelligence");
+
+
+    ImGui::Checkbox("AI mode", &mRoadNetwork.AI_path_mode);
+    if (mRoadNetwork.AI_path_mode) {
+        if (ImGui::Button("clear Path")) { mRoadNetwork.ai_clearPath(); }
+        ImGui::Separator();
+        if (ImGui::Button("currentRoad to AI")) {
+            mRoadNetwork.currentRoadtoAI();
+            updateDynamicRoad(true);
+        }
+        if (ImGui::Button("export AI")) { mRoadNetwork.exportAI(); }
+        if (ImGui::Button("export CSV")) { mRoadNetwork.exportAI_CSV(); }
+        if (ImGui::Button("load AI")) { mRoadNetwork.loadAI(); }
+        ImGui::Text("start - %3.2f, %3.2f, %3.2f", mRoadNetwork.pathBezier.startpos.x, mRoadNetwork.pathBezier.startpos.y, mRoadNetwork.pathBezier.startpos.z);
+        ImGui::Text("end - %3.2f, %3.2f, %3.2f", mRoadNetwork.pathBezier.endpos.x, mRoadNetwork.pathBezier.endpos.y, mRoadNetwork.pathBezier.endpos.z);
+        for (uint i = 0; i < mRoadNetwork.pathBezier.roads.size(); i++) {
+            ImGui::Text("%d, %d", mRoadNetwork.pathBezier.roads[i].roadIndex, (int)mRoadNetwork.pathBezier.roads[i].bForward);
+        }
+
+        ImGui::DragInt("kevRepeats", &mRoadNetwork.pathBezier.kevRepeats, 1, 1, 200);
+        ImGui::DragFloat("kevOutScale", &mRoadNetwork.pathBezier.kevOutScale, 1, 0, 200);
+        ImGui::DragFloat("kevInScale", &mRoadNetwork.pathBezier.kevInScale, 1, 0, 200);
+        ImGui::DragInt("kevSmooth", &mRoadNetwork.pathBezier.kevSmooth, 1, 0, 100);
+        ImGui::DragInt("kevAvsCnt", &mRoadNetwork.pathBezier.kevAvsCnt, 1, 0, 10);
+        ImGui::DragInt("kecMaxCnt", &mRoadNetwork.pathBezier.kecMaxCnt, 1, 0, 20);
+        ImGui::DragFloat("kevSampleMinSpacing", &mRoadNetwork.pathBezier.kevSampleMinSpacing, 1, 1, 20);
+
+    }
 }
 
-void terrainManager::onGuiRendercfd_params(Gui::Window& _window, Gui* pGui, float2 _screen)
+void terrainManager::onGuiRender_Right(Gui* _gui, int _header, float2 _screenSize)
 {
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.f, 0.f, 0.f, 0.75f));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5, 2));
-    ImGui::BeginChildFrame(98765, ImVec2(300, _screen.y));
-    ImGui::PushFont(pGui->getFont("roboto_20"));
-    {
-        //ImGui::NewLine();
-        //ImGui::Checkbox("profile", &cfd.clipmap.profile);
-        //ImGui::NewLine();
+    auto& oldStyle = ImGui::GetStyle();
+    auto& style = ImGui::GetStyle();
 
-        ImGui::Text("      time   maxV  vert  stp   maxP");
-        for (int i = 0; i <= 5; i++)
-        {
-            ImGui::Text("%d - %4d s, %2.1f m/s, %2.1f m/s, %2.1f, %3d", i, (int)cfd.clipmap.lods[i].timer, cfd.clipmap.lods[i].maxSpeed, cfd.clipmap.lods[i].maxSpeed_vertical, cfd.clipmap.lods[i].maxStep, (int)(cfd.clipmap.lods[i].maxP * 1000.f));
-        }
-
-
-        ImGui::NewLine();
-        if (ImGui::Button("launch glider from here"))
-        {
-            paraRuntime.requestRestart = true;
-            paraRuntime.usePosDir = true;
-            paraRuntime.restartPos = cameraOrigin;
-            paraRuntime.restartDir = cameraViews[CameraType_Main_Center].view[2];
-            useFreeCamWhileGliding = false;
-        }
-
-        ImGui::NewLine();
-
-        ImGui::Checkbox("custom wind", &cfd.clipmap.windSeperateSkewt);
-        if (cfd.clipmap.windSeperateSkewt)
-        {
-            ImGui::Text("Wind speed - %2.1f km/h", glm::length(cfd.clipmap.newWind) * 3.6f);
-            if (ImGui::DragFloat3("m/s", &cfd.clipmap.newWind.x, 1, -10, 10, "%1.1f"))
-            {
-                cfd.clipmap.newWind.y = 0;
-            }
-        }
-
-
-        if (ImGui::Button("re-start cfd"))
-        {
-            cfd.clipmap.windrequest = true;
-        }
-        TOOLTIP("Set the new wind speed if custom wind is selected above\nand re-start the cfd simulation");
-
-
-
-
-
-        //ImGui::NewLine();
-        //ImGui::DragFloat3("ORIGIN", &cfd.originRequest.x, 10.f, -20000.f, 20000.f, "%4.0f");
-        //ImGui::Checkbox("PAUSE cfd", &cfd.pause);
-
-
-        ImGui::NewLine();
-        ImGui::Checkbox("show streamlines", &cfd.clipmap.showStreamlines);
-        ImGui::DragFloat("scale", &cfd.clipmap.stremlineScale, 0.001f, 0.0001f, 1);
-        ImGui::DragFloat("area", &cfd.clipmap.streamlineAreaScale, 0.01f, 0.01f, 10);
-
-        ImGui::NewLine();
-        ImGui::Checkbox("show viz", &cfd.clipmap.showSlice);
-        ImGui::Checkbox("skewT", &cfd.clipmap.showskewT);       // shouldn tbe in clipmap
-
-        ImGui::SliderInt("lod", &cfd.clipmap.slicelod, 0, 5);
-        ImGui::SliderInt("slice", &cfd.clipmap.sliceIndex, 0, 127);
-        ImGui::Text("%d, %d %d", (int)cfd.clipmap.lodOffsets[5][0].x, (int)cfd.clipmap.lodOffsets[5][0].y, (int)cfd.clipmap.lodOffsets[5][0].z);
-        ImGui::Text("%2.3f, %2.3f %2.3f", cfd.clipmap.lodScales[5].x, cfd.clipmap.lodScales[5].y, cfd.clipmap.lodScales[5].z);
-
-        ImGui::NewLine();
-        ImGui::DragFloat("relax", &cfd.clipmap.incompres_relax, 0.01f, 1.0f, 2.0f);
-
-
-        ImGui::DragInt("num Inc", &cfd.clipmap.incompres_loop, 1, 1, 100);
-        ImGui::DragFloat("vort_confine", &cfd.clipmap.vort_confine, 0.01f, 0.0f, 1.0f);
-
-        ImGui::NewLine();
-        ImGui::DragFloat("sun heat", &cfd.clipmap.sun_heat_scale, 0.01f, 0.0f, 1.0f);
-        TOOLTIP("amount of sun heat to apply to the earth\nPlease not that this is testing phase still and applies it as if its 3pm\nit ignores the time of day settings");
-
-
-
-        ImGui::Text("%d, %f", cfd.clipmap.sliceOrder[3], cfd.lodLerp[3]);
-
-        
-    }
-
-    ImGui::EndChildFrame();
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
-
-    if (cfd.clipmap.showskewT)
+    Gui::Window rightPanel(_gui, "##rightPanel", true, { 200, 200 }, { 100, 100 }, Falcor::Gui::WindowFlags::NoResize);
+    rightPanel.windowPos((int)_screenSize.x - 300, _header);
+    rightPanel.windowSize(300, (int)_screenSize.y - _header);
     {
 
-        //_window.image("testImage", cfd.sliceDataTexture, float2(1024, 1024));
-        //onGuiRendercfd(_window, pGui, _screen);
-        onGuiRendercfd_skewT(_window, pGui, _screen);
+        ImGui::PushFont(_gui->getFont("header1"));
+        ImGui::PushItemWidth(ImGui::GetWindowWidth() - 5);
+        if (ImGui::Combo("###modeSelector", (int*)&terrainMode, "Vegetation\0Ecotope\0Terrafector\0Road network\0Glider Builder\0Terrain Builder\0Texture Tool\0")) { ; }
+        ImGui::PopItemWidth();
+        ImGui::PopFont();
+
+        ImGui::PushFont(_gui->getFont("default"));
+        ImGui::NewLine();
+
+        switch (terrainMode)
+        {
+        case _terrainMode::vegetation:            plants_Root.renderGui_rightPanel(_gui);            break;
+        case _terrainMode::ecotope:               onGuiRender_Right_Ecotope(_gui, rightPanel);            break;
+        case _terrainMode::terrafector:           onGuiRender_Right_Terrafector(_gui, rightPanel);            break;
+        case _terrainMode::roads:                 onGuiRender_Right_Roads(_gui, rightPanel);            break;
+        case _terrainMode::glider:                onGuiRender_Right_Glider(_gui, rightPanel);            break;
+        case _terrainMode::terrainBuilder:        newTerrainBuilder.renderGui_rightPanel(_gui);      break;
+
+        }
+        ImGui::PopFont();
+        style = oldStyle;   // reset it
     }
-    ImGui::PopFont();
+    rightPanel.release();
 }
-    */
 
-        
-void terrainManager::onGuiRender(Gui* _gui, fogAtmosphericParams* pAtmosphere)
+
+
+void terrainManager::onGuiRender_Main_Ecotope(Gui* _gui)
 {
-    if (!showGUI) return;
+    Gui::Window ecotopePanel(_gui, "Ecotope##tfPanel", { 900, 900 }, { 100, 100 });
+    {
+        mEcosystem.renderSelectedGUI(_gui);
+    }
+    ecotopePanel.release();
+}
 
-    ImGui::PushFont(_gui->getFont("default"));
 
+void terrainManager::onGuiRender_Main_Terrafector(Gui* _gui)
+{
+    Gui::Window terrafectorMaterialPanel_2(_gui, "Terrafector materials##2", { 900, 900 }, { 100, 100 });
+    {
+        terrafectorEditorMaterial::static_materials.renderGui(_gui, terrafectorMaterialPanel_2);
+    }
+    terrafectorMaterialPanel_2.release();
+}
+
+
+void terrainManager::onGuiRender_Main_Roads(Gui* _gui)
+{
+    Gui::Window tfPanel(_gui, "Material##tfPanel", { 900, 900 }, { 100, 100 });
+    {
+        if (terrafectorEditorMaterial::static_materials.renderGuiSelect(_gui))                reset(true);
+    }
+    tfPanel.release();
+
+    Gui::Window rmPanel(_gui, "Road mat##tfPanel", { 900, 900 }, { 100, 100 });
+    {
+        if (roadMaterialCache::getInstance().renderGuiSelect(_gui, rmPanel))
+        {
+            mRoadNetwork.updateAllRoads();
+            reset(true);
+        }
+    }
+    rmPanel.release();
+
+    Gui::Window terrafectorMaterialPanel(_gui, "Terrafector materials", { 900, 900 }, { 100, 100 });
+    {
+        terrafectorEditorMaterial::static_materials.renderGui(_gui, terrafectorMaterialPanel);
+    }
+    terrafectorMaterialPanel.release();
+
+    Gui::Window roadMaterialPanel(_gui, "Road materials", { 900, 900 }, { 100, 100 });
+    {
+        roadMaterialCache::getInstance().renderGui(_gui, roadMaterialPanel);
+    }
+    roadMaterialPanel.release();
+
+    Gui::Window terrafectorPanel(_gui, "Terrafectors", { 900, 900 }, { 100, 100 });
+    {
+        terrafectors.renderGui(_gui, terrafectorPanel);
+    }
+    terrafectorPanel.release();
+
+    Gui::Window texturePanel(_gui, "Textures", { 900, 900 }, { 100, 100 });
+    {
+        terrafectorEditorMaterial::static_materials.renderGuiTextures(_gui, texturePanel);
+        //terrafectors.renderGui(_gui, terrafectorPanel);
+    }
+    texturePanel.release();
+
+
+
+    if (mRoadNetwork.currentIntersection || mRoadNetwork.currentRoad)
+    {
+        Gui::Window roadPanel(_gui, "Road##roadPanel", { 200, 200 }, { 100, 100 });
+        {
+            //ImGui::PushFont(_gui->getFont("roboto_20"));
+            static bool fullWidth = false;
+            roadPanel.windowSize(180 + fullWidth * 460, 0);
+
+            if (mRoadNetwork.currentIntersection) {
+                fullWidth = mRoadNetwork.renderpopupGUI(_gui, mRoadNetwork.currentIntersection);
+
+                if (mRoadNetwork.currentRoad && (splineTest.bVertex || splineTest.bSegment)) {
+                    ImGui::SetCursorPosY(300);
+                    mRoadNetwork.renderpopupGUI(_gui, mRoadNetwork.intersectionSelectedRoad, splineTest.index);
+                }
+            }
+
+            if (mRoadNetwork.currentRoad) {
+                static uint _from = 0;
+                static uint _to = 0;
+                fullWidth = mRoadNetwork.renderpopupGUI(_gui, mRoadNetwork.currentRoad, splineTest.index);
+                if ((_from != mRoadNetwork.selectFrom) || (_to != mRoadNetwork.selectTo)) {
+                    updateDynamicRoad(true);
+                }
+            }
+
+            //ImGui::PopFont();
+        }
+        roadPanel.release();
+    }
+}
+
+
+void terrainManager::onGuiRender_Main_Glider(Gui* _gui)
+{
+}
+
+
+
+void terrainManager::onGuiRender_Main(Gui* _gui, int _header, float2 _screenSize)
+{
+    switch (terrainMode)
+    {
+    case _terrainMode::vegetation:          plants_Root.renderGui(_gui, _header, _screenSize);      break;
+    case _terrainMode::ecotope:             onGuiRender_Main_Ecotope(_gui);                         break;
+    case _terrainMode::terrafector:         onGuiRender_Main_Terrafector(_gui);                     break;
+    case _terrainMode::roads:               onGuiRender_Main_Roads(_gui);                           break;
+    case _terrainMode::terrainBuilder:      newTerrainBuilder.onGuiRender(_gui, _header, _screenSize);                    break;
+    }
+}
+
+
+
+void terrainManager::onGuiRender(Gui* _gui, int _header, float2 _screen, fogAtmosphericParams* pAtmosphere)
+{
     if (requestPopupSettings) {
         ImGui::OpenPopup("settings");
         requestPopupSettings = false;
@@ -2014,7 +2122,6 @@ void terrainManager::onGuiRender(Gui* _gui, fogAtmosphericParams* pAtmosphere)
         settings.renderGui(_gui);
         ImGui::EndPopup();
     }
-
     if (requestPopupDebug) {
         ImGui::OpenPopup("debug");
         requestPopupDebug = false;
@@ -2026,463 +2133,76 @@ void terrainManager::onGuiRender(Gui* _gui, fogAtmosphericParams* pAtmosphere)
     }
 
 
+
+
+
+    onGuiRender_Right(_gui, _header, _screen);
+
+    onGuiRender_Main(_gui, _header, _screen - float2(300, _header));    // FIXME reight panel currently hardcodedat 300 pixels BAD
+
+    if (debug)
+    {
+        Gui::Window debuginfo(_gui, "##debuginfo", { 200, 200 }, { 100, 100 });
+        {
+            onGuiRender_Debug(_gui);
+        }
+        debuginfo.release();
+    }
+
+
+
+
+
+
     
 
-    Gui::Window rightPanel(_gui, "##rightPanel", { 200, 200 }, { 100, 100 });
+    if (terrainMode != _terrainMode::vegetation)
     {
-        ImGui::PushFont(_gui->getFont("default"));
-
-        ImGui::PushItemWidth(ImGui::GetWindowWidth() - 20);
-        if (ImGui::Combo("###modeSelector", (int*)&terrainMode, "Vegetation\0Ecotope\0Terrafector\0Bezier road network\0Glider Builder\0")) { ; }
-        ImGui::PopItemWidth();
-        ImGui::NewLine();
-
-        auto& oldStyle = ImGui::GetStyle();
-        auto& style = ImGui::GetStyle();
-        //style.Colors[ImGuiCol_Button] = ImVec4(0.03f, 0.03f, 0.3f, 0.5f);
-
-        switch (terrainMode)
+        if (true /*!ImGui::IsAnyWindowHovered()*/)
         {
-        case _terrainMode::vegetation:
-        {
-            plants_Root.renderGui(_gui);
-        }
-        break;
-
-        case _terrainMode::ecotope:
-        {
-            mEcosystem.renderGUI(_gui);
-            if (ImGui::BeginPopupContextWindow(false))
+            if (splineTest.bVertex)
             {
-                if (ImGui::Selectable("New Ecotope")) { mEcosystem.addEcotope(); }
-                if (ImGui::Selectable("Load")) { mEcosystem.load(); }
-                if (ImGui::Selectable("Save")) { mEcosystem.save(); }
-                ImGui::EndPopup();
-            }
+                std::stringstream tooltip;
 
-            ImGui::NewLine();
-            ImGui::NewLine();
-            ImGui::Separator();
-            ImGui::Text("%d plants, %d tex, %2.2f Mb", plants_Root.importPathVector.size(), _plantMaterial::static_materials_veg.textureVector.size(), _plantMaterial::static_materials_veg.texMb);
-            
-            // do billobard as well
-            ImGui::NewLine();
-            ImGui::Text("billboards %d", plants_Root.feedback.numBillboard);
-            auto& profiler = Profiler::instance();
-            auto event = profiler.getEvent("/onFrameUpdate/update/update_dirty/clip_lod_animate");
-            billboardGpuTime = event->getGpuTimeAverage();
-            ImGui::Text("gpu %1.3fms", billboardGpuTime);
-
-            ImGui::NewLine();
-            float numTri = (float)plants_Root.feedback.numBlocks * VEG_BLOCK_SIZE * 2.f / 1000000.f;
-            ImGui::Text("plants %d in, %d out ", plants_Root.feedback.numPlant, plants_Root.feedback.numFrustDiscard);
-            ImGui::Text("%d, %d, %d, %d ", plants_Root.feedback.numLod[0], plants_Root.feedback.numLod[1], plants_Root.feedback.numLod[2], plants_Root.feedback.numLod[3]);
-            ImGui::Text("%2.2f M tri, %d blocks", numTri, plants_Root.feedback.numBlocks);
-            ImGui::Text("gpu %1.3fms", plants_Root.gputime);
-            ImGui::Text("clipLOD %d inst", plants_Root.feedback.numInstanceAddedComputeClipLod);
-            
-            
-
-            ImGui::NewLine();
-            ImGui::NewLine();
-            ImGui::Separator();
-            ImGui::Text("T     %1.1fms", stream.terrainCacheTime);
-            ImGui::Text("T tex %1.1fms", stream.terrainCacheJPHTime);
-            ImGui::Text("I     %1.1fms", stream.imageCacheTime);
-            ImGui::Text("I tex %1.1fms", stream.imageCacheJPHTime);
-            ImGui::Text("I io  %1.1fms", stream.imageCacheIOTime);
-            
-            
-            // FIXME make a unified function that I cann call from multiple spots, maybe even the menu
-            
-        }
-        break;
-
-        case _terrainMode::terrafector:
-        {
-            //terrafectors.renderGui(_gui);
-            ImGui::NewLine();
-            //roadMaterialCache::getInstance().renderGui(_gui);
-
-            ImGui::Text("Stamps");
-            ImGui::Text("%d - stamps", mRoadStampCollection.stamps.size());
-            ImGui::Text("%d - materials", mRoadStampCollection.materialMap.size());
-
-
-            if (ImGui::Button("Load - Previous"))
-            {
-                loadStamp();
-            }
-            if (ImGui::Button("Load"))
-            {
-                FileDialogFilterVec filters = { {"stamps"} };
-                if (openFileDialog(filters, mRoadStampCollection.lastUsedFilename))
+                if (mRoadNetwork.currentRoad)
                 {
-                    loadStamp();
-                    reset(true);
+                    tooltip << "camber   " << (int)(mRoadNetwork.currentRoad->points[splineTest.index].camber * 57.2958f) << "º     <-   ->\n";
+                    tooltip << "T   " << mRoadNetwork.currentRoad->points[splineTest.index].T << "      <-   ->\n";
+                    tooltip << "C   " << mRoadNetwork.currentRoad->points[splineTest.index].C << "      <-   ->\n";
+                    tooltip << "B   " << mRoadNetwork.currentRoad->points[splineTest.index].B << "      ctrl + left mouse + drag\n";
+
+                    ImGui::PushFont(_gui->getFont("roboto_26"));
+                    ImGui::SetTooltip(tooltip.str().c_str());
+                    ImGui::PopFont();
                 }
             }
-            if (ImGui::Button("Save"))
+            else
             {
-                FileDialogFilterVec filters = { {"stamps"} };
-                if (saveFileDialog(filters, mRoadStampCollection.lastUsedFilename))
+                char TTTEXT[1024];
+                uint idx = split.feedback.tum_idx;
+                sprintf(TTTEXT, "%s\n(%3.1f, %3.1f, %3.1f)\nlodyx %d %d %d\n%3.1fm", blockFromPositionB(split.feedback.tum_Position).c_str(),
+                    split.feedback.tum_Position.x, split.feedback.tum_Position.y, split.feedback.tum_Position.z,
+                    m_tiles[idx].lod, m_tiles[idx].y, m_tiles[idx].x, glm::length(split.feedback.tum_Position - this->cameraOrigin)
+                );
+
+                if (terrainMode == _terrainMode::terrafector)
                 {
-                    saveStamp();
+                    sprintf(TTTEXT, "(%3.1f, %3.1f, %3.1f)\nheight %2.2fm\nscale %2.2f %2.2f",
+                        split.feedback.tum_Position.x, split.feedback.tum_Position.y, split.feedback.tum_Position.z,
+                        mCurrentStamp.height, mCurrentStamp.scale.x, mCurrentStamp.scale.y);
                 }
-            }
-
-        }
-        break;
-
-        case _terrainMode::roads:
-        {
-            style.Colors[ImGuiCol_Button] = ImVec4(0.03f, 0.03f, 0.3f, 0.5f);
-            mRoadNetwork.renderGUI(_gui);
-
-
-            //if (ImGui::Button("bake - EVO", ImVec2(W, 0))) { bake(false); }
-            //if (ImGui::Button("bake - MAX", ImVec2(W, 0))) { bake(true); }
-
-            if (ImGui::Button("bezier -> lod4")) { bezierRoadstoLOD(4); }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Forces update of road GPU branchData");
-
-            if (ImGui::Checkbox("show baked", &bSplineAsTerrafector)) { reset(true); }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("'b'");
-            ImGui::Checkbox("show road icons", &showRoadOverlay);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("'n'");
-            ImGui::Checkbox("show road splines", &showRoadSpline);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("'m'");
-
-            ImGui::NewLine();
-
-            auto& style = ImGui::GetStyle();
-            style.ButtonTextAlign = ImVec2(0.0, 0.5);
-            if (ImGui::DragFloat("overlay", &gis_overlay.strenght, 0.01f, 0, 1, "%1.2f strength")) {
-                terrainShader.Vars()["PerFrameCB"]["gisOverlayStrength"] = gis_overlay.strenght;
-            }
-
-            if (ImGui::DragFloat("redStrength", &gis_overlay.redStrength, 0.01f, 0, 1)) {
-                terrainShader.Vars()["PerFrameCB"]["redStrength"] = gis_overlay.redStrength;
-            }
-            if (ImGui::DragFloat("redScale", &gis_overlay.redScale, 0.01f, 0, 100)) {
-                terrainShader.Vars()["PerFrameCB"]["redScale"] = gis_overlay.redScale;
-            }
-            if (ImGui::DragFloat("redOffset", &gis_overlay.redOffset, 0.01f, 0, 1)) {
-                terrainShader.Vars()["PerFrameCB"]["redOffset"] = gis_overlay.redOffset;
-            }
-
-            if (ImGui::DragFloat("overlay Strength", &gis_overlay.terrafectorOverlayStrength, 0.01f, 0, 1)) {
-                reset(true);
-            }
-            if (ImGui::DragFloat("roads alpha", &gis_overlay.splineOverlayStrength, 0.01f, 0, 1));
-
-            ImGui::Checkbox("bakeBakeOnlyData", &gis_overlay.bakeBakeOnlyData);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Disabeling this will produce a WRONG result\nIt is only here for speed testing as it mimics EVO pipeline");
-
-
-
-
-
-            ImGui::Separator();
-            float W = ImGui::GetWindowWidth() - 5;
-            ImGui::DragInt("# of splits", &bake.roadMaxSplits, 1, 8, 128);
-            if (ImGui::Button("roads -> fbx", ImVec2(W, 0))) { mRoadNetwork.exportRoads(bake.roadMaxSplits); }
-
-            if (ImGui::Button("bridges -> fbx", ImVec2(W, 0))) { mRoadNetwork.exportBridges(); }
-            ImGui::DragInt2("lod", &exportLodMin, 1, 0, 20);
-            //ImGui::DragInt("lod-MAX", &exportLodMax, 1, 0, 20);
-            if (exportLodMax < exportLodMin) exportLodMax = exportLodMin;
-            if (ImGui::Button("grab frame to fbx", ImVec2(W, 0))) { sceneToMax(); }
-
-
-            if (ImGui::Button("roads/materials -> EVO", ImVec2(W, 0))) {
-
-
-                //mRoadNetwork.exportBinary();
-                terrafectors.exportMaterialBinary(settings.dirRoot + "/bake", lastfile.EVO + "/");
-
-
-                char command[512];
-                sprintf(command, "attrib -r %s/Terrafectors/TextureList.gpu", (settings.dirExport).c_str());
-                std::string sCmd = command;
-                replaceAllterrain(sCmd, "/", "\\");
-                system(sCmd.c_str());
-
-                sprintf(command, "%s/bake/TextureList.gpu %s/Terrafectors", settings.dirRoot.c_str(), (settings.dirExport).c_str());
-                sCmd = command;
-                replaceAllterrain(sCmd, "/", "\\");
-                sCmd = "copy / Y " + sCmd;
-                system(sCmd.c_str());
-
-                sprintf(command, "attrib -r %s/Terrafectors/Materials.gpu", (settings.dirExport).c_str());
-                sCmd = command;
-                replaceAllterrain(sCmd, "/", "\\");
-                system(sCmd.c_str());
-
-                sprintf(command, "%s/bake/Materials.gpu %s/Terrafectors", settings.dirRoot.c_str(), (settings.dirExport).c_str());
-                sCmd = command;
-                replaceAllterrain(sCmd, "/", "\\");
-                sCmd = "copy / Y " + sCmd;
-                system(sCmd.c_str());
-
-                // terrafectors and roads as well, might become one file in future
-                sprintf(command, "attrib -r %s/Terrafectors/terrafector*", (settings.dirExport).c_str());
-                sCmd = command;
-                replaceAllterrain(sCmd, "/", "\\");
-                system(sCmd.c_str());
-
-                sprintf(command, "%s/bake/terrafector* %s/Terrafectors", settings.dirRoot.c_str(), (settings.dirExport).c_str());
-                sCmd = command;
-                replaceAllterrain(sCmd, "/", "\\");
-                sCmd = "copy / Y " + sCmd;
-                system(sCmd.c_str());
-
-
-                sprintf(command, "attrib -r %s/Terrafectors/roadbezier*", (settings.dirExport).c_str());
-                sCmd = command;
-                replaceAllterrain(sCmd, "/", "\\");
-                system(sCmd.c_str());
-
-                sprintf(command, "%s/bake/roadbezier* %s/Terrafectors", settings.dirRoot.c_str(), (settings.dirExport).c_str());
-                sCmd = command;
-                replaceAllterrain(sCmd, "/", "\\");
-                sCmd = "copy / Y " + sCmd;
-                system(sCmd.c_str());
-            }
-
-
-            ImGui::DragFloat("jp2 quality", &bake.quality, 0.0001f, 0.0001f, 0.01f, "%3.5f");
-            if (ImGui::Button("bake - EVO", ImVec2(W, 0))) { bake_start(false); }
-            if (ImGui::Button("bake - fakeVeg", ImVec2(W, 0))) { bake_start(true); }
-
-
-
-
-            ImGui::NewLine();
-            ImGui::Separator();
-            ImGui::Text("Artificial Intelligence");
-
-
-            ImGui::Checkbox("AI mode", &mRoadNetwork.AI_path_mode);
-            if (mRoadNetwork.AI_path_mode) {
-                if (ImGui::Button("clear Path")) { mRoadNetwork.ai_clearPath(); }
-                ImGui::Separator();
-                if (ImGui::Button("currentRoad to AI")) {
-                    mRoadNetwork.currentRoadtoAI();
-                    updateDynamicRoad(true);
-                }
-                if (ImGui::Button("export AI")) { mRoadNetwork.exportAI(); }
-                if (ImGui::Button("export CSV")) { mRoadNetwork.exportAI_CSV(); }
-                if (ImGui::Button("load AI")) { mRoadNetwork.loadAI(); }
-                ImGui::Text("start - %3.2f, %3.2f, %3.2f", mRoadNetwork.pathBezier.startpos.x, mRoadNetwork.pathBezier.startpos.y, mRoadNetwork.pathBezier.startpos.z);
-                ImGui::Text("end - %3.2f, %3.2f, %3.2f", mRoadNetwork.pathBezier.endpos.x, mRoadNetwork.pathBezier.endpos.y, mRoadNetwork.pathBezier.endpos.z);
-                for (uint i = 0; i < mRoadNetwork.pathBezier.roads.size(); i++) {
-                    ImGui::Text("%d, %d", mRoadNetwork.pathBezier.roads[i].roadIndex, (int)mRoadNetwork.pathBezier.roads[i].bForward);
-                }
-
-                ImGui::DragInt("kevRepeats", &mRoadNetwork.pathBezier.kevRepeats, 1, 1, 200);
-                ImGui::DragFloat("kevOutScale", &mRoadNetwork.pathBezier.kevOutScale, 1, 0, 200);
-                ImGui::DragFloat("kevInScale", &mRoadNetwork.pathBezier.kevInScale, 1, 0, 200);
-                ImGui::DragInt("kevSmooth", &mRoadNetwork.pathBezier.kevSmooth, 1, 0, 100);
-                ImGui::DragInt("kevAvsCnt", &mRoadNetwork.pathBezier.kevAvsCnt, 1, 0, 10);
-                ImGui::DragInt("kecMaxCnt", &mRoadNetwork.pathBezier.kecMaxCnt, 1, 0, 20);
-                ImGui::DragFloat("kevSampleMinSpacing", &mRoadNetwork.pathBezier.kevSampleMinSpacing, 1, 1, 20);
-
-            }
-        }
-        break;
-        }
-
-        ImGui::PopFont();
-        style = oldStyle;   // reset it
-    }
-    rightPanel.release();
-
-
-
-
-    switch (terrainMode)
-    {
-    case _terrainMode::vegetation:
-    {
-        ImGui::PushFont(_gui->getFont("header2"));
-        {
-            Gui::Window vegmatPanel(_gui, "Vegetation material##tfPanel", { 900, 900 }, { 100, 100 });
-            {
-
-                if (_plantMaterial::static_materials_veg.renderGuiSelect(_gui)) {
-                    reset(true);
-                }
-            }
-            vegmatPanel.release();
-
-            Gui::Window vegcachePanel(_gui, "Vegetation cache##tfPanel", { 900, 900 }, { 100, 100 });
-            {
-                _plantMaterial::static_materials_veg.renderGui(_gui, vegcachePanel);
-            }
-            vegcachePanel.release();
-
-
-            Gui::Window vegtexPanel(_gui, "Vegetation textures##tfPanel", { 900, 900 }, { 100, 100 });
-            {
-                _plantMaterial::static_materials_veg.renderGuiTextures(_gui, vegtexPanel);
-            }
-            vegtexPanel.release();
-        }
-        ImGui::PopFont();
-    }
-    break;
-    case _terrainMode::ecotope:
-    {
-        Gui::Window ecotopePanel(_gui, "Ecotope##tfPanel", { 900, 900 }, { 100, 100 });
-        {
-            mEcosystem.renderSelectedGUI(_gui);
-        }
-        ecotopePanel.release();
-    }
-    break;
-    case _terrainMode::terrafector:
-    {
-        Gui::Window terrafectorMaterialPanel_2(_gui, "Terrafector materials##2", { 900, 900 }, { 100, 100 });
-        {
-            terrafectorEditorMaterial::static_materials.renderGui(_gui, terrafectorMaterialPanel_2);
-        }
-        terrafectorMaterialPanel_2.release();
-    }
-    break;
-    case _terrainMode::roads:
-
-        //ImGui::PushFont(_gui->getFont("roboto_20"));
-    
-    {
-        Gui::Window tfPanel(_gui, "Material##tfPanel", { 900, 900 }, { 100, 100 });
-        {
-            if (terrafectorEditorMaterial::static_materials.renderGuiSelect(_gui))                reset(true);
-        }
-        tfPanel.release();
-
-        Gui::Window rmPanel(_gui, "Road mat##tfPanel", { 900, 900 }, { 100, 100 });
-        {
-            if (roadMaterialCache::getInstance().renderGuiSelect(_gui, rmPanel))
-            {
-                mRoadNetwork.updateAllRoads();
-                reset(true);
-            }
-        }
-        rmPanel.release();
-
-        Gui::Window terrafectorMaterialPanel(_gui, "Terrafector materials", { 900, 900 }, { 100, 100 });
-        {
-            terrafectorEditorMaterial::static_materials.renderGui(_gui, terrafectorMaterialPanel);
-        }
-        terrafectorMaterialPanel.release();
-
-        Gui::Window roadMaterialPanel(_gui, "Road materials", { 900, 900 }, { 100, 100 });
-        {
-            roadMaterialCache::getInstance().renderGui(_gui, roadMaterialPanel);
-        }
-        roadMaterialPanel.release();
-
-        Gui::Window terrafectorPanel(_gui, "Terrafectors", { 900, 900 }, { 100, 100 });
-        {
-            terrafectors.renderGui(_gui, terrafectorPanel);
-        }
-        terrafectorPanel.release();
-
-        Gui::Window texturePanel(_gui, "Textures", { 900, 900 }, { 100, 100 });
-        {
-            terrafectorEditorMaterial::static_materials.renderGuiTextures(_gui, texturePanel);
-            //terrafectors.renderGui(_gui, terrafectorPanel);
-        }
-        texturePanel.release();
-        
-
-
-        if (mRoadNetwork.currentIntersection || mRoadNetwork.currentRoad)
-        {
-            Gui::Window roadPanel(_gui, "Road##roadPanel", { 200, 200 }, { 100, 100 });
-            {
-                //ImGui::PushFont(_gui->getFont("roboto_20"));
-                static bool fullWidth = false;
-                roadPanel.windowSize(180 + fullWidth * 460, 0);
-
-                if (mRoadNetwork.currentIntersection) {
-                    fullWidth = mRoadNetwork.renderpopupGUI(_gui, mRoadNetwork.currentIntersection);
-
-                    if (mRoadNetwork.currentRoad && (splineTest.bVertex || splineTest.bSegment)) {
-                        ImGui::SetCursorPosY(300);
-                        mRoadNetwork.renderpopupGUI(_gui, mRoadNetwork.intersectionSelectedRoad, splineTest.index);
-                    }
-                }
-
-                if (mRoadNetwork.currentRoad) {
-                    static uint _from = 0;
-                    static uint _to = 0;
-                    fullWidth = mRoadNetwork.renderpopupGUI(_gui, mRoadNetwork.currentRoad, splineTest.index);
-                    if ((_from != mRoadNetwork.selectFrom) || (_to != mRoadNetwork.selectTo)) {
-                        updateDynamicRoad(true);
-                    }
-                }
-
-                //ImGui::PopFont();
-            }
-            roadPanel.release();
-        }
-    }
-    //ImGui::PopFont();
-    break;
-    }
-
-    if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow))
-    {
-        if (splineTest.bVertex)
-        {
-            std::stringstream tooltip;
-
-            if (mRoadNetwork.currentRoad)
-            {
-                tooltip << "camber   " << (int)(mRoadNetwork.currentRoad->points[splineTest.index].camber * 57.2958f) << "º     <-   ->\n";
-                tooltip << "T   " << mRoadNetwork.currentRoad->points[splineTest.index].T << "      <-   ->\n";
-                tooltip << "C   " << mRoadNetwork.currentRoad->points[splineTest.index].C << "      <-   ->\n";
-                tooltip << "B   " << mRoadNetwork.currentRoad->points[splineTest.index].B << "      ctrl + left mouse + drag\n";
+                //sprintf(TTTEXT, "splinetest %d (%d, %d) \n", splineTest.index, splineTest.bVertex, splineTest.bSegment);
+                auto& style = ImGui::GetStyle();
+                style.Colors[ImGuiCol_Text] = ImVec4(0.50f, 0.5, 0.5, 1.f);
+                style.Colors[ImGuiCol_PopupBg] = ImVec4(0.00f, 0.f, 0.f, 0.8f);
 
                 ImGui::PushFont(_gui->getFont("roboto_26"));
-                ImGui::SetTooltip(tooltip.str().c_str());
+                ImGui::SetTooltip(TTTEXT);
                 ImGui::PopFont();
             }
         }
-        else
-        {
-            char TTTEXT[1024];
-            uint idx = split.feedback.tum_idx;
-            sprintf(TTTEXT, "%s\n(%3.1f, %3.1f, %3.1f)\nlodyx %d %d %d\n%3.1fm", blockFromPositionB(split.feedback.tum_Position).c_str(),
-                split.feedback.tum_Position.x, split.feedback.tum_Position.y, split.feedback.tum_Position.z,
-                m_tiles[idx].lod, m_tiles[idx].y, m_tiles[idx].x, glm::length(split.feedback.tum_Position - this->cameraOrigin)
-            );
-
-            if (terrainMode == _terrainMode::terrafector)
-            {
-                sprintf(TTTEXT, "(%3.1f, %3.1f, %3.1f)\nheight %2.2fm\nscale %2.2f %2.2f",
-                    split.feedback.tum_Position.x, split.feedback.tum_Position.y, split.feedback.tum_Position.z,
-                    mCurrentStamp.height, mCurrentStamp.scale.x, mCurrentStamp.scale.y);
-            }
-            //sprintf(TTTEXT, "splinetest %d (%d, %d) \n", splineTest.index, splineTest.bVertex, splineTest.bSegment);
-            auto& style = ImGui::GetStyle();
-            style.Colors[ImGuiCol_Text] = ImVec4(0.50f, 0.5, 0.5, 1.f);
-            style.Colors[ImGuiCol_PopupBg] = ImVec4(0.00f, 0.f, 0.f, 0.8f);
-
-            ImGui::PushFont(_gui->getFont("roboto_26"));
-            ImGui::SetTooltip(TTTEXT);
-            ImGui::PopFont();
-        }
     }
 
-    ImGui::PopFont();
 }
 
 
@@ -2598,10 +2318,6 @@ void jp2Dir::save(std::string _name)
 
 void jp2Dir::load(std::string _name)
 {
-    //std::filesystem::path p = _name;
-    //if(!std::filesystem::exists(p))
-    //    throw std::runtime_error("jp2Dir::load() - file does not exist: " + _name);
-
     std::ifstream is(_name.c_str());
     if (is.good()) {
         cereal::JSONInputArchive archive(is);
@@ -2632,14 +2348,22 @@ void jp2Dir::load(std::string _name)
 //#pragma optimize("", off)
 void jp2Dir::cache0(std::string _path)
 {
-    path = _path;   // save for rest of session
+    LOG_LINE(1, "jp2Dir::cache0");
+    if (files.size() > 0)
+    {
+        path = _path;   // save for rest of session
 
-    dataRoot.clear();
-    dataRoot.resize(files[0].sizeInBytes);
-    std::ifstream is(_path + files[0].filename, std::ios::binary);
-    if (is.good()) {
-        is.read((char*)dataRoot.data(), files[0].sizeInBytes);
-        is.close();
+        dataRoot.clear();
+        dataRoot.resize(files[0].sizeInBytes);
+        std::ifstream is(_path + files[0].filename, std::ios::binary);
+        if (is.good()) {
+            is.read((char*)dataRoot.data(), files[0].sizeInBytes);
+            is.close();
+        }
+    }
+    else
+    {
+
     }
     /*
     std::vector<unsigned char> data(files[0].sizeInBytes);
@@ -2656,6 +2380,7 @@ void jp2Dir::cache0(std::string _path)
 //std::thread t1(imageDirectory.cacheHash(), hash);
 void jp2Dir::cacheHash(uint32_t hash)
 {
+    LOG_LINE(1, "jp2Dir::cacheHash");
     if (hash == 0) return;  // because that is all pre loaded
 
     std::map<uint32_t, uint>::iterator file_it = fileHashmap.find(hash);
@@ -2718,8 +2443,8 @@ void terrainManager::generateGdalPhotos()
     jp2Map _mapElement;
     jp2Dir jp2;
     std::ofstream of_gdal;
-    std::string inLow = "Images_2m.tif";
-    std::string inAll = "Images_2m.tif A1.tif A2.tif A3.tif B1.tif B2.tif B3.tif C1.tif C2.tif C3.tif D1.tif D2.tif D3.tif ";
+    std::string inLow = "2025250_Mosaik_RGB.tif 2025150_Mosaik_RGB.tif 2023450_Mosaik_RGB.tif 2023360_Mosaik_RGB.tif ";
+    std::string inAll = "2025250_Mosaik_RGB.tif 2025150_Mosaik_RGB.tif 2023450_Mosaik_RGB.tif 2023360_Mosaik_RGB.tif ";
 
     std::ifstream ifLOD68map;
     unsigned char map[256][256];
@@ -2731,7 +2456,7 @@ void terrainManager::generateGdalPhotos()
         ifLOD68map.close();
     }
 
-    of_gdal.open("E:/terrains/switserland_Steg/gis/photos/gdal_photos_NEW.bat");
+    of_gdal.open("F:/terrains_gis/austria_Wechsel/photos/gdal_photos_NEW.bat");
     if (of_gdal)
     {
         jp2.files.emplace_back();
@@ -2742,6 +2467,7 @@ void terrainManager::generateGdalPhotos()
         jp2.files.back().tiles.push_back(_mapElement);
         writeGdal(_mapElement, of_gdal, inLow);
 
+        // 9.6m
         for (uint y = 0; y < 4; y++) {
             for (uint x = 0; x < 4; x++) {
                 _mapElement.set(2, y, x);
@@ -2750,6 +2476,7 @@ void terrainManager::generateGdalPhotos()
             }
         }
 
+        // 2.4m
         for (uint y = 0; y < 16; y++) {
             for (uint x = 0; x < 16; x++) {
                 _mapElement.set(4, y, x);
@@ -2758,11 +2485,111 @@ void terrainManager::generateGdalPhotos()
             }
         }
 
+        /*
+        // 61cm - top
+        for (uint y = 8; y < 24; y++) {
+            for (uint x = 8; x < 56; x++) {
+                _mapElement.set(6, y, x);
+                jp2.files.back().tiles.push_back(_mapElement);
+                writeGdal(_mapElement, of_gdal, inLow);
+            }
+        }
+
+        // 61cm - wechsel
+        for (uint y = 36; y < 52; y++) {
+            for (uint x = 12; x < 32; x++) {
+                _mapElement.set(6, y, x);
+                jp2.files.back().tiles.push_back(_mapElement);
+                writeGdal(_mapElement, of_gdal, inLow);
+            }
+        }
+        */
         writeGdalClear(of_gdal);
 
 
 
         std::vector<jp2Map> block_files;
+        /*
+        // top 61cm
+        for (uint ty = 1; ty < 6; ty++)
+        {
+            for (uint tx = 2; tx < 14; tx++)
+            {
+                block_files.clear();
+
+                for (uint y = ty * 4; y < ty * 4 + 4; y++) {
+                    for (uint x = tx * 4; x < tx * 4 + 4; x++) {
+                        {
+                            _mapElement.set(6, y, x); // 61 cm
+                            block_files.push_back(_mapElement);
+                            writeGdal(_mapElement, of_gdal, inAll);
+                        }
+                    }
+                }
+            }
+        }
+
+        // wechsel 61cm
+        for (uint ty = 9; ty < 13; ty++)
+        {
+            for (uint tx = 3; tx < 8; tx++)
+            {
+                block_files.clear();
+
+                for (uint y = ty * 4; y < ty * 4 + 4; y++) {
+                    for (uint x = tx * 4; x < tx * 4 + 4; x++) {
+                        {
+                            _mapElement.set(6, y, x); // 61 cm
+                            block_files.push_back(_mapElement);
+                            writeGdal(_mapElement, of_gdal, inAll);
+                        }
+                    }
+                }
+            }
+        }
+
+
+        // top 15cm
+        for (uint ty = 2; ty < 4; ty++)
+        {
+            for (uint tx = 11; tx < 13; tx++)
+            {
+                block_files.clear();
+
+                for (uint y = ty * 16; y < ty * 16 + 16; y++) {
+                    for (uint x = tx * 16; x < tx * 16 + 16; x++) {
+                        //if (map[y][x] > 200)
+                        {
+                            _mapElement.set(8, y, x);
+                            block_files.push_back(_mapElement);
+                            writeGdal(_mapElement, of_gdal, inAll);
+                        }
+                    }
+                }
+            }
+        }
+
+        // wechsel 15cm
+        for (uint ty = 11; ty < 12; ty++)
+        {
+            for (uint tx = 5; tx < 7; tx++)
+            {
+                block_files.clear();
+
+                for (uint y = ty * 16; y < ty * 16 + 16; y++) {
+                    for (uint x = tx * 16; x < tx * 16 + 16; x++) {
+                        if (map[y][x] > 200)
+                        {
+                            _mapElement.set(8, y, x);
+                            block_files.push_back(_mapElement);
+                            writeGdal(_mapElement, of_gdal, inAll);
+                        }
+                    }
+                }
+            }
+        }
+        */
+
         for (uint ty = 0; ty < 16; ty++)
         {
             for (uint tx = 0; tx < 16; tx++)
@@ -2771,9 +2598,11 @@ void terrainManager::generateGdalPhotos()
 
                 for (uint y = ty * 4; y < ty * 4 + 4; y++) {
                     for (uint x = tx * 4; x < tx * 4 + 4; x++) {
-                        if (map[y * 4][x * 4] > 100)
+                        //if (map[y * 4][x * 4] > 100)
+                        if ((tx >= 2 && tx < 14 && ty >= 1 && ty < 6) ||
+                            (tx >= 3 && tx < 8 && ty >= 9 && ty < 13))
                         {
-                            _mapElement.set(6, y, x);
+                            _mapElement.set(6, y, x); // 61 cm
                             block_files.push_back(_mapElement);
                             writeGdal(_mapElement, of_gdal, inAll);
                         }
@@ -2782,7 +2611,9 @@ void terrainManager::generateGdalPhotos()
 
                 for (uint y = ty * 16; y < ty * 16 + 16; y++) {
                     for (uint x = tx * 16; x < tx * 16 + 16; x++) {
-                        if (map[y][x] > 200)
+                        //if (map[y][x] > 200)
+                        if ((tx >= 11 && tx < 13 && ty >= 2 && ty < 4) ||
+                            (tx >= 11 && tx < 12 && ty >= 5 && ty < 7))
                         {
                             _mapElement.set(8, y, x);
                             block_files.push_back(_mapElement);
@@ -2810,7 +2641,7 @@ void terrainManager::generateGdalPhotos()
 
         of_gdal.close();
 
-        jp2.save("E:/terrains/switserland_Steg/gis/photos/photo_tiles.json");
+        jp2.save("F:/terrains_gis/austria_Wechsel/photos/photo_tiles.json");
         //jp2.saveBinary("E:/terrains/switserland_Steg/gis/photos/photo_tiles.bin");
 
         //jp2Dir jp2Test;
@@ -3283,10 +3114,10 @@ void terrainManager::bil_to_jp2Photos()
     std::ifstream ifSummary;
 
     jp2Dir jp2;
-    jp2.load("E:/terrains/switserland_Steg/gis/photos/photo_tiles.json");
+    jp2.load("F:/terrains_gis/austria_Wechsel/photos/photo_tiles.json");
     for (auto& F : jp2.files)
     {
-        std::string binfile = "E:/terrains/switserland_Steg/gis/_temp/" + F.filename;
+        std::string binfile = "F:/ESim_NextCloud/eSim-Plantwork/terrains/austria_Wechsel/orthophoto/" + F.filename;
         std::ofstream of_jp2;
         of_jp2.open(binfile, std::ios::binary);
         if (of_jp2.good())
@@ -3295,14 +3126,14 @@ void terrainManager::bil_to_jp2Photos()
             for (auto& T : F.tiles)
             {
                 T.fileOffset = F.sizeInBytes;
-                filename = "E:/terrains/switserland_Steg/gis/_temp/img_" + std::to_string(T.lod) + "_" + std::to_string(T.y) + "_" + std::to_string(T.x);
+                filename = "F:/terrains_gis/austria_Wechsel/_temp/img_" + std::to_string(T.lod) + "_" + std::to_string(T.y) + "_" + std::to_string(T.x);
                 T.sizeInBytes = bil_to_jp2PhotosMemory(of_jp2, filename, 1024, T.lod, T.y, T.x);
                 F.sizeInBytes += T.sizeInBytes;
             }
             of_jp2.close();
         }
     }
-    jp2.save("E:/terrains/switserland_Steg/gis/photos/photo_tiles_JP2.json");
+    jp2.save("F:/ESim_NextCloud/eSim-Plantwork/terrains/austria_Wechsel/orthophotos.json");
     return;
 
 
@@ -3375,7 +3206,7 @@ uint terrainManager::bil_to_jp2PhotosMemory(std::ofstream& _file, std::string fi
         cod.set_color_transform(true);
         cod.set_reversible(false);
 
-        codestream.access_qcd().set_irrev_quant(0.05f);
+        codestream.access_qcd().set_irrev_quant(0.04f);
         codestream.set_planar(false);
 
         FILE* bilData = fopen((filename + ".bil").c_str(), "rb");
@@ -3494,7 +3325,7 @@ void terrainManager::bil_to_jp2Photos(std::string file, const uint size, uint _l
                 }
             }
             fclose(bilData);
-
+            /*
             if (_lod == 4 && _y == 4 && _x == 13)
             {
                 std::ofstream ofs;
@@ -3549,7 +3380,7 @@ void terrainManager::bil_to_jp2Photos(std::string file, const uint size, uint _l
 
                     ofs.close();
                 }
-            }
+            }*/
         }
 
 
@@ -3699,7 +3530,7 @@ void terrainManager::onGuiMenubar(Gui* pGui)
     //ImGui::Text(presets.name.c_str());
     style.Colors[ImGuiCol_Text] = ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
 
-    ImGui::SetCursorPos(ImVec2(200, 0));
+    ImGui::SetCursorPos(ImVec2(250, 0));
     if (ImGui::BeginMenu("terrain"))
     {
         if (ImGui::MenuItem("load"))
@@ -3752,15 +3583,31 @@ bool all(float4 in)
 }
 
 
-void terrainManager::testForSurfaceMain()
+// FIXME NOT GREAT to rede every frame but also likely reaaly fast
+void terrainManager::calculateSurfaceFlags()
 {
-    bool bCM = true;
+    memset(frustumFlags, 0, sizeof(uint4) * 1024);		// clear all
+
     for (auto& tile : m_used)
     {
-        bool surface = tile->parent && tile->parent->main_ShouldSplit && tile->child[0] == nullptr;
-        bool bCM2 = true;
-        if (surface) {
-            frustumFlags[tile->index] |= 1 << 20;
+        frustumFlags[tile->index].x |= 1 << 31;   // just makr as active
+        float boundingSphereSize = tile->size * 1.0f;// very generous but missing here is FATAL
+        for (int i = 0; i < CameraType_MAX; i++) {
+            if (cameraViews[i].bUse) {
+                float4 viewBS = cameraViews[i].view * tile->boundingSphere;
+                float4 test = saturate(viewBS * cameraViews[i].frustumMatrix + float4(boundingSphereSize, boundingSphereSize, boundingSphereSize, boundingSphereSize));
+                if (all(test))
+                {
+                    frustumFlags[tile->index].y |= 1 << i;  // visible for plants
+
+                    bool surface = tile->parent && tile->parent->main_ShouldSplit && tile->child[0] == nullptr;
+                    // FIXME surface should depend on camera type, or mianshouldSplit should be per surface
+                    if (surface)
+                    {
+                        frustumFlags[tile->index].x |= 1 << i;
+                    }
+                }
+            }
         }
     }
 }
@@ -3780,7 +3627,7 @@ bool terrainManager::testForSplit(quadtree_tile* _tile)
         return false;
 
     float scale = _tile->size / glm::length(float3(_tile->boundingSphere) - cameraOrigin);
-    float boundingSphereSize = _tile->size * 0.8f;
+    float boundingSphereSize = _tile->size * 0.9f;
 
     for (int i = 0; i < CameraType_MAX; i++) {
         if (cameraViews[i].bUse) {
@@ -3874,7 +3721,6 @@ void terrainManager::clearCameras()
     for (uint i = 0; i < CameraType_MAX; i++) {
         cameraViews[i].bUse = false;
     }
-
 }
 
 void terrainManager::setCamera(unsigned int _index, glm::mat4 viewMatrix, glm::mat4 projMatrix, float3 position, bool b_use, float _resolution)
@@ -3917,6 +3763,15 @@ void terrainManager::setCamera(unsigned int _index, glm::mat4 viewMatrix, glm::m
             cameraViews[_index].frustumPlane[2].x, cameraViews[_index].frustumPlane[2].y, cameraViews[_index].frustumPlane[2].z, cameraViews[_index].frustumPlane[2].w,
             cameraViews[_index].frustumPlane[3].x, cameraViews[_index].frustumPlane[3].y, cameraViews[_index].frustumPlane[3].z, cameraViews[_index].frustumPlane[3].w);
     }
+
+    viewMask = 0;
+    for (uint i = 0; i < CameraType_MAX; i++)
+    {
+        if (cameraViews[i].bUse)
+        {
+            viewMask |= 1 << i;
+        }
+    }
 }
 
 
@@ -3932,130 +3787,67 @@ void replaceAll_TM(std::string& str, const std::string& from, const std::string&
 }
 
 
+void terrainManager::updateShaderConstants(Texture::SharedPtr _previousFrame, shaderLightBuffer _buffer)
+{
+    // FXIME pretty sure we can do this in onLoad
+    terrainShader.Vars()->setTexture("terrainShadow", terrainShadowTexture);
+    //rappersvilleShader.Vars()->setTexture("terrainShadow", terrainShadowTexture);
+    //gliderwingShader.Vars()->setTexture("terrainShadow", terrainShadowTexture);
+    terrainSpiteShader.Vars()->setTexture("terrainShadow", terrainShadowTexture);
+
+    ribbonShader.Vars()->setTexture("gPreviousFrame", _previousFrame);
+    terrainSpiteShader.Vars()->setTexture("gPreviousFrame", _previousFrame);
+
+    terrainShader.Vars()["LightsCB"]["sunDirection"] = _buffer.sunDirection;
+    terrainShader.Vars()["LightsCB"]["sunRightVector"] = _buffer.sunRightVector;
+    terrainShader.Vars()["LightsCB"]["sunUpVector"] = _buffer.sunUpVector;
+    terrainShader.Vars()["LightsCB"]["screenSize"] = _buffer.screenSize;
+    terrainShader.Vars()["LightsCB"]["fog_far_Start"] = _buffer.fog_far_Start;
+    terrainShader.Vars()["LightsCB"]["fog_far_log_F"] = _buffer.fog_far_log_F;
+    terrainShader.Vars()["LightsCB"]["fog_far_one_over_k"] = _buffer.fog_far_one_over_k;
+
+    /*rappersvilleShader.Vars()["LightsCB"]["sunDirection"] = _buffer.sunDirection;
+    rappersvilleShader.Vars()["LightsCB"]["sunRightVector"] = _buffer.sunRightVector;
+    rappersvilleShader.Vars()["LightsCB"]["sunUpVector"] = _buffer.sunUpVector;
+    rappersvilleShader.Vars()["LightsCB"]["screenSize"] = _buffer.screenSize;
+    rappersvilleShader.Vars()["LightsCB"]["fog_far_Start"] = _buffer.fog_far_Start;
+    rappersvilleShader.Vars()["LightsCB"]["fog_far_log_F"] = _buffer.fog_far_log_F;
+    rappersvilleShader.Vars()["LightsCB"]["fog_far_one_over_k"] = _buffer.fog_far_one_over_k;
+    */
+    /*gliderwingShader.Vars()["LightsCB"]["sunDirection"] = _buffer.sunDirection;
+    gliderwingShader.Vars()["LightsCB"]["sunRightVector"] = _buffer.sunRightVector;
+    gliderwingShader.Vars()["LightsCB"]["sunUpVector"] = _buffer.sunUpVector;
+    gliderwingShader.Vars()["LightsCB"]["screenSize"] = _buffer.screenSize;
+    gliderwingShader.Vars()["LightsCB"]["fog_far_Start"] = _buffer.fog_far_Start;
+    gliderwingShader.Vars()["LightsCB"]["fog_far_log_F"] = _buffer.fog_far_log_F;
+    gliderwingShader.Vars()["LightsCB"]["fog_far_one_over_k"] = _buffer.fog_far_one_over_k;
+    */
+
+    terrainSpiteShader.Vars()["LightsCB"]["sunDirection"] = _buffer.sunDirection;
+    terrainSpiteShader.Vars()["LightsCB"]["sunRightVector"] = _buffer.sunRightVector;
+    terrainSpiteShader.Vars()["LightsCB"]["sunUpVector"] = _buffer.sunUpVector;
+    terrainSpiteShader.Vars()["LightsCB"]["screenSize"] = _buffer.screenSize;
+    terrainSpiteShader.Vars()["LightsCB"]["fog_far_Start"] = _buffer.fog_far_Start;
+    terrainSpiteShader.Vars()["LightsCB"]["fog_far_log_F"] = _buffer.fog_far_log_F;
+    terrainSpiteShader.Vars()["LightsCB"]["fog_far_one_over_k"] = _buffer.fog_far_one_over_k;
+
+    plants_Root.updateShaderConstants(_previousFrame, terrainShadowTexture, _buffer);
+}
+
+
+
 bool terrainManager::update(RenderContext* _renderContext)
 {
     bake.renderContext = _renderContext;
 
-    if (terrainMode == _terrainMode::vegetation)
+    if ((terrainMode == _terrainMode::vegetation) ||
+        (terrainMode == _terrainMode::glider) ||
+        (terrainMode == _terrainMode::terrainBuilder) ||
+        (terrainMode == _terrainMode::textureTool))
     {
         fullResetDoNotRender = false;
         return false;
     }
-
-
-    if (terrainMode == _terrainMode::glider)
-    {
-#if 0 // EARTHWORKSFX_DEFERRED_CFD
-        //fprintf(terrafectorSystem::_logfile, "cfd\n");
-        //fflush(terrafectorSystem::_logfile);
-        {
-            static std::chrono::steady_clock::time_point prev;
-            std::chrono::steady_clock::time_point current = high_resolution_clock::now();
-            float dT = (float)duration_cast<microseconds>(current - prev).count() / 1000000.;
-            prev = current;
-
-            dT *= 1.2f; // not quite hitting 1 second 
-            /*/cfd.sliceTime[0] = __min(cfd.sliceTime[0] + dT / 32, 1.f);
-            cfd.sliceTime[1] = __min(cfd.sliceTime[1] + dT / 16, 1.f);
-            cfd.sliceTime[2] = __min(cfd.sliceTime[2] + dT / 8, 1.f);
-            cfd.sliceTime[3] = __min(cfd.sliceTime[3] + dT / 4, 1.f);
-            cfd.sliceTime[4] = __min(cfd.sliceTime[4] + dT / 2, 1.f);
-            cfd.sliceTime[5] = __min(cfd.sliceTime[5] + dT, 1.f);
-            */
-
-            if (cfd.clipmap.sliceOrder[0] == 0)      cfd.sliceTime[0] = __max(cfd.sliceTime[0] - dT / 32, 0.f);
-            else                                     cfd.sliceTime[0] = __min(cfd.sliceTime[0] + dT / 32, 1.f);
-
-            if (cfd.clipmap.sliceOrder[1] == 0)      cfd.sliceTime[1] = __max(cfd.sliceTime[1] - dT / 16, 0.f);
-            else                                     cfd.sliceTime[1] = __min(cfd.sliceTime[1] + dT / 16, 1.f);
-
-            if (cfd.clipmap.sliceOrder[2] == 0)      cfd.sliceTime[2] = __max(cfd.sliceTime[2] - dT / 8, 0.f);
-            else                                     cfd.sliceTime[2] = __min(cfd.sliceTime[2] + dT / 8, 1.f);
-
-            if (cfd.clipmap.sliceOrder[3] == 0)      cfd.sliceTime[3] = __max(cfd.sliceTime[3] - dT / 4, 0.f);
-            else                                     cfd.sliceTime[3] = __min(cfd.sliceTime[3] + dT / 4, 1.f);
-
-            if (cfd.clipmap.sliceOrder[4] == 0)      cfd.sliceTime[4] = __max(cfd.sliceTime[4] - dT / 2, 0.f);
-            else                                     cfd.sliceTime[4] = __min(cfd.sliceTime[4] + dT / 2, 1.f);
-
-            if (cfd.clipmap.sliceOrder[5] == 0)      cfd.sliceTime[5] = __max(cfd.sliceTime[5] - dT / 1, 0.f);
-            else                                     cfd.sliceTime[5] = __min(cfd.sliceTime[5] + dT / 1, 1.f);
-
-
-            static bool NowSwap = false;
-            static int swapLOD = 0;
-            static int swapOrder = 0;
-            if (cfd.clipmap.sliceNew)
-            {
-                //FALCOR_PROFILE("cfd slice update");
-
-                uint LOD = cfd.clipmap.slicelod;
-                uint toChange = cfd.clipmap.sliceOrder[LOD];
-                //uint oldSlice = cfd.sliceOrder[cfd.clipmap.slicelod];
-                //cfd.clipmap.sliceOrder[cfd.clipmap.slicelod] = (cfd.clipmap.sliceOrder[cfd.clipmap.slicelod] + 1) % 2;
-
-
-                // always load to 3, then swap
-                _renderContext->updateTextureData(cfd.sliceVolumeTexture[LOD][2].get(), cfd.clipmap.volumeData);
-                //Texture::SharedPtr SWP = cfd.sliceVolumeTexture[LOD][3];
-                //cfd.sliceVolumeTexture[LOD][3] = cfd.sliceVolumeTexture[LOD][toChange];
-                //cfd.sliceVolumeTexture[LOD][toChange] = SWP;
-                std::swap(cfd.sliceVolumeTexture[LOD][2], cfd.sliceVolumeTexture[LOD][toChange]);
-                //cfd.sliceTime[LOD] = 0;
-                NowSwap = true;
-                swapLOD = cfd.clipmap.slicelod;
-                swapOrder = cfd.clipmap.sliceOrder[LOD];
-
-                //_renderContext->updateTextureData(cfd.sliceVolumeTexture[cfd.clipmap.slicelod][cfd.clipmap.sliceOrder[cfd.clipmap.slicelod]].get(), cfd.clipmap.volumeData);
-                //updateSubresourceData
-                cfd.clipmap.sliceNew = false;
-            }
-
-            if (NowSwap)
-            {
-                //std::swap(cfd.sliceVolumeTexture[swapLOD][2], cfd.sliceVolumeTexture[swapLOD][swapOrder]);
-                //cfd.sliceTime[swapLOD] = 0;
-                NowSwap = false;
-            }
-
-            cfd.lodLerp[0] = cfd.sliceTime[0];
-            cfd.lodLerp[1] = cfd.sliceTime[1];
-            cfd.lodLerp[2] = cfd.sliceTime[2];
-            cfd.lodLerp[3] = cfd.sliceTime[3];
-            cfd.lodLerp[4] = cfd.sliceTime[4];
-            cfd.lodLerp[5] = cfd.sliceTime[5];
-
-            /*
-            if (cfd.clipmap.sliceOrder[0] == 0) cfd.lodLerp[0] = 1.f - cfd.sliceTime[0];
-            if (cfd.clipmap.sliceOrder[1] == 0) cfd.lodLerp[1] = 1.f - cfd.sliceTime[1];
-            if (cfd.clipmap.sliceOrder[2] == 0) cfd.lodLerp[2] = 1.f - cfd.sliceTime[2];
-            if (cfd.clipmap.sliceOrder[3] == 0) cfd.lodLerp[3] = 1.f - cfd.sliceTime[3];
-            if (cfd.clipmap.sliceOrder[4] == 0) cfd.lodLerp[4] = 1.f - cfd.sliceTime[4];
-            if (cfd.clipmap.sliceOrder[5] == 0) cfd.lodLerp[5] = 1.f - cfd.sliceTime[5];
-            */
-
-            cfd.clipmap.lodOffsets[2][0].w = cfd.lodLerp[2];
-            cfd.clipmap.lodOffsets[3][0].w = cfd.lodLerp[3];
-            cfd.clipmap.lodOffsets[4][0].w = cfd.lodLerp[4];
-            cfd.clipmap.lodOffsets[5][0].w = cfd.lodLerp[5];
-
-            cfd.clipmap.lodOffsets[2][1].w = cfd.lodLerp[2];
-            cfd.clipmap.lodOffsets[3][1].w = cfd.lodLerp[3];
-            cfd.clipmap.lodOffsets[4][1].w = cfd.lodLerp[4];
-            cfd.clipmap.lodOffsets[5][1].w = cfd.lodLerp[5];
-        }
-#endif
-        return false;
-    }
-
-
-
-    if (glider.newGliderLoaded)
-    {
-        //newGliderRuntime.solve(0.001f, 1);
-    }
-
-
 
 
     FALCOR_PROFILE("update");
@@ -4110,7 +3902,7 @@ bool terrainManager::update(RenderContext* _renderContext)
         {
             FALCOR_PROFILE("update_splitmerge");
             //split.compute_tileClear.dispatch(_renderContext, 1, 1);
-            memset(frustumFlags, 0, sizeof(unsigned int) * 2048);		// clear all
+
 
             for (auto& tile : m_used)
             {
@@ -4144,83 +3936,56 @@ bool terrainManager::update(RenderContext* _renderContext)
 
     splitOne(_renderContext);
 
+
+
+
+
+    //if (dirty)    // for now update every frame - its fast
     {
+        FALCOR_PROFILE("update_dirty");
 
-        //if (dirty)
         {
-            FALCOR_PROFILE("update_dirty");
-            split.compute_tileClear.dispatch(_renderContext, 1, 1);
+            FALCOR_PROFILE("update_readback");
 
-
-
-            testForSurfaceMain();
-            for (auto& tile : m_used)
-            {
-                bool surface = tile->parent && tile->parent->main_ShouldSplit && tile->child[0] == nullptr;
-                //bool surface = tile->parent && tile->child[0] == nullptr;
-                bool bCM2 = true;
-                frustumFlags[tile->index] = 1;
-                if (surface) {
-                    frustumFlags[tile->index] |= 1 << 20;
-                }
-            }
-
-            auto pCB = split.compute_tileBuildLookup.Vars()->getParameterBlock("gConstants");
-            pCB->setBlob(frustumFlags, 0, 2048 * sizeof(unsigned int));	// FIXME number of tiles
-            uint cnt = (numTiles + 31) >> 5;
-            split.compute_tileBuildLookup.dispatch(_renderContext, cnt, 1);
-            //FIXME this of coarse adds it in teh worst fashion, interleaving 64 triangles or quads of diffirent tiles with one another
-            // see what to do diffirent VERY bad for materials and texture reads
-
-            {
-                FALCOR_PROFILE("clip_lod_animate");
-                rmcv::mat4 view, clip;
-                for (int i = 0; i < 4; i++) {
-                    for (int j = 0; j < 4; j++) {
-                        view[j][i] = cameraViews[1].view[j][i];
-                        clip[j][i] = cameraViews[1].frustumMatrix[j][i];
-                    }
-                }
-
-                float fovscale = glm::length(cameraViews[CameraType_Main_Center].proj[1]);
-                float m_halfAngle_to_Pixels = cameraViews[CameraType_Main_Center].resolution * fovscale / 2.f;
-
-                split.compute_clipLodAnimatePlants.Vars()["gConstantBuffer"]["view"] = view;
-                split.compute_clipLodAnimatePlants.Vars()["gConstantBuffer"]["clip"] = clip;
-                split.compute_clipLodAnimatePlants.Vars()["gConstantBuffer"]["halfAngle_to_Pixels"] = m_halfAngle_to_Pixels;
-                split.compute_clipLodAnimatePlants.dispatchIndirect(_renderContext, split.dispatchArgs_plants.get(), 0);//225
-            }
-        }
-    }
-
-
-
-
-
-    //static gpuTile RB_tiles[1024];
-    {
-        FALCOR_PROFILE("update_readback");
-        if (dirty)
-        {
             // readback of tile centers
             _renderContext->copyResource(split.buffer_tileCenter_readback.get(), split.buffer_tileCenters.get());
             const float4* pData = (float4*)split.buffer_tileCenter_readback.get()->map(Buffer::MapType::Read);
             std::memcpy(&split.tileCenters, pData, sizeof(float4) * numTiles);
             split.buffer_tileCenter_readback.get()->unmap();
-            for (int i = 0; i < m_tiles.size(); i++)
+            for (auto& tile : m_used)
             {
-                m_tiles[i].origin.y = split.tileCenters[i].x;           // THIS is very wrong, .x contains the middl;em but i also think its unused
-                m_tiles[i].boundingSphere.y = split.tileCenters[i].x;
+                if (split.tileCenters[tile->index].x > 0)
+                {
+                    tile->origin.y = split.tileCenters[tile->index].x;           // THIS is very wrong, .x contains the middl;em but i also think its unused
+                    tile->boundingSphere.y = split.tileCenters[tile->index].x;
+                }
             }
-
-
-            /*
-            const void* tiledata = split.buffer_tiles.get()->map(Buffer::MapType::Read);
-            std::memcpy(RB_tiles, tiledata, sizeof(gpuTile)* numTiles);
-            split.buffer_tiles.get()->unmap();
-            */
         }
+
+        split.compute_tileClear.dispatch(_renderContext, 1, 1);
+
+
+        calculateSurfaceFlags();
+
+
+
+        auto pCB = split.compute_tileBuildLookup.Vars()->getParameterBlock("gConstants");
+        pCB->setBlob(frustumFlags, 0, 1024 * sizeof(uint4));	// FIXME number of tiles
+        uint cnt = (numTiles + 31) >> 5;
+        {
+            FALCOR_PROFILE("tileBuildLookup");
+            split.compute_tileBuildLookup.dispatch(_renderContext, cnt, 1);
+        }
+        //FIXME this of coarse adds it in teh worst fashion, interleaving 64 triangles or quads of diffirent tiles with one another
+        // see what to do diffirent VERY bad for materials and texture reads
+
+        // FIXME THIS SHPULD BE IN RENDER - its not update specific but camera specific
+        // FIXME2025 MOIVE THIS
+
     }
+
+
+
 
     if (hasChanged) {
         hasChanged = false;
@@ -4250,7 +4015,7 @@ void terrainManager::hashAndCache_Thread(quadtree_tile* pTile)
     codestream.set_planar(false);
     codestream.read_headers(&j2c_file);
     codestream.create();
-    ojph::ui32 next_comp;
+    uint next_comp;
 
 
 
@@ -4282,6 +4047,7 @@ bool terrainManager::hashAndCache(quadtree_tile* pTile)
 {
     if (hashCount == 2)
     {
+        LOG_LINE(1, "elevationCache.set 1");
         textureCacheElement map;
         map.texture = Texture::create2D(1024, 1024, Falcor::ResourceFormat::R16Unorm, 1, 1, jphData.data(), Resource::BindFlags::ShaderResource);;
         elevationCache.set(cacheHash, map);
@@ -4298,7 +4064,7 @@ bool terrainManager::hashAndCache(quadtree_tile* pTile)
     if (pTile->elevationHash > 0)
     {
         textureCacheElement map;
-
+        LOG_LINE(1, "elevationCache.get");
         if (!elevationCache.get(pTile->elevationHash, map))
         {
             if (hashCount == 0)
@@ -4313,7 +4079,7 @@ bool terrainManager::hashAndCache(quadtree_tile* pTile)
         }
         else
         {
-            
+
             split.compute_tileBicubic.Vars()->setTexture("gInput", map.texture);
             return true;
         }
@@ -4326,6 +4092,7 @@ bool terrainManager::hashAndCache(quadtree_tile* pTile)
 
 void terrainManager::hashAndCacheImages_Thread(quadtree_tile* pTile)
 {
+    if (imageDirectory.files.size() == 0) return;
     if (pTile->imageHash == 0)
     {
         bool CM = true;
@@ -4340,6 +4107,7 @@ void terrainManager::hashAndCacheImages_Thread(quadtree_tile* pTile)
     ojph::codestream codestream;
     ojph::mem_infile j2c_file;
     //j2c_file.open(imageTileHashmap[pTile->imageHash].filename.c_str());
+    LOG_LINE(1, "imageDirectory 1");
     std::map<uint32_t, uint2>::iterator itH = imageDirectory.tileHash.find(pTile->imageHash);
     if (itH == imageDirectory.tileHash.end()) {
         fprintf(terrafectorSystem::_logfile, "FAILED tileHash.find\n");
@@ -4378,7 +4146,7 @@ void terrainManager::hashAndCacheImages_Thread(quadtree_tile* pTile)
     codestream.set_planar(false);
     codestream.read_headers(&j2c_file);
     codestream.create();
-    ojph::ui32 next_comp;
+    uint next_comp;
 
 
 
@@ -4396,8 +4164,8 @@ void terrainManager::hashAndCacheImages_Thread(quadtree_tile* pTile)
     codestream.close();
     auto start_b = high_resolution_clock::now();
     //textureCacheElement map;
-    //cacheTextureImage = Texture::create2D(1024, 1024, Diligent::TEX_FORMAT_RGBA8_UNORMSrgb, 1, 1, jphImageData.data(), Resource::BindFlags::ShaderResource);
-    //cacheTextureImage = Texture::create2D(1024, 1024, Diligent::TEX_FORMAT_RGBA8_UNORMSrgb, 1, 1,nullptr, Resource::BindFlags::ShaderResource);
+    //cacheTextureImage = Texture::create2D(1024, 1024, Falcor::ResourceFormat::RGBA8UnormSrgb, 1, 1, jphImageData.data(), Resource::BindFlags::ShaderResource);
+    //cacheTextureImage = Texture::create2D(1024, 1024, Falcor::ResourceFormat::RGBA8UnormSrgb, 1, 1,nullptr, Resource::BindFlags::ShaderResource);
     //imageCache.set(pTile->imageHash, map);
 
     auto stop = high_resolution_clock::now();
@@ -4411,11 +4179,14 @@ void terrainManager::hashAndCacheImages_Thread(quadtree_tile* pTile)
 */
 bool terrainManager::hashAndCacheImages(quadtree_tile* pTile)
 {
+    if (imageDirectory.files.size() == 0) return true;
+
     if (hashCountImage == 2)
     {
+        LOG_LINE(1, "imageCache.set 1");
         textureCacheElement map;
-        map.texture = Texture::create2D(1024, 1024, Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB, 1, 1, jphImageData.data(), Resource::BindFlags::ShaderResource);;
-        //map.texture = Texture::create2D(1024, 1024, Diligent::TEX_FORMAT_RGBA8_UNORMSrgb, 1, 1, nullptr, Resource::BindFlags::ShaderResource);;
+        map.texture = Texture::create2D(1024, 1024, Falcor::ResourceFormat::RGBA8UnormSrgb, 1, 1, jphImageData.data(), Resource::BindFlags::ShaderResource);;
+        //map.texture = Texture::create2D(1024, 1024, Falcor::ResourceFormat::RGBA8UnormSrgb, 1, 1, nullptr, Resource::BindFlags::ShaderResource);;
         imageCache.set(cacheHashImage, map);
         cacheTextureImage.reset();
         hashCountImage = 0;
@@ -4434,16 +4205,16 @@ bool terrainManager::hashAndCacheImages(quadtree_tile* pTile)
     if (it != imageDirectory.tileHash.end()) {
         pTile->imageHash = hash;
     }
-//    else
-//    {
-        //fprintf(terrafectorSystem::_logfile, "FAILED %d %d %d   imageDirectory.tileHash.find(hash);\n", pTile->lod, pTile->y, pTile->x);
-        //fflush(terrafectorSystem::_logfile);
-  //  }
+    //    else
+    //    {
+            //fprintf(terrafectorSystem::_logfile, "FAILED %d %d %d   imageDirectory.tileHash.find(hash);\n", pTile->lod, pTile->y, pTile->x);
+            //fflush(terrafectorSystem::_logfile);
+      //  }
 
-    //if (pTile->imageHash > 0)
+        //if (pTile->imageHash > 0)
     {
         textureCacheElement map;
-
+        LOG_LINE(1, "imageCache.get");
         if (!imageCache.get(pTile->imageHash, map))     // so we dont have teh image on GPU
         {
             if (hashCountImage == 0)
@@ -4567,7 +4338,7 @@ void terrainManager::splitOne(RenderContext* _renderContext)
             {
                 //FALCOR_PROFILE("compute");
                 {
-                   // FALCOR_PROFILE("copy_VERT");
+                    // FALCOR_PROFILE("copy_VERT");
                 }
                 {
                     //FALCOR_PROFILE("compress_copy_Albedo");
@@ -4638,6 +4409,7 @@ void terrainManager::splitChild(quadtree_tile* _tile, RenderContext* _renderCont
         split.compute_tileBicubic.dispatch(_renderContext, cs_w, cs_w);
     }
 
+    if (imageDirectory.files.size() > 0)
     {
         // copy the image tiles to diffuse
         //heightMap& imageMap = imageTileHashmap[_tile->imageHash];
@@ -4669,7 +4441,7 @@ void terrainManager::splitChild(quadtree_tile* _tile, RenderContext* _renderCont
             split.compute_tileEcotopes.Vars()->setTexture("gLowresHgt", split.rootElevation);
             split.compute_tileEcotopes.Vars()->setBuffer("plantIndex", mEcosystem.getPLantBuffer());
             split.compute_tileEcotopes.Vars()->setBuffer("plantDensity", mEcosystem.getPLantDesityBuffer());
-            
+
             auto pCB = split.compute_tileEcotopes.Vars()->getParameterBlock("gConstants");
 
             // bad herer but lets set the textures
@@ -5075,62 +4847,39 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
 
 
 
-void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::SharedPtr& _fbo, Camera::SharedPtr _camera, GraphicsState::SharedPtr _graphicsState, GraphicsState::Viewport _viewport, Texture::SharedPtr _hdrHalfCopy)
+void terrainManager::shadowSetup(shadowMap& _shadow)
 {
-    //gisReload(_camera->getPosition());
+    ShadowMap = _shadow;
+}
+
+void terrainManager::shadowRenderFar()
+{
+}
+
+void terrainManager::shadowRenderNear()
+{
+}
+
+void terrainManager::shadowRenderSoft()
+{
+}
+
+void terrainManager::shadowRender(RenderContext* pRenderContext)
+{
+    renderContext = pRenderContext;
+}
+
+
+
+
+
+void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::SharedPtr& _fbo, Camera::SharedPtr _camera, GraphicsState::Viewport _viewport)
+{
+    newTerrainBuilder._renderContext = _renderContext;
 
     rmcv::mat4 view_ribbon, proj_ribbon, viewproj_ribbon;
     rmcv::mat4 view, proj, viewproj;
     {
-        if (terrainMode == _terrainMode::glider)
-        {
-            {
-                //FALCOR_PROFILE("SOLVE_glider");
-                //paraRuntime.solve(0.0005f);
-            }
-
-            if (!useFreeCamWhileGliding)
-            {
-#if 0 // EARTHWORKSFX_DEFERRED_CFD
-                cfd.originRequest = paraRuntime.pilotPos();
-                cfd.velocityRequets[0] = paraRuntime.pilotPos();
-                cfd.velocityRequets[1] = paraRuntime.wingPos(0);
-                cfd.velocityRequets[2] = paraRuntime.wingPos(25);
-                cfd.velocityRequets[3] = paraRuntime.wingPos(49);
-
-                paraRuntime.setPilotWind(cfd.velocityAnswers[0]);
-                paraRuntime.setWingWind(cfd.velocityAnswers[1], cfd.velocityAnswers[2], cfd.velocityAnswers[3]);
-#endif
-
-                //paraRuntime.setPilotWind(float3(0, 0, 0));
-                //paraRuntime.setWingWind(float3(0, 0, 0), float3(0, 0, 0), float3(0, 0, 0));
-            }
-
-
-
-
-            /*
-            _camera->setFarPlane(40000);
-            _camera->setUpVector(paraRuntime.camUp);
-            _camera->setTarget(paraEyeLocal + paraRuntime.camDir * 100.f);
-            _camera->setPosition(paraEyeLocal);
-
-            glm::mat4 V = toGLM(_camera->getViewMatrix());
-            glm::mat4 P = toGLM(_camera->getProjMatrix());
-            glm::mat4 VP = toGLM(_camera->getViewProjMatrix());
-            for (int i = 0; i < 4; i++) {
-                for (int j = 0; j < 4; j++) {
-                    view_ribbon[j][i] = V[j][i];
-                    proj_ribbon[j][i] = P[j][i];
-                    viewproj_ribbon[j][i] = VP[j][i];
-                }
-            }
-
-            _camera->setTarget(paraCamPos + paraRuntime.camDir * 100.f);
-            _camera->setPosition(paraCamPos);
-            */
-        }
-        else
         {
             _camera->setUpVector(float3(0, 1, 0));
         }
@@ -5141,7 +4890,6 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         if ((terrainMode == _terrainMode::glider) && requestParaPack == false)
             //if ((terrainMode == 4) && AirSim.changed)
         {
-#if 0 // EARTHWORKSFX_DEFERRED_GLIDER
             //FALCOR_PROFILE("setBlob");
 
 
@@ -5166,57 +4914,36 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
             //cfd.originRequest = float3(1852, 1500, 10910);
             */
 
-            cfd.velocityRequets[0] = paraRuntime.pilotPos();
-            cfd.velocityRequets[1] = paraRuntime.wingPos(0);
-            cfd.velocityRequets[2] = paraRuntime.wingPos(25);
-            cfd.velocityRequets[3] = paraRuntime.wingPos(49);
+            //cfd.velocityRequets[0] = paraRuntime.pilotPos();
+            //cfd.velocityRequets[1] = paraRuntime.wingPos(0);
+            //cfd.velocityRequets[2] = paraRuntime.wingPos(25);
+            //cfd.velocityRequets[3] = paraRuntime.wingPos(49);
 
-            paraRuntime.setPilotWind(cfd.velocityAnswers[0]);
-            paraRuntime.setWingWind(cfd.velocityAnswers[1], cfd.velocityAnswers[2], cfd.velocityAnswers[3]);
+            
+            //if (!useFreeCamWhileGliding)
+            //{
+            //    _camera->setFarPlane(40000);
+            //    _camera->setUpVector(float3(0, 1, 0));
+            //    //_camera->setUpVector(paraRuntime.camUp);
+            //    _camera->setTarget(paraEyeLocal + paraRuntime.camDir * 100.f);
+            //    _camera->setPosition(paraEyeLocal);
 
-            if (!useFreeCamWhileGliding)
-            {
-                _camera->setFarPlane(40000);
-                _camera->setUpVector(float3(0, 1, 0));
-                //_camera->setUpVector(paraRuntime.camUp);
-                _camera->setTarget(paraEyeLocal + paraRuntime.camDir * 100.f);
-                _camera->setPosition(paraEyeLocal);
-
-                glm::mat4 V = toGLM(_camera->getViewMatrix());
-                glm::mat4 P = toGLM(_camera->getProjMatrix());
-                glm::mat4 VP = toGLM(_camera->getViewProjMatrix());
-                for (int i = 0; i < 4; i++) {
-                    for (int j = 0; j < 4; j++) {
-                        view_ribbon[j][i] = V[j][i];
-                        proj_ribbon[j][i] = P[j][i];
-                        viewproj_ribbon[j][i] = VP[j][i];
-                    }
-                }
+            //    view_ribbon = _camera->getViewMatrix().getTranspose();
+            //    proj_ribbon = _camera->getProjMatrix().getTranspose();
+            //    viewproj_ribbon = _camera->getViewProjMatrix().getTranspose();
 
 
-                _camera->setTarget(paraCamPos + paraRuntime.camDir * 100.f);
-                _camera->setPosition(paraCamPos);
-            }
-            /*
-            V = toGLM(_camera->getViewMatrix());
-            P = toGLM(_camera->getProjMatrix());
-            VP = toGLM(_camera->getViewProjMatrix());
+            //    _camera->setTarget(paraCamPos + paraRuntime.camDir * 100.f);
+            //    _camera->setPosition(paraCamPos);
+            //}
 
-            for (int i = 0; i < 4; i++) {
-                for (int j = 0; j < 4; j++) {
-                    view[j][i] = V[j][i];
-                    proj[j][i] = P[j][i];
-                    viewproj[j][i] = VP[j][i];
-                }
-            }
-            */
 
 
             //paraRuntime.pack_canopy();
             //paraRuntime.pack_lines();
             //paraRuntime.pack_feedback();
             //paraRuntime.pack();
-
+            /*
             paraRuntime.changed = false;
             ribbonInstanceNumber = 1;
             bufferidx = (bufferidx + 1) % 2;
@@ -5244,29 +4971,21 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
             gliderwingShader.Vars()->setBuffer("vertexBuffer", gliderwingData[bufferidx]);
 
             requestParaPack = true;
-#endif
+            */
         }
 
 
         {
-            glm::mat4 V = toGLM(_camera->getViewMatrix());
-            glm::mat4 P = toGLM(_camera->getProjMatrix());
-            glm::mat4 VP = toGLM(_camera->getViewProjMatrix());
-
-            for (int i = 0; i < 4; i++) {
-                for (int j = 0; j < 4; j++) {
-                    view[j][i] = V[j][i];
-                    proj[j][i] = P[j][i];
-                    viewproj[j][i] = VP[j][i];
-                }
-            }
+            view = _camera->getViewMatrix().getTranspose();
+            proj = _camera->getProjMatrix().getTranspose();
+            viewproj = _camera->getViewProjMatrix().getTranspose();
         }
     }
 
     if (terrainMode == _terrainMode::vegetation)
     {
         {
-            //FALCOR_PROFILE("skydome");
+            FALCOR_PROFILE("skydome - veg");
 
             triangleShader.State()->setFbo(_fbo);
             triangleShader.State()->setViewport(0, _viewport, true);
@@ -5278,11 +4997,11 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
             triangleShader.drawInstanced(_renderContext, 36, 1);
         }
 
-        rmcv::mat4 clip;
+        rmcv::mat4 clipPlanes;
         //rmcv::mat4 view, clip;
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                clip[j][i] = cameraViews[CameraType_Main_Center].frustumMatrix[j][i];
+                clipPlanes[j][i] = cameraViews[CameraType_Main_Center].frustumMatrix[j][i];
             }
         }
 
@@ -5290,10 +5009,10 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         float m_halfAngle_to_Pixels = cameraViews[CameraType_Main_Center].resolution * fovscale / 2.f;
 
 
-        plants_Root.render(_renderContext, _fbo, _viewport, _hdrHalfCopy, viewproj, _camera->getPosition(), view, clip, m_halfAngle_to_Pixels);
+        plants_Root.render(_renderContext, _fbo, _viewport, viewproj, _camera->getPosition(), view, clipPlanes, m_halfAngle_to_Pixels);
 
 
-        
+
         return;
     }
 
@@ -5333,7 +5052,6 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         }
 
 
-#if 0 // EARTHWORKSFX_DEFERRED_GLIDER
         if (!useFreeCamWhileGliding && (terrainMode == _terrainMode::glider) && numLoadedRibbons > 1)
             //if ((terrainMode == 4) && AirSim.ribbonCount > 1)
         {
@@ -5357,41 +5075,77 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
             time += 0.01f;  // FIXME I NEED A Timer
             ribbonShader.Vars()["gConstantBuffer"]["time"] = time;
 
-            ribbonShader.Vars()->setTexture("gHalfBuffer", _hdrHalfCopy);
+
 
 
 
             // ribbonShader.drawInstanced(_renderContext, paraRuntime.ribbonCount, 1);
             ribbonShader.drawInstanced(_renderContext, numLoadedRibbons, 1);
             //ribbonShader.drawInstanced(_renderContext, AirSim.ribbonCount, 1);
-
-            if (paraRuntime.ribbonCount != 456)
-            {
-                bool cm = true;
-            }
-
         }
-#endif
 
 
         //return;
     }
 
     {
+        FALCOR_PROFILE("PLANTS_clip_lod");
+        rmcv::mat4 view, clip;
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                view[j][i] = cameraViews[1].view[j][i];
+                clip[j][i] = cameraViews[1].frustumMatrix[j][i];
+            }
+        }
+
+        float fovscale = glm::length(cameraViews[CameraType_Main_Center].proj[1]);
+        float m_halfAngle_to_Pixels = cameraViews[CameraType_Main_Center].resolution * fovscale / 2.f;
+
+        split.compute_clipLodAnimatePlants.Vars()["gConstantBuffer"]["view"] = view;
+        split.compute_clipLodAnimatePlants.Vars()["gConstantBuffer"]["clip"] = clip;
+        split.compute_clipLodAnimatePlants.Vars()["gConstantBuffer"]["halfAngle_to_Pixels"] = m_halfAngle_to_Pixels;
+        split.compute_clipLodAnimatePlants.Vars()->setBuffer("tileLookup", split.buffer_lookup_plants[CameraType_Main_Center]);
+        split.compute_clipLodAnimatePlants.dispatchIndirect(_renderContext, split.dispatchArgs_plants.get(), 0);//225
+    }
+
+
+    {
         FALCOR_PROFILE("terrainManager");
 
-        //terrainShader.State() = _graphicsState;
+
         terrainShader.State()->setFbo(_fbo);
         terrainShader.State()->setViewport(0, _viewport, true);
         terrainShader.Vars()["gConstantBuffer"]["view"] = view;
         terrainShader.Vars()["gConstantBuffer"]["viewproj"] = viewproj;
         terrainShader.Vars()["gConstantBuffer"]["eye"] = _camera->getPosition();
-        terrainShader.renderIndirect(_renderContext, split.drawArgs_tiles);
+        terrainShader.Vars()->setBuffer("tileLookup", split.buffer_lookup_terrain[CameraType_Main_Center]);      // FIXME2025 set the ccorrect view not 0
+        terrainShader.renderIndirect(_renderContext, split.drawArgs_tiles, nullptr, CameraType_Main_Center, 1);
+    }
+    {
+        /*
+        FALCOR_PROFILE("buildings");
 
+        rappersvilleShader.State()->setFbo(_fbo);
+        rappersvilleShader.State()->setViewport(0, _viewport, true);
+        rappersvilleShader.Vars()["PerFrameCB"]["view"] = view;
+        rappersvilleShader.Vars()["PerFrameCB"]["viewproj"] = viewproj;
+        rappersvilleShader.Vars()["PerFrameCB"]["eye"] = _camera->getPosition();
+        rappersvilleShader.drawInstanced(_renderContext, 3, numrapperstri);
+        */
     }
 
     {
-        FALCOR_PROFILE("terrainQuadPlants");
+        terrainSpiteShader.Vars()["gConstantBuffer"]["alpha_pass"] = 0;
+        terrainSpiteShader.Vars()->setTexture("gEnv", vegetation.envTexture);
+
+        // FIXME need a way to do only on change
+        auto& blockBB = terrainSpiteShader.Vars()->getParameterBlock("textures");
+        ShaderVar varBBTextures = blockBB->findMember("T");
+        _plantMaterial::static_materials_veg.setTextures(varBBTextures);
+
+    }
+    {
+        FALCOR_PROFILE("billboards");
         terrainSpiteShader.State()->setFbo(_fbo);
         terrainSpiteShader.State()->setViewport(0, _viewport, true);
         terrainSpiteShader.Vars()["gConstantBuffer"]["viewproj"] = viewproj;
@@ -5401,19 +5155,10 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         //D = paraRuntime.camDir;
         glm::vec3 R = glm::normalize(glm::cross(glm::vec3(0, 1, 0), D));
         terrainSpiteShader.Vars()["gConstantBuffer"]["right"] = R;
-        terrainSpiteShader.Vars()["gConstantBuffer"]["alpha_pass"] = 0;
 
-        terrainSpiteShader.Vars()->setTexture("gEnv", vegetation.envTexture);
-        terrainSpiteShader.Vars()->setTexture("gHalfBuffer", _hdrHalfCopy);
+        terrainSpiteShader.Vars()->setBuffer("tileLookup", split.buffer_lookup_quads[CameraType_Main_Center]);
 
-        // FIXME need a way to do only on change
-        auto& blockBB = terrainSpiteShader.Vars()->getParameterBlock("textures");
-        ShaderVar varBBTextures = blockBB->findMember("T");
-        _plantMaterial::static_materials_veg.setTextures(varBBTextures);
-        //terrainSpiteShader.State()->setRasterizerState(split.rasterstateSplines);
-        //terrainSpiteShader.State()->setBlendState(split.blendstateSplines);
-
-        terrainSpiteShader.renderIndirect(_renderContext, split.drawArgs_quads);
+        terrainSpiteShader.renderIndirect(_renderContext, split.drawArgs_quads, nullptr, CameraType_Main_Center, 1);
 
         //terrainSpiteShader.Vars()["gConstantBuffer"]["alpha_pass"] = 1;
         //terrainSpiteShader.renderIndirect(_renderContext, split.drawArgs_quads);
@@ -5428,21 +5173,10 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         }
         float fovscale = glm::length(cameraViews[CameraType_Main_Center].proj[1]);
         float m_halfAngle_to_Pixels = cameraViews[CameraType_Main_Center].resolution * fovscale / 2.f;
-        plants_Root.render(_renderContext, _fbo, _viewport, _hdrHalfCopy, viewproj, _camera->getPosition(), view, clip, m_halfAngle_to_Pixels, true);
+        plants_Root.render(_renderContext, _fbo, _viewport, viewproj, _camera->getPosition(), view, clip, m_halfAngle_to_Pixels, true);
     }
 
-    {
 
-        FALCOR_PROFILE("buildings");
-
-        rappersvilleShader.State()->setFbo(_fbo);
-        rappersvilleShader.State()->setViewport(0, _viewport, true);
-        rappersvilleShader.Vars()["PerFrameCB"]["view"] = view;
-        rappersvilleShader.Vars()["PerFrameCB"]["viewproj"] = viewproj;
-        rappersvilleShader.Vars()["PerFrameCB"]["eye"] = _camera->getPosition();
-        rappersvilleShader.drawInstanced(_renderContext, 3, numrapperstri);
-
-    }
 
     {
         FALCOR_PROFILE("skydome");
@@ -5468,27 +5202,25 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         cfd.cfd_play_k++;
     } */
 
-#if 0 // EARTHWORKSFX_DEFERRED_CFD
-    if (cfd.clipmap.showStreamlines)
-    {
-        FALCOR_PROFILE("CFD");
+    //if (cfd.clipmap.showStreamlines)
+    //{
+    //    FALCOR_PROFILE("CFD");
 
-        if (cfd.newFlowLines)
-        {
-            //FALCOR_PROFILE("CFD update");
-            thermalsData->setBlob(cfd.flowlines.data(), 0, numThermals * 100 * sizeof(float4));
-            cfd.newFlowLines = false;
-        }
+    //    if (cfd.newFlowLines)
+    //    {
+    //        //FALCOR_PROFILE("CFD update");
+    //        thermalsData->setBlob(cfd.flowlines.data(), 0, numThermals * 100 * sizeof(float4));
+    //        cfd.newFlowLines = false;
+    //    }
 
 
-        thermalsShader.State()->setFbo(_fbo);
-        thermalsShader.State()->setViewport(0, _viewport, true);
-        thermalsShader.Vars()["gConstantBuffer"]["viewproj"] = viewproj;
-        thermalsShader.Vars()["gConstantBuffer"]["eyePos"] = _camera->getPosition();
-        thermalsShader.State()->setRasterizerState(rasterstateGliderWing);
-        thermalsShader.drawInstanced(_renderContext, 100, numThermals);
-    }
-#endif
+    //    thermalsShader.State()->setFbo(_fbo);
+    //    thermalsShader.State()->setViewport(0, _viewport, true);
+    //    thermalsShader.Vars()["gConstantBuffer"]["viewproj"] = viewproj;
+    //    thermalsShader.Vars()["gConstantBuffer"]["eyePos"] = _camera->getPosition();
+    //    thermalsShader.State()->setRasterizerState(rasterstateGliderWing);
+    //    thermalsShader.drawInstanced(_renderContext, 100, numThermals);
+    //}
 
 
 
@@ -5496,13 +5228,15 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
 
 
     {
-        //FALCOR_PROFILE("glider wing");
+        /*
+        FALCOR_PROFILE("glider wing");
         gliderwingShader.State()->setFbo(_fbo);
         gliderwingShader.State()->setViewport(0, _viewport, true);
         gliderwingShader.Vars()["PerFrameCB"]["viewproj"] = viewproj;
         gliderwingShader.Vars()["PerFrameCB"]["eye"] = _camera->getPosition();
         gliderwingShader.State()->setRasterizerState(rasterstateGliderWing);
         gliderwingShader.drawInstanced(_renderContext, wingloadedCnt, 1);
+        */
     }
 
 
@@ -5519,19 +5253,10 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         ribbonShader.State()->setBlendState(split.blendstateSplines);
 
         //ribbonShader.drawInstanced(_renderContext, 128, 10024);
-//        ribbonShader.renderIndirect(_renderContext, split.drawArgs_clippedloddedplants);
+        //ribbonShader.renderIndirect(_renderContext, split.drawArgs_clippedloddedplants);
 
         //buffer_lookup_plants
 
-        /*
-        triangleShader.State()->setFbo(_fbo);
-        triangleShader.State()->setViewport(0, _viewport, true);
-        triangleShader.Vars()["gConstantBuffer"]["viewproj"] = viewproj;
-        triangleShader.Vars()["gConstantBuffer"]["eye"] = _camera->getPosition();
-        triangleShader.State()->setRasterizerState(split.rasterstateSplines);
-        triangleShader.State()->setBlendState(split.blendstateSplines);
-        triangleShader.renderIndirect(_renderContext, split.drawArgs_clippedloddedplants);
-        */
 
     }
 
@@ -5654,7 +5379,26 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
 
     if (debug)
     {
-        FALCOR_PROFILE("debug");
+        glm::vec4 srcRect = glm::vec4(0, 0, tile_numPixels, tile_numPixels);
+        glm::vec4 dstRect;
+
+        for (int i = 0; i < 8; i++)
+        {
+            dstRect = glm::vec4(250 + i * 150, 60, 250 + i * 150 + 128, 60 + 128);
+            _renderContext->blit(split.tileFbo->getColorTexture(i)->getSRV(0, 1, 0, 1), _fbo->getColorTexture(0)->getRTV(), srcRect, dstRect, Sampler::Filter::Linear);
+        }
+
+        dstRect = glm::vec4(250 + 8 * 150, 60, 250 + 8 * 150 + tile_numPixels * 2, 60 + tile_numPixels * 2);
+        _renderContext->blit(split.debug_texture->getSRV(0, 1, 0, 1), _fbo->getColorTexture(0)->getRTV(), srcRect, dstRect, Sampler::Filter::Point);
+
+
+        //dstRect = vec4(512, 612, 1024, 1124);
+        //pRenderContext->blit(mpCompressed_Normals->getSRV(0, 1, 0, 1), _fbo->getColorTexture(0)->getRTV(), srcRect, dstRect, Sampler::Filter::Linear);
+    }
+
+    /*
+    if (debug)
+    {
         glm::vec4 srcRect = glm::vec4(0, 0, tile_numPixels, tile_numPixels);
         glm::vec4 dstRect;
 
@@ -5696,6 +5440,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
             TextRenderer::render(_renderContext, debugTxt, _fbo, { 100, 450 + L * 20 });
         }
     }
+    */
 }
 
 
@@ -5836,7 +5581,7 @@ void terrainManager::bake_Setup(float _size, uint _lod, uint _y, uint _x, Render
         if (hashParent > 0)			// now search for it and cache it
         {
             textureCacheElement map;
-
+            LOG_LINE(1, "elevationCache.get 2");
             if (!elevationCache.get(hashParent, map))
             {
                 std::array<unsigned short, 1048576> data;
@@ -5848,7 +5593,7 @@ void terrainManager::bake_Setup(float _size, uint _lod, uint _y, uint _x, Render
                 codestream.set_planar(false);
                 codestream.read_headers(&j2c_file);
                 codestream.create();
-                ojph::ui32 next_comp;
+                uint next_comp;
 
                 for (int i = 0; i < 1024; ++i)
                 {
@@ -5861,6 +5606,7 @@ void terrainManager::bake_Setup(float _size, uint _lod, uint _y, uint _x, Render
                 }
                 codestream.close();
 
+                LOG_LINE(1, "elevationCache.set 2");
                 map.texture = Texture::create2D(1024, 1024, Falcor::ResourceFormat::R16Unorm, 1, 1, data.data(), Resource::BindFlags::ShaderResource);
                 elevationCache.set(hashParent, map);
             }
@@ -5884,6 +5630,7 @@ void terrainManager::bake_Setup(float _size, uint _lod, uint _y, uint _x, Render
 
         {
             textureCacheElement map;
+            LOG_LINE(1, "elevationCache.get 3");
             if (!elevationCache.get(hashParent, map)) {
                 split.compute_tileBicubic.Vars()->setTexture("gInput", map.texture);
             }
@@ -6016,7 +5763,7 @@ void terrainManager::bake_Setup(float _size, uint _lod, uint _y, uint _x, Render
                 {
                     codestream.write_headers(&j2c_file);
 
-                    ojph::ui32 next_comp;
+                    uint next_comp;
                     ojph::line_buf* cur_line = codestream.exchange(NULL, next_comp);
 
                     for (uint i = 0; i < split.bakeSize; ++i)
@@ -6702,16 +6449,24 @@ bool terrainManager::onKeyEvent(const KeyboardEvent& keyEvent)
 {
     bool keyPressed = (keyEvent.type == KeyboardEvent::Type::KeyPressed);
 
-    // terrain mode
-    if (keyPressed && keyEvent.key == Input::Key::Key0) terrainMode = _terrainMode::vegetation;
-    if (keyPressed && keyEvent.key == Input::Key::Key1) terrainMode = _terrainMode::ecotope;
-    if (keyPressed && keyEvent.key == Input::Key::Key2) terrainMode = _terrainMode::terrafector;
-    if (keyPressed && keyEvent.key == Input::Key::Key3) terrainMode = _terrainMode::roads;
-    //if (keyPressed && keyEvent.key == Input::Key::Key4) terrainMode = _terrainMode::glider;
-
     splineTest.bCtrl = keyEvent.hasModifier(Input::Modifier::Ctrl);
     splineTest.bShift = keyEvent.hasModifier(Input::Modifier::Shift);
     splineTest.bAlt = keyEvent.hasModifier(Input::Modifier::Alt);
+
+    // terrain mode
+    if (splineTest.bCtrl)
+    {
+        if (keyPressed && keyEvent.key == Input::Key::Key1) terrainMode = _terrainMode::vegetation;
+        if (keyPressed && keyEvent.key == Input::Key::Key2) terrainMode = _terrainMode::ecotope;
+        if (keyPressed && keyEvent.key == Input::Key::Key3) terrainMode = _terrainMode::terrafector;
+        if (keyPressed && keyEvent.key == Input::Key::Key4) terrainMode = _terrainMode::roads;
+        //if (keyPressed && keyEvent.key == Input::Key::Key5) terrainMode = _terrainMode::glider;
+        if (keyPressed && keyEvent.key == Input::Key::Key6) terrainMode = _terrainMode::terrainBuilder;
+        if (keyPressed && keyEvent.key == Input::Key::Key7) terrainMode = _terrainMode::textureTool;
+
+    }
+
+
 
     if (terrainMode == _terrainMode::glider)   // Paragliding
     {
@@ -6748,10 +6503,6 @@ bool terrainManager::onKeyEvent(const KeyboardEvent& keyEvent)
             if (keyEvent.key == Input::Key::O)
             {
                 gisReload(split.feedback.tum_Position);
-            }
-            if (keyEvent.key == Input::Key::G)
-            {
-                showGUI = !showGUI;
             }
         }
 
@@ -7049,11 +6800,16 @@ bool terrainManager::onMouseEvent(const MouseEvent& mouseEvent, glm::vec2 _scree
                 while (mouseVegYaw < 0) mouseVegYaw += 6.28318530718f;
                 while (mouseVegYaw > 6.28318530718f) mouseVegYaw -= 6.28318530718f;
             }
+            if (ImGui::IsMouseDown(0) && splineTest.bCtrl) // left
+            {
+                mouseVegHeight -= diff.y * 1.1;
+                mouseVegHeight = clamp(mouseVegHeight, 0.0f, 10.0f);
+            }
         }
         break;
         case MouseEvent::Type::Wheel:
         {
-            float scale = 1.0 - mouseEvent.wheelDelta.y / 6.0f;
+            float scale = 1.0 - mouseEvent.wheelDelta.y / 9.0f;
             mouseVegOrbit *= scale;
             mouseVegOrbit = glm::clamp(mouseVegOrbit, 0.1f, 5000.f);
         }
@@ -7067,14 +6823,15 @@ bool terrainManager::onMouseEvent(const MouseEvent& mouseEvent, glm::vec2 _scree
             camPos.y = sin(mouseVegPitch);
             camPos.x = cos(mouseVegPitch) * sin(mouseVegYaw);
             camPos.z = cos(mouseVegPitch) * cos(mouseVegYaw);
-            _camera->setPosition((camPos * mouseVegOrbit) + float3(0, 1000, 0));
-            _camera->setTarget(glm::vec3(0, 1000.f, 0));
+            _camera->setPosition((camPos * mouseVegOrbit) + float3(0, 1000 + mouseVegHeight, 0));
+            _camera->setTarget(glm::vec3(0, 1000.f + mouseVegHeight, 0));
+
         }
         if ((terrainMode == _terrainMode::glider))
         {
             //_camera->setTarget(paraRuntime.ROOT);
         }
-        return true;
+        return false;   // needs to ber false for Zoom to work, otherwise we consume the mouse
     }
     else {
         bool bEdit = false;
@@ -7749,92 +7506,106 @@ void terrainManager::bezierRoadstoLOD(uint _lod)
 
 }
 
-/*
-void terrainManager::cfdStart()
-{
-
-}
-
-void terrainManager::cfdThread()
-{
-    bool firstStart = true;
-    cfd.numLines = 200;
-    cfd.flowlines.resize(cfd.numLines * 100);
-
-    //cfd.clipmap.heightToSmap(settings.dirRoot + "/gis/_export/root4096.bil");
-    cfd.rootPath = settings.dirRoot + "\\cfd\\";
-    cfd.rootFile = "Walenstad_August5_1500.skewT_5000";
-    cfd.clipmap.loadSkewT(cfd.rootPath + cfd.rootFile);
-    cfd.clipmap.build(settings.dirRoot + "/cfd");
-
-    //uint seconds = 0;// 27040;
-    //cfd.clipmap.import_V(settings.dirRoot + "/cfd/east3ms__" + std::to_string(seconds) + "sec");
-
-    cfd.clipmap.setWind(float3(2, 0, 0), float3(5, 0, 0));
-    cfd.clipmap.simulate_start(32.0f);
-
-
-    fprintf(terrafectorSystem::_logfile, "cfdThread()\n");
-    fprintf(terrafectorSystem::_logfile, "T %f %f %f\n", cfd.clipmap.skewT_corners_Data[0][0].x, cfd.clipmap.skewT_corners_Data[0][50].x, cfd.clipmap.skewT_corners_Data[0][99].x);
-    fprintf(terrafectorSystem::_logfile, "H %f %f %f\n", cfd.clipmap.skewT_corners_Data[0][0].y, cfd.clipmap.skewT_corners_Data[0][50].y, cfd.clipmap.skewT_corners_Data[0][99].y);
-    fprintf(terrafectorSystem::_logfile, "V %f %f %f\n", glm::length(cfd.clipmap.skewT_corners_V[0][0]), glm::length(cfd.clipmap.skewT_corners_V[0][50]), glm::length(cfd.clipmap.skewT_corners_V[0][99]));
-    fflush(terrafectorSystem::_logfile);
-   
-    // infinite loop
-    static int k = 0;
-    while (1)
-    {
-        if (cfd.pause)
-        {
-            Sleep(10);
-        }
-        else
-        {
-            cfd.clipmap.shiftOrigin(cfd.originRequest);
-
-            if (firstStart || cfd.clipmap.windrequest)
-            {
-                if (cfd.clipmap.windSeperateSkewt)
-                {
-                    cfd.clipmap.setWind(cfd.clipmap.newWind, cfd.clipmap.newWind);
-                }
-                else
-                {
-                    cfd.clipmap.loadSkewT(cfd.rootPath + cfd.rootFile);
-                }
-                cfd.clipmap.simulate_start(32.0f);
-                cfd.clipmap.windrequest = false;
-                firstStart = false;
-                fprintf(terrafectorSystem::_logfile, "cfd.clipmap.setWind on %s\n", cfd.rootPath.c_str());
-                if (cfd.clipmap.windSeperateSkewt) {
-                    fprintf(terrafectorSystem::_logfile, "windSeperateSkewt (%2.1f, %2.1f, %2.1f) m/s\n", cfd.clipmap.newWind.x, cfd.clipmap.newWind.y, cfd.clipmap.newWind.z);
-                }
-            }
 
 
 
-            cfd.clipmap.simulate(32.0f);
-
-            if (k % 2 == 0)
-            {
-                float3 R = glm::normalize(glm::cross(float3(0, 1, 0), cfd.velocityAnswers[0]));
-                cfd.clipmap.streamlines(cfd.originRequest, cfd.flowlines.data(), R);
-                cfd.newFlowLines = true;
-            }
-
-            for (int i = 0; i < 4; i++) // Look yp my glider velocity requests
-            {
-                float rootAltitude = 350.f;   // in voxel space
-                float3 origin = float3(-20000, rootAltitude, -20000);
-                float3 P = (cfd.velocityRequets[i] - origin) * cfd.clipmap.lods[0].oneOverSize;
-                float3 p5 = P * 32.f;
-                p5 -= cfd.clipmap.lods[5].offset;
-                cfd.velocityAnswers[i] = cfd.clipmap.lods[5].sample(cfd.clipmap.lods[5].v, p5);
-            }
-
-
-        }
-        k++;
-    }
-}
-*/
+//void terrainManager::cfdStart()
+//{
+//
+//}
+//
+//void terrainManager::cfdThread()
+//{
+//    bool firstStart = true;
+//    cfd.numLines = 200;
+//    cfd.flowlines.resize(cfd.numLines * 100);
+//
+//    //cfd.clipmap.heightToSmap(settings.dirRoot + "/gis/_export/root4096.bil");
+//    cfd.rootPath = settings.dirRoot + "\\cfd\\";
+//    cfd.rootFile = "Walenstad_August5_1500.skewT_5000";
+//    //cfd.clipmap.loadSkewT(cfd.rootPath + cfd.rootFile);
+//    //cfd.clipmap.build(settings.dirRoot + "/cfd");
+//
+//    //uint seconds = 0;// 27040;
+//    //cfd.clipmap.import_V(settings.dirRoot + "/cfd/east3ms__" + std::to_string(seconds) + "sec");
+//
+//    //cfd.clipmap.setWind(float3(2, 0, 0), float3(5, 0, 0));
+//    //cfd.clipmap.simulate_start(32.0f);
+//
+//
+//    fprintf(terrafectorSystem::_logfile, "cfdThread()\n");
+//    fprintf(terrafectorSystem::_logfile, "T %f %f %f\n", cfd.clipmap.skewT_corners_Data[0][0].x, cfd.clipmap.skewT_corners_Data[0][50].x, cfd.clipmap.skewT_corners_Data[0][99].x);
+//    fprintf(terrafectorSystem::_logfile, "H %f %f %f\n", cfd.clipmap.skewT_corners_Data[0][0].y, cfd.clipmap.skewT_corners_Data[0][50].y, cfd.clipmap.skewT_corners_Data[0][99].y);
+//    fprintf(terrafectorSystem::_logfile, "V %f %f %f\n", glm::length(cfd.clipmap.skewT_corners_V[0][0]), glm::length(cfd.clipmap.skewT_corners_V[0][50]), glm::length(cfd.clipmap.skewT_corners_V[0][99]));
+//    fflush(terrafectorSystem::_logfile);
+//    /*
+//    uint saveidx = 0;
+//    for (int k = 0; k < 256 * 64 * 100; k++)   //1500 = 937 seconds in 210
+//    //for (int k = 0; k < 256 * 300; k++)   //1500 = 937 seconds in 210
+//    {
+//        cfd.clipmap.simulate(20.0f);
+//        if (k % 64 == 0)
+//        {
+//            uint seconds = (k * 20) / 32;
+//            cfd.clipmap.export_V(settings.dirRoot + "/cfd/dump/east3ms__" + std::to_string(saveidx) + "sec");
+//            saveidx++;
+//        }
+//    } /**/
+//
+//    // infinite loop
+//    static int k = 0;
+//    while (1)
+//    {
+//        if (cfd.pause)
+//        {
+//            Sleep(10);
+//        }
+//        else
+//        {
+//            cfd.clipmap.shiftOrigin(cfd.originRequest);
+//
+//            if (firstStart || cfd.clipmap.windrequest)
+//            {
+//                if (cfd.clipmap.windSeperateSkewt)
+//                {
+//                    cfd.clipmap.setWind(cfd.clipmap.newWind, cfd.clipmap.newWind);
+//                }
+//                else
+//                {
+//                    cfd.clipmap.loadSkewT(cfd.rootPath + cfd.rootFile);
+//                }
+//                cfd.clipmap.simulate_start(32.0f);
+//                cfd.clipmap.windrequest = false;
+//                firstStart = false;
+//                fprintf(terrafectorSystem::_logfile, "cfd.clipmap.setWind on %s\n", cfd.rootPath.c_str());
+//                if (cfd.clipmap.windSeperateSkewt) {
+//                    fprintf(terrafectorSystem::_logfile, "windSeperateSkewt (%2.1f, %2.1f, %2.1f) m/s\n", cfd.clipmap.newWind.x, cfd.clipmap.newWind.y, cfd.clipmap.newWind.z);
+//                }
+//            }
+//
+//
+//
+//            cfd.clipmap.simulate(32.0f);
+//
+//            if (k % 2 == 0)
+//            {
+//                float3 R = glm::normalize(glm::cross(float3(0, 1, 0), cfd.velocityAnswers[0]));
+//                cfd.clipmap.streamlines(cfd.originRequest, cfd.flowlines.data(), R);
+//                cfd.newFlowLines = true;
+//            }
+//
+//            for (int i = 0; i < 4; i++) // Look yp my glider velocity requests
+//            {
+//                float rootAltitude = 350.f;   // in voxel space
+//                float3 origin = float3(-20000, rootAltitude, -20000);
+//                float3 P = (cfd.velocityRequets[i] - origin) * cfd.clipmap.lods[0].oneOverSize;
+//                float3 p5 = P * 32.f;
+//                p5 -= cfd.clipmap.lods[5].offset;
+//                cfd.velocityAnswers[i] = cfd.clipmap.lods[5].sample(cfd.clipmap.lods[5].v, p5);
+//            }
+//
+//
+//        }
+//        k++;
+//    }
+//}

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "FalcorCompat.hpp"
+#include "Falcor.h"
 using namespace Falcor;
 
 #include "cereal/cereal.hpp"

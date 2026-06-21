@@ -15,7 +15,91 @@
 //lodTriangleMesh     terrafectorSystem::lod_4_mesh;
 
 
-#pragma optimize( "", off )
+const JLogger::SharedPtr& JLogger::instancePtr()
+{
+    static JLogger::SharedPtr pInstance;
+    if (!pInstance) pInstance = std::make_shared<JLogger>();
+    return pInstance;
+}
+
+void JLogger::log(uint _type, std::string _text)
+{
+    tab(stack.size());
+    time_stack();
+    type(_type);
+    fprintf(file, "%s\n", _text.c_str());
+    fflush(file);
+}
+
+void JLogger::logMulti(uint _type, std::string _text)
+{
+    tab(stack.size());
+    fprintf(file, "    %s\n", _text.c_str());
+}
+
+void JLogger::startBlock(char *_name, uint _type)
+{
+    tab(stack.size());
+    time();
+    fprintf(file, "    %s {     \n", _name);
+    stack.emplace();
+    stack.top().startTime = high_resolution_clock::now();
+    stack.top().type = _type;
+    fflush(file);
+}
+
+void JLogger::endBlock()
+{
+    
+    tab(stack.size() - 1);
+    fprintf(file, "}  ");
+    time_stack();
+    fprintf(file, "\n\n");
+    stack.pop();
+    fflush(file);
+}
+
+void JLogger::open(char *_name)
+{
+    file = fopen(_name, "w");
+    startTime = high_resolution_clock::now();
+}
+
+void JLogger::close()
+{
+    fclose(file);
+}
+
+
+void JLogger::tab(int depth)
+{
+    for (int i = 0; i < depth; i++)
+    {
+        fprintf(file, "    ");
+    }
+}
+
+void JLogger::time()
+{
+    auto a = high_resolution_clock::now();
+    float delta_s = (float)duration_cast<microseconds>(a - startTime).count() / 1000000.;
+    fprintf(file, "%4.3f  ", delta_s);
+}
+
+void JLogger::time_stack()
+{
+    auto a = high_resolution_clock::now();
+    float delta_s = (float)duration_cast<microseconds>(a - stack.top().startTime).count() / 1000000.;
+    fprintf(file, "%4.3f ", delta_s);
+}
+
+void JLogger::type(uint _type)
+{
+    std::string logTypes[4] = { "verb", "info", "warn", "erro" };
+    fprintf(file, "{%s} ", logTypes[_type].c_str());
+}
+
+//#pragma optimize( "", off )
 
 
 bool forceAllTerrfectorRebuild = false;
@@ -33,6 +117,7 @@ lodTriangleMesh_LoadCombiner terrafectorSystem::loadCombine_LOD4_overlay;
 ecotopeSystem* terrafectorSystem::pEcotopes = nullptr;
 //GraphicsProgram::SharedPtr		terrafectorSystem::topdownProgramForBlends = nullptr;
 FILE* terrafectorSystem::_logfile;
+std::chrono::time_point<std::chrono::high_resolution_clock>  terrafectorSystem::logStartTime;
 uint logTab;
 
 
@@ -477,14 +562,14 @@ void lodTriangleMesh_LoadCombiner::loadToGPU(std::string _path, bool _log)
             tfTile.vertex = Buffer::createStructured(
                 sizeof(triVertex),
                 tfTile.numVerts,
-                static_cast<Resource::BindFlags>(Resource::BindFlags::ShaderResource | Resource::BindFlags::UnorderedAccess),
+                Resource::BindFlags::ShaderResource | Resource::BindFlags::UnorderedAccess,
                 Buffer::CpuAccess::None,
                 tile.verts.data());
 
             tfTile.index = Buffer::createStructured(
                 sizeof(unsigned int),
                 tfTile.numBlocks * 128 * 3,
-                static_cast<Resource::BindFlags>(Resource::BindFlags::ShaderResource | Resource::BindFlags::UnorderedAccess),
+                Resource::BindFlags::ShaderResource | Resource::BindFlags::UnorderedAccess,
                 Buffer::CpuAccess::None,
                 tile.tempIndexBuffer.data());
 
@@ -546,7 +631,11 @@ void lodTriangleMesh_LoadCombiner::loadToGPU(std::string _path, bool _log)
 // ############################################################################################################################
 std::string materialCache::getRelative(std::string _path)
 {
+    //fprintf(terrafectorSystem::_logfile, "path -  %s\n", _path.c_str());
     cleanPath(_path);
+    cleanPath(terrafectorEditorMaterial::rootFolder);
+    //fprintf(terrafectorSystem::_logfile, "cleanpath -  %s\n", _path.c_str());
+    //fprintf(terrafectorSystem::_logfile, "root -  %s\n", terrafectorEditorMaterial::rootFolder.c_str());
     if (_path.find(terrafectorEditorMaterial::rootFolder) == 0)
     {
         _path = _path.substr(terrafectorEditorMaterial::rootFolder.length());
@@ -1090,7 +1179,9 @@ void materialCache::renderGuiTextures(Gui* mpGui, Gui::Window& _window)
             if (ImGui::BeginPopupContextItem())
             {
                 std::string cmdExp = "explorer " + pT->getSourcePath().string();
-                std::string cmdPs = "\"C:\\Program Files\\Adobe\\Adobe Photoshop 2022\\Photoshop.exe\" " + pT->getSourcePath().string();
+                //std::string cmdPs = "\"C:\\Program Files\\Adobe\\Adobe Photoshop 2022\\Photoshop.exe\" " + pT->getSourcePath().string();
+                // LISA
+                std::string cmdPs = "\"C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Photoshop.exe\" " + pT->getSourcePath().string();
                 if (ImGui::Selectable("Explorer")) { system(cmdExp.c_str()); }
                 if (ImGui::Selectable("Photoshop")) { system(cmdPs.c_str()); }
                 ImGui::Separator();
@@ -1683,7 +1774,7 @@ bool terrafectorEditorMaterial::renderGUI(Gui* _gui)
     ImGui::PopFont();
 
 
-    float lineHeight = _gui->getFont("default")->LegacySize;
+    float lineHeight = _gui->getFont("default")->FontSize;
     ImGui::PushFont(_gui->getFont("default"));
     {
         ImGui::NewLine();

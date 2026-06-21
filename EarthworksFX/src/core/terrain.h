@@ -26,17 +26,21 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "FalcorCompat.hpp"
+#include "Falcor.h"
 #include "computeShader.h"
 #include "pixelShader.h"
 
 #include <thread>
-#include "barrier.hpp"
+#include "Barrier.hpp"
 
 #include"terrafector.h"
 #include "roadNetwork.h"
 #include "Sprites.h"
 #include "ecotope.h"
+#include "atmosphere.h"
+#include "lru_cache.h"
+#include "cascadeShadowMaps.h"
+#include "terrainGenerator.h"
 
 #include "cereal/cereal.hpp"
 #include "cereal/archives/binary.hpp"
@@ -51,28 +55,27 @@
 #include <fstream>
 
 #if defined(EARTHWORKS_WITH_OPENJPH)
-#if defined(__has_include) && __has_include(<openjph/ojph_codestream.h>)
-#include <openjph/ojph_arg.h>
-#include <openjph/ojph_mem.h>
-#include <openjph/ojph_file.h>
-#include <openjph/ojph_codestream.h>
-#include <openjph/ojph_params.h>
-#include <openjph/ojph_message.h>
+#    if defined(__has_include) && __has_include(<openjph/ojph_codestream.h>)
+#        include <openjph/ojph_arg.h>
+#        include <openjph/ojph_mem.h>
+#        include <openjph/ojph_file.h>
+#        include <openjph/ojph_codestream.h>
+#        include <openjph/ojph_params.h>
+#        include <openjph/ojph_message.h>
+#    else
+#        include <ojph_arg.h>
+#        include <ojph_mem.h>
+#        include <ojph_file.h>
+#        include <ojph_codestream.h>
+#        include <ojph_params.h>
+#        include <ojph_message.h>
+#    endif
 #else
-#include <ojph_arg.h>
-#include <ojph_mem.h>
-#include <ojph_file.h>
-#include <ojph_codestream.h>
-#include <ojph_params.h>
-#include <ojph_message.h>
-#endif
-#else
-#error "EarthworksFX requires EARTHWORKS_WITH_OPENJPH (OpenJPH via Earthworks)."
+#    error "EarthworksFX requires EARTHWORKS_WITH_OPENJPH (OpenJPH via Earthworks)."
 #endif
 
 #include "vegetationBuilder.h"
- //#include"hlsl/terrain/vegetation_defines.hlsli"
- //#pragma optimize("", off)
+ 
 
 //#include "cfd.h"
 #include <future> // Required for std::async and std::future
@@ -82,14 +85,15 @@ using namespace Falcor;
 
 
 
+//#pragma optimize("", off)
 
+// MOVE TO SHDOPW CLASS, but inititlaize data from here
+// MOVE TO TEMP SHADWO CLASS TO BE REPLACED WITH GPU DATA
 struct _shadowEdges
 {
     float height[4096][4096];
     float Nx[4095][4095];   // temp
-    //float3 norm[4095][4095];
     unsigned char edge[4096][4096];
-
     float2 shadowH[4096][4096];
 
     void load(std::string filename, float _angle);
@@ -110,71 +114,29 @@ struct _shadowEdges
 
 
 
-template<typename K, typename V = K>
-class LRUCache
-{
-
-private:
-    std::list<K>items;
-    std::unordered_map <K, std::pair<V, typename std::list<K>::iterator>> keyValuesMap;
-    uint csize = 50;	// arbitrary default
-
-public:
-    LRUCache() { ; }
-
-    void resize(uint s) {
-        csize = s;
-        items.clear();
-        keyValuesMap.clear();
-    }
-
-    void set(const K key, const V value) {
-        auto pos = keyValuesMap.find(key);
-        if (pos == keyValuesMap.end()) {
-            items.push_front(key);
-            keyValuesMap[key] = { value, items.begin() };
-            if (keyValuesMap.size() > csize) {
-                keyValuesMap.erase(items.back());
-                items.pop_back();
-            }
-        }
-        else {
-            items.erase(pos->second.second);
-            items.push_front(key);
-            keyValuesMap[key] = { value, items.begin() };
-        }
-    }
-
-    bool get(const K key, V& value) {
-        auto pos = keyValuesMap.find(key);
-        if (pos == keyValuesMap.end())
-            return false;
-        items.erase(pos->second.second);
-        items.push_front(key);
-        keyValuesMap[key] = { pos->second.first, items.begin() };
-        value = pos->second.first;
-        return true;
-    }
-};
 
 
 struct _lastFile
 {
-    // Default test terrain: folder under pwd (see terrains/<id>/elevations.txt).
-    std::string terrain = "terrains/switserland_Steg/terrainSettings.json";
-    std::string road = "";
+    // these are for quick load
+    std::string terrain = "F:/terrains/sonoma/sonoma.terrain";
+    std::string road = "X:/resources/terrains/eifel/roads/day6.roadnetwork";
     std::string stamps = "";
-    std::string roadMaterial = "";
+    std::string roadMaterial = "X:/resources/terrafectors_and_road_materials/roads/sidewalk_Asphalt.roadMaterial";
     std::string terrafectorMaterial = "";
     std::string texture = "";
     std::string fbx = "";
     std::string EVO = "";
 
-    std::string weed = "terrains/_resources/vegetation_weeds/";
-    std::string twig = "terrains/_resources/vegetation_twigs/";
-    std::string leaves = "terrains/_resources/vegetation_leaves/";
-    std::string trees = "terrains/_resources/vegetation_trees/";
-    std::string vegMaterial = "terrains/_resources/vegetation_trees/";
+    std::string weed = "F:/terrains/_resources/vegetation_weeds/";
+    std::string twig = "F:/terrains/_resources/vegetation_twigs/";
+    std::string leaves = "F:/terrains/_resources/vegetation_leaves/";
+    std::string trees = "F:/terrains/_resources/vegetation_trees/";
+    std::string vegMaterial = "F:/terrains/_resources/vegetation_trees/";
+
+    std::string dir_Resource = "";
+    std::string dir_Terrains = "";
+    std::string dir_GIS = "";
 
 
     template<class Archive>
@@ -199,22 +161,28 @@ struct _lastFile
         {
             _archive(CEREAL_NVP(stamps));
         }
+        if (_version > 102)
+        {
+            _archive(CEREAL_NVP(dir_Resource));
+            _archive(CEREAL_NVP(dir_Terrains));
+            _archive(CEREAL_NVP(dir_GIS));
+        }
     }
 };
-CEREAL_CLASS_VERSION(_lastFile, 102);
+CEREAL_CLASS_VERSION(_lastFile, 103);
 
 
 struct _terrainSettings
 {
-    std::string name = "switserland_Steg";
-    std::string projection = "\" + proj = tmerc + lat_0 = 46.8 + lon_0 = 8.5 + k_0 = 1 + x_0 = 0 + y_0 = 0 + ellps = WGS84 + units = m\"";
+    // these are for quick load
+    std::string name = "eifel";
+    std::string projection = "\" + proj = tmerc + lat_0 = 50.39 + lon_0 = 6.91 + k_0 = 1 + x_0 = 0 + y_0 = 0 + ellps = GRS80 + units = m\"";
     float size = 40000.f;
 
-    // Folder root: terrains/<id>/elevations.txt and terrains/<id>/elevations/*
-    std::string dirRoot = "terrains/switserland_Steg";
-    std::string dirExport = "terrains/switserland_Steg";
-    std::string dirGis = "terrains/switserland_Steg";
-    std::string dirResource = "terrains/_resources";
+    std::string dirRoot = "X:/resources/terrains/eifel";
+    std::string dirExport = "/terrains/Eifel";
+    std::string dirGis = "X:/resources/terrains/eifel";
+    std::string dirResource = "X:/resources";
 
     template<class Archive>
     void serialize(Archive& _archive, std::uint32_t const _version)
@@ -234,15 +202,17 @@ CEREAL_CLASS_VERSION(_terrainSettings, 100);
 
 
 
+
+
 // FOR binary export of tiles
 struct elevationMap {
-    float heightOffset;
-    float heightScale;
-    float2 origin;
-    float tileSize;
-    uint lod;
-    uint y;
-    uint x;
+    float   heightOffset;
+    float   heightScale;
+    float2  origin;
+    float   tileSize;
+    uint    lod;
+    uint    y;
+    uint    x;
 };
 
 
@@ -257,14 +227,12 @@ public:
         forRemove = false;
     }
 
-private:
-public:
     uint index;
     quadtree_tile* parent;
     quadtree_tile* child[4];
 
-    float4 boundingSphere;		// position has to be power of two to allow us to store large world offsets using float rather than double
-    float4 origin;
+    float4  boundingSphere;		// position has to be power of two to allow us to store large world offsets using float rather than double
+    float4  origin;
     float   size;
     uint    lod;
     uint    y;
@@ -282,6 +250,7 @@ public:
 };
 
 
+// These are all the camera flags that terrain tiles on the GPU needs to understand in order to render the correct tiles
 enum CameraType {
     CameraType_Main_Left,
     CameraType_Main_Center,
@@ -289,8 +258,22 @@ enum CameraType {
     CameraType_Rear_Left,
     CameraType_Rear_Center,
     CameraType_Rear_Right,
+    CameraType_Cascade_0,       // likely to i=only update 1 but maybe this is better
+    CameraType_Cascade_1,
+    CameraType_Cascade_2,
+    CameraType_Cascade_3,
+    CameraType_Cube_1,
+    CameraType_Cube_2,
+    CameraType_Cube_3,
+    CameraType_Cube_4,
+    CameraType_Cube_5,
+    CameraType_Cube_6,    
+    CameraType_Parabolic_low,       // really just a scale factor, but all round
+    CameraType_Parabolic_medium,    // really just a scale factor, but all round
     CameraType_MAX,
 };
+
+
 
 struct terrainCamera {
     bool bUse;
@@ -410,31 +393,9 @@ struct jp2Dir
     }
 };
 
-#include "atmosphere.h"
 
-// CPU mirror of hlsl/terrain/render_Buildings_Far.hlsl _buildingVertex
-struct _buildingVertex
-{
-    glm::vec3  pos;
-    uint32_t   material;
-    glm::vec3  normal;
-    float      something;
-    glm::vec2  uv;
-    glm::vec2  somethignesle;
-};
 
-// CPU mirror of hlsl/terrain/render_GliderWing.hlsl _gliderwingVertex
-struct _gliderwingVertex
-{
-    glm::vec3  pos;
-    uint32_t   material;
-    glm::vec3  normal;
-    float      something;
-    glm::vec2  uv;
-    glm::vec2  somethignesle;
-};
-
-enum class _terrainMode { vegetation, ecotope, terrafector, roads, glider };
+enum _terrainMode { vegetation, ecotope, terrafector, roads, glider, terrainBuilder, textureTool };
 
 class terrainManager
 {
@@ -444,14 +405,31 @@ public:
 
     void onLoad(RenderContext* _renderContext, FILE* _logfile);
     void onShutdown();
-    void onGuiRender(Gui* pGui, fogAtmosphericParams* pAtmosphere);
-    //void onGuiRendercfd(Gui::Window& _window, Gui* pGui, float2 _screen);
-    //void onGuiRendercfd_params(Gui::Window& _window, Gui* pGui, float2 _screen);
-    //void onGuiRendercfd_skewT(Gui::Window& _window, Gui* pGui, float2 _screen);
+//    void onGuiRender_Veg(Gui* _gui, int _header, int _left, int _right, int _bottom);
+    void onGuiRender_Right_Ecotope(Gui* _gui, Gui::Window& _window);
+    void onGuiRender_Right_Terrafector(Gui* _gui, Gui::Window& _window);
+    void onGuiRender_Right_Roads(Gui* _gui, Gui::Window& _window);
+    void onGuiRender_Right_Glider(Gui* _gui, Gui::Window& _window); 
+    void onGuiRender_Right(Gui* pGui, int _header, float2 _screen);
+
+    void onGuiRender_Main_Ecotope(Gui* _gui);
+    void onGuiRender_Main_Terrafector(Gui* _gui);
+    void onGuiRender_Main_Roads(Gui* _gui);
+    void onGuiRender_Main_Glider(Gui* _gui);
+    void onGuiRender_Main(Gui* pGui, int _header, float2 _screen);
+
+    void onGuiRender(Gui* pGui, int _header, float2 _screen, fogAtmosphericParams* pAtmosphere);
+    void onGuiRender_Debug(Gui* pGui);
+    void onGuiRenderParaglider(Gui::Window& _window, Gui* pGui, float2 _screen, fogAtmosphericParams* pAtmosphere);
+    void onGuiRendercfd(Gui::Window& _window, Gui* pGui, float2 _screen);
+    void onGuiRendercfd_params(Gui::Window& _window, Gui* pGui, float2 _screen);
+    void onGuiRendercfd_skewT(Gui::Window& _window, Gui* pGui, float2 _screen);
     bool renderGui_Menu = false;
     bool renderGui_Hud = true;
     void onGuiMenubar(Gui* pGui);
-    void onFrameRender(RenderContext* pRenderContext, const Fbo::SharedPtr& _fbo, Camera::SharedPtr _camera, GraphicsState::SharedPtr _graphicsState, GraphicsState::Viewport _viewport, Texture::SharedPtr _hdrHalfCopy);
+
+    
+    void onFrameRender(RenderContext* pRenderContext, const Fbo::SharedPtr& _fbo, Camera::SharedPtr _camera, GraphicsState::Viewport _viewport);
     bool onKeyEvent(const KeyboardEvent& keyEvent);
     bool onMouseEvent(const MouseEvent& mouseEvent, glm::vec2 _screenSize, glm::vec2 _mouseScale, glm::vec2 _mouseOffset, Camera::SharedPtr _camera);
     bool onMouseEvent_Roads(const MouseEvent& mouseEvent, glm::vec2 _screenSize, Camera::SharedPtr _camera);
@@ -476,12 +454,24 @@ public:
 
     void clearCameras();
     void setCamera(unsigned int _index, glm::mat4 viewMatrix, glm::mat4 projMatrix, float3 position, bool b_use, float _resolution);
+
+    void updateShaderConstants(Texture::SharedPtr _previousFrame, shaderLightBuffer _buffer);
     bool update(RenderContext* pRenderContext);
+
+
+    void shadowSetup(shadowMap& _shadow);
+    void shadowRenderFar();
+    void shadowRenderNear();
+    void shadowRenderSoft();
+    void shadowRender(RenderContext* pRenderContext );
+    RenderContext* renderContext;
+    shadowMap ShadowMap;
+
 
     static _lastFile lastfile;
 
 private:
-    void testForSurfaceMain();
+    void calculateSurfaceFlags();
     void testForSurfaceEnv();
     bool testForSplit(quadtree_tile* _tile);
     bool testFrustum(quadtree_tile* _tile);
@@ -533,7 +523,7 @@ private:
     std::vector<quadtree_tile>	m_tiles;
     std::list<quadtree_tile*>	m_free;
     std::list<quadtree_tile*>	m_used;
-    unsigned int frustumFlags[2048];
+    uint4 frustumFlags[1024];
 public:
     bool fullResetDoNotRender = false;
 private:
@@ -567,6 +557,10 @@ private:
     Buffer::SharedPtr       ribbonData[2];  // also paraglider  - split these into seperate block at least, not true groveTree.bChanged writes to this, so duplicate maybe
     uint bufferidx = 0;
 
+    Buffer::SharedPtr       triangleData_VegHuman;
+    uint                    triCountVegHuman;
+    pixelShader             veghumanShader;
+
     Buffer::SharedPtr       triangleData;
     Fbo::SharedPtr		bakeFbo_plants;
     GraphicsState::Viewport     viewportVegbake;
@@ -587,7 +581,7 @@ public:
     pixelShader         rappersvilleShader;
     Buffer::SharedPtr   rappersvilleData;
     //Buffer::SharedPtr   drawArgs_rappersville;
-    int numrapperstri;
+    int numrapperstri = 0;
 
     pixelShader         gliderwingShader;
     uint    wingloadedCnt;
@@ -600,8 +594,6 @@ public:
     
     struct
     {
-        //void cacheTerrain();
-        //void cacheImage();
         double terrainCacheTime;
         double terrainCacheJPHTime;
         double imageCacheTime;
@@ -609,7 +601,7 @@ public:
         double imageCacheIOTime;
     } stream;   // IO and feedback
 
-    _terrainMode terrainMode = _terrainMode::roads;
+    _terrainMode terrainMode = _terrainMode::vegetation;
 private:
     bool hasChanged = false;
 
@@ -625,6 +617,7 @@ private:
     float mouseVegPitch = 0.1f;
     float mouseVegYaw = 0.0f;
     float mouseVegRoll = 0.0f;
+    float mouseVegHeight = 0.3f;
     computeShader compute_TerrainUnderMouse;
 
     std::map<uint32_t, heightMap> elevationTileHashmap;
@@ -645,7 +638,7 @@ private:
     spriteRender			mSpriteRenderer;
 
 public:
-    _rootPlant       plants_Root;
+    _rootPlant           plants_Root;
     float               billboardGpuTime;
 private:
 
@@ -733,11 +726,12 @@ private:
         computeShader           compute_bc6h;
         Texture::SharedPtr      bc6h_texture;
 
-        Buffer::SharedPtr       dispatchArgs_plants;
+        Buffer::SharedPtr       dispatchArgs_plants;    // numRenderViews in size
         Buffer::SharedPtr       drawArgs_quads;
-        Buffer::SharedPtr       drawArgs_plants;
-        Buffer::SharedPtr       drawArgs_clippedloddedplants;
+        //Buffer::SharedPtr       drawArgs_clippedloddedplants;
         Buffer::SharedPtr       drawArgs_tiles;         // block based
+        //Buffer::SharedPtr       drawArgs_plants;            // pretty sure this is unused and only dispatchArgs_plants is used
+
         Buffer::SharedPtr       buffer_feedback;
         Buffer::SharedPtr		buffer_feedback_read;
         GC_feedback             feedback;
@@ -749,9 +743,9 @@ private:
         Buffer::SharedPtr       buffer_instance_plants;
         Buffer::SharedPtr       buffer_clippedloddedplants;
 
-        Buffer::SharedPtr       buffer_lookup_terrain;
-        Buffer::SharedPtr       buffer_lookup_quads;
-        Buffer::SharedPtr       buffer_lookup_plants;
+        Buffer::SharedPtr       buffer_lookup_terrain[numRenderViews];
+        Buffer::SharedPtr       buffer_lookup_quads[numRenderViews];
+        Buffer::SharedPtr       buffer_lookup_plants[numRenderViews];
 
         Buffer::SharedPtr	    buffer_tileCenters;
         Buffer::SharedPtr		buffer_tileCenter_readback;
@@ -853,7 +847,7 @@ public:
 
 
 
-public:
+
     struct
     {
         bool show = false;
@@ -863,15 +857,7 @@ public:
     }vegetation;
 
 private:
-    bool showGUI = true;
-
-
-
-
-    //_gliderBuilder paraBuilder;
-    //_gliderRuntime paraRuntime;
-    //_new_gliderRuntime newGliderRuntime;
-    //_airSim AirSim;
+    
     //_cfd CFD;
     //_cfdClipmap cfdClip;
 public:
@@ -879,15 +865,13 @@ public:
 
     //void cfdStart();
     //void cfdThread();
-    //void paragliderThread(BarrierThrd& bar);
-    //void paragliderThread_B(BarrierThrd& bar);
     bool requestParaPack = false;
     float3 paraCamPos;
     float3 paraEyeLocal;
 
     struct
     {
-        //_cfdClipmap clipmap; // deferred: port _cfdClipmap from Falcor Earthworks
+        //_cfdClipmap clipmap;
         std::string rootPath;
         std::string rootFile;
         bool recordingCFD = false;
@@ -940,4 +924,26 @@ public:
         float wingTime[2];
         float postTime[2];
     } glider;
+
+
+    // Zero is not allowed and these are small so stick to 256 maybe
+
+    uint lookupSizeTerrain[numRenderViews] =
+    { 524288, 524288, 256, 256, 256, 256, 1024, 1024, 1024, 1024, 65536, 65536, 65536, 65536, 65536, 65536, 16384, 32768 };
+    // 524288 = 33M triangles
+    uint lookupSizeBillboard[numRenderViews] =
+    { 256, 131072, 256, 256, 256, 256, 1024, 1024, 1024, 1024, 16384, 16384, 16384, 16384, 16384, 16384, 8000, 16384 };
+    //131072 = 8 million billboards
+    // 16384  = 1 million maybe define them as susch
+    // cube views also need less both u[ and down
+
+    uint lookupSizePlants[numRenderViews] =
+    { 256, 131072, 256, 256, 256, 256, 1024, 1024, 1024, 1024, 16384, 16384, 16384, 16384, 16384, 16384, 8000, 16384 };
+    std::string viewNames[numRenderViews] = { "left", "main", "right", "rearL", "rear", "rearR", "casc0", "casc1" , "casc2" , "casc3",
+        "cube0", "cube1", "cube2", "cube3", "cube4", "cube5", "para_1", "para_2" };
+
+    uint viewMask = main_LEFT | main_CENTER | cascade_0 | cascade_1 | cascade_2 | parabolic_low | parabolic_medium;
+
+
+    terrainGenerator newTerrainBuilder;
 };

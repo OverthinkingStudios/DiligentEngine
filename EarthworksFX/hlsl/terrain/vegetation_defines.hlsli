@@ -37,7 +37,9 @@ struct _plant_lod
     float pixSize;          //12 biyts max in ints
     uint startVertex;       // make this count in blocks    at the very least 21 bits 2mb of blocks 64Mb of verts, might as well be 32
     uint numBlocks;         // 8000 is realyl large especialyl with sub parts, still only gets us smaller is I do somethign weird with pixSize
-    uint reserved; 
+    uint reserved;
+    // start symlink
+    // num symlink single uintpacked 22, 10 or similar
 };
 
 struct _plant_anim_pivot
@@ -105,22 +107,52 @@ struct ribbonVertex8
 };
 
 
+struct symbolicLink
+{
+    float3 position;
+    float yaw;
+
+    float pitch;
+    float scale;
+    float unused;
+    uint pivots;
+
+};
+// just get it working, pack later
+
+
 #define VEG_BLOCK_SIZE 32
 
 
 
-struct vegetation_feedback
-{
+    struct vegetation_feedback
+    {
     // plant zero
-    float plantZero_pixeSize;
-    uint plantZeroLod;
-    uint numBillboard;
-    uint numPlant;
+        float plantZero_pixeSize;
+        uint plantZeroLod;
+        uint numBillboard;
+        uint numPlant;
 
-    uint numLod[32];
-    uint numPlantsType[32];
+        uint numLod[32];
+        uint numPlantsType[32];
 
-    uint numBlocks;
-    uint numInstanceAddedComputeClipLod;
-    uint numFrustDiscard;
-};
+        uint numBlocks;
+        uint numInstanceAddedComputeClipLod;
+        uint numFrustDiscard;
+
+        uint numPixClip;
+        uint numPixPass;
+        uint numInstAdded;
+        uint numInstRejected;
+
+        uint numBlock_Z[128];
+    };
+
+
+    struct veg_sort
+    {
+        uint current; // number of blocks to render
+        uint size; // size of this block
+        uint offset; // offset of this block
+        uint requested; // number requested before bump to 127 to relocate for next frame
+    };

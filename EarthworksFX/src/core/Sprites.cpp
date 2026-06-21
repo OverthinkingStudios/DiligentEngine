@@ -113,7 +113,7 @@ void spriteRender::onLoad()
 	mpIndirectArgs_dynamic[2]->setBlob(&zero, 8, sizeof(uint32_t));
 	mpIndirectArgs_dynamic[2]->setBlob(&zero, 12, sizeof(uint32_t));
 
-	plantShaderPlants.load("hlsl/render_sprite.hlsl", "vsMain", "psMain", Vao::Topology::TriangleStrip);
+	plantShaderPlants.load("Samples/Earthworks_4/hlsl/render_sprite.hlsl", "vsMain", "psMain", Vao::Topology::TriangleStrip);
 	plantShaderPlants.Vars()->setBuffer("VB", mpSB_static);
 	plantShaderPlants.Vars()->setTexture("gTex", mDiff);
 	plantShaderPlants.Vars()->setTexture("gNorm", mNorm);

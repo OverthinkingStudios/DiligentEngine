@@ -8,12 +8,12 @@ void FogVolume::onLoad(FogVolumeParameters params)
 {
     m_params = params;
     inscatter = Texture::create3D(params.m_x, params.m_y, params.m_z, params.format, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
-    inscatter_cloudbase = Texture::create2D(params.m_x, params.m_y, Diligent::TEX_FORMAT_RGBA16_FLOAT, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
-    inscatter_sky       = Texture::create2D(params.m_x, params.m_y, Diligent::TEX_FORMAT_RGBA16_FLOAT, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
+    inscatter_cloudbase = Texture::create2D(params.m_x, params.m_y, Falcor::ResourceFormat::RGBA16Float, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
+    inscatter_sky = Texture::create2D(params.m_x, params.m_y, Falcor::ResourceFormat::RGBA16Float, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
 
     outscatter = Texture::create3D(params.m_x, params.m_y, params.m_z, params.format, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
-    outscatter_cloudbase = Texture::create2D(params.m_x, params.m_y, Diligent::TEX_FORMAT_RGBA16_FLOAT, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
-    outscatter_sky       = Texture::create2D(params.m_x, params.m_y, Diligent::TEX_FORMAT_RGBA16_FLOAT, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
+    outscatter_cloudbase = Texture::create2D(params.m_x, params.m_y, Falcor::ResourceFormat::RGBA16Float, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
+    outscatter_sky = Texture::create2D(params.m_x, params.m_y, Falcor::ResourceFormat::RGBA16Float, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
 }
 
 void FogVolume::updateFogparameters(fogAtmosphericParams params)
@@ -63,24 +63,25 @@ void FogVolume::setCamera(Camera::SharedPtr _camera)
 
 void atmosphereAndFog::onLoad(RenderContext* _renderContext, FILE* _logfile)
 {
+    
     Sampler::Desc samplerDesc;
     samplerDesc.setAddressingMode(Sampler::AddressMode::Clamp, Sampler::AddressMode::Clamp, Sampler::AddressMode::Clamp).setFilterMode(Sampler::Filter::Linear, Sampler::Filter::Linear, Sampler::Filter::Linear).setMaxAnisotropy(1);
     sampler_Clamp = Sampler::create(samplerDesc);
     samplerDesc.setAddressingMode(Sampler::AddressMode::Wrap, Sampler::AddressMode::Wrap, Sampler::AddressMode::Wrap).setFilterMode(Sampler::Filter::Linear, Sampler::Filter::Linear, Sampler::Filter::Linear).setMaxAnisotropy(8);
     sampler_Trilinear = Sampler::create(samplerDesc);
 
-    mainFar.onLoad(FogVolumeParameters{ 256, 128, 256*1, Diligent::TEX_FORMAT_R11G11B10_FLOAT, true, false, 50.f, 20000.f });
-    //mainFar.onLoad(FogVolumeParameters{ 256, 128, 256, Diligent::TEX_FORMAT_R11G11B10_FLOAT, true, false, 50.f, 20000.f });
-    mainNear.onLoad(FogVolumeParameters{ 256, 128, 256, Diligent::TEX_FORMAT_RGBA16_FLOAT, false, false, 1.f, 100.f });
-    parabolicFar.onLoad(FogVolumeParameters{ 128, 128, 32, Diligent::TEX_FORMAT_R11G11B10_FLOAT, true, true, 100.f, 20000.f });
+    mainFar.onLoad(FogVolumeParameters{ 256/4, 128/4, 256, Falcor::ResourceFormat::R11G11B10Float, true, false, 50.f, 20000.f });
+    //mainFar.onLoad(FogVolumeParameters{ 256, 128, 256, Falcor::ResourceFormat::R11G11B10Float, true, false, 50.f, 20000.f });
+    mainNear.onLoad(FogVolumeParameters{ 256, 128, 256, Falcor::ResourceFormat::RGBA16Float, false, false, 1.f, 100.f });
+    parabolicFar.onLoad(FogVolumeParameters{ 128, 128, 32, Falcor::ResourceFormat::R11G11B10Float, true, true, 100.f, 20000.f });
 
-    phaseFunction   = Texture::create2D(phaseX, phaseY, Diligent::TEX_FORMAT_R32_FLOAT, 1, 1, phaseData, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
-    sunlightTexture = Texture::create2D(512, 256, Diligent::TEX_FORMAT_RGBA32_FLOAT, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
+    phaseFunction = Texture::create2D(phaseX, phaseY, Falcor::ResourceFormat::R32Float, 1, 1, phaseData, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
+    sunlightTexture = Texture::create2D(512, 256, Falcor::ResourceFormat::RGBA32Float, 1, 1, nullptr, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
 
-    compute_sunSlice.load("hlsl/atmosphere/compute_sunlightInAtmosphere.hlsl");
+    compute_sunSlice.load("Samples/Earthworks_4/hlsl/atmosphere/compute_sunlightInAtmosphere.hlsl");
     compute_sunSlice.Vars()->setTexture("gResult", sunlightTexture);
 
-    compute_Atmosphere.load("hlsl/atmosphere/compute_volumeFogAtmosphericScatter.hlsl");
+    compute_Atmosphere.load("Samples/Earthworks_4/hlsl/atmosphere/compute_volumeFogAtmosphericScatter.hlsl");
     compute_Atmosphere.Vars()->setTexture("SunInAtmosphere", sunlightTexture);
     compute_Atmosphere.Vars()->setTexture("hazePhaseFunction", phaseFunction);
     compute_Atmosphere.Vars()->setTexture("gInscatter", mainFar.inscatter);

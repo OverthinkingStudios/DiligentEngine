@@ -1,7 +1,7 @@
 #pragma once
 
 #include "SampleBase.hpp"
-#include "FalcorCompat.hpp"
+#include "Falcor.h"
 #include "Earthworks_4.h"
 
 namespace Diligent
@@ -42,14 +42,13 @@ private:
 
     void SyncInput();
 
+    std::unique_ptr<Falcor::EarthworksWrapper> m_FalcorWrapper;
     Earthworks_4              m_Earthworks;
     Falcor::Gui               m_Gui;
     Falcor::RenderContext     m_RenderContext;
     SampleFramework           m_Framework;
     Falcor::Fbo::SharedPtr    m_TargetFbo;
     bool                      m_Initialized = false;
-
-    static FILE* s_LogFile;
 };
 
 SampleBase* CreateSample();

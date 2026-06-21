@@ -176,6 +176,7 @@ public:
     void setTarget(const float3& target);
     void setUpVector(const float3& up);
     void setFarPlane(float zFar);
+    void setNearPlane(float zNear);
 
     float4x4 getViewMatrix() const;
     float4x4 getProjMatrix() const;
@@ -187,6 +188,8 @@ public:
     float getFocalLength() const { return m_Data.FocalLength; }
     float getAspectRatio() const { return m_Data.AspectRatio; }
     float getFrameHeight() const { return m_Data.FrameHeight; }
+    float getNearPlane() const { return m_Data.NearPlane; }
+    float getFarPlane() const { return m_Data.FarPlane; }
 
     CameraData&       getData() { return m_Data; }
     const CameraData& getData() const { return m_Data; }
@@ -204,7 +207,8 @@ enum ResourceFormat : Diligent::Uint16
     RGBA32Float     = Diligent::TEX_FORMAT_RGBA32_FLOAT,
     RGBA16Float     = Diligent::TEX_FORMAT_RGBA16_FLOAT,
     RGBA8Unorm      = Diligent::TEX_FORMAT_RGBA8_UNORM,
-    RGBA8UnormSrgb   = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB,
+    RGBA8UnormSrgb  = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB,
+    R8Uint          = Diligent::TEX_FORMAT_R8_UINT,
     R16Uint         = Diligent::TEX_FORMAT_R16_UINT,
     R32Float        = Diligent::TEX_FORMAT_R32_FLOAT,
     R32Uint         = Diligent::TEX_FORMAT_R32_UINT,
@@ -214,6 +218,8 @@ enum ResourceFormat : Diligent::Uint16
     R5G6B5Unorm     = Diligent::TEX_FORMAT_B5G6R5_UNORM,
     BC6HU16         = Diligent::TEX_FORMAT_BC6H_UF16,
     D24UnormS8      = Diligent::TEX_FORMAT_D24_UNORM_S8_UINT,
+    BGRA8UnormSrgb  = Diligent::TEX_FORMAT_BGRA8_UNORM_SRGB,
+    R8Unorm         = Diligent::TEX_FORMAT_R8_UNORM,
 };
 
 namespace Resource
@@ -445,9 +451,9 @@ class Texture
 public:
     using SharedPtr = Falcor::SharedPtr<Texture>;
 
-    static SharedPtr create2D(uint32_t width, uint32_t height, TEXTURE_FORMAT format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
-    static SharedPtr create2D(uint32_t width, uint32_t height, ResourceFormat format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
-    static SharedPtr create3D(uint32_t width, uint32_t height, uint32_t depth, TEXTURE_FORMAT format, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
+    static SharedPtr create2D(uint32_t width, uint32_t height, Falcor::ResourceFormat format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
+    static SharedPtr create2D(uint32_t width, uint32_t height, Falcor::ResourceFormat format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
+    static SharedPtr create3D(uint32_t width, uint32_t height, uint32_t depth, Falcor::ResourceFormat format, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
     static SharedPtr createFromFile(const char* path, bool srgb, bool generateMips, Resource::BindFlags bind_flags = Resource::BindFlags::ShaderResource);
     static SharedPtr createFromFile(const std::filesystem::path& path, bool srgb, bool generateMips, Resource::BindFlags bind_flags = Resource::BindFlags::ShaderResource);
 
@@ -525,7 +531,7 @@ public:
     static SharedPtr createStructured(size_t structSize, size_t elementCount, uint32_t bindFlags);
     static SharedPtr createStructured(size_t structSize, size_t elementCount, Resource::BindFlags bindFlags, CpuAccess cpuAccess, const void* pInitData = nullptr);
 
-    static SharedPtr createTyped(TEXTURE_FORMAT format, size_t sizeInBytes, Resource::BindFlags bindFlags);
+    static SharedPtr createTyped(Falcor::ResourceFormat format, size_t sizeInBytes, Resource::BindFlags bindFlags);
 
     void setBlob(const void* pData, size_t offset, size_t size);
     void setBlob(const void* pData, size_t offset, size_t size, size_t count);
@@ -558,11 +564,13 @@ public:
     class Desc
     {
     public:
-        Desc& setColorTarget(uint32_t slot, TEXTURE_FORMAT format);
-        Desc& setColorTarget(uint32_t slot, TEXTURE_FORMAT format, bool srgb);
-        Desc& setDepthStencilTarget(TEXTURE_FORMAT format);
-        TEXTURE_FORMAT GetColorFormat(uint32_t slot) const;
-        TEXTURE_FORMAT GetDepthFormat() const;
+        Desc& setColorTarget(uint32_t slot, Falcor::ResourceFormat falcor_format);
+        Desc& setColorTarget(uint32_t slot, Diligent::TEXTURE_FORMAT format);
+        Desc& setColorTarget(uint32_t slot, Falcor::ResourceFormat falcor_format, bool srgb);
+        Desc& setDepthStencilTarget(Falcor::ResourceFormat falcor_format);
+        Desc& setDepthStencilTarget(Diligent::TEXTURE_FORMAT format);
+        Falcor::ResourceFormat GetColorFormat(uint32_t slot) const;
+        Falcor::ResourceFormat GetDepthFormat() const;
 
     private:
         std::array<TEXTURE_FORMAT, 8> m_ColorFormats{};
@@ -577,6 +585,9 @@ public:
     Texture::SharedPtr getDepthStencilTexture() const;
     Diligent::ITextureView* getRenderTargetView(uint32_t slot) const;
     Diligent::ITextureView* getDepthStencilView() const;
+            
+    float getWidth() const { return m_Width; }
+    float getHeight() const { return m_Height; }
 
 private:
     uint32_t m_Width = 0;
@@ -598,6 +609,11 @@ public:
         Border,
     };
 
+    enum class ComparisonMode
+    {
+        LessEqual
+    };
+
     enum class Filter
     {
         Point,
@@ -610,6 +626,7 @@ public:
         Desc& setAddressingMode(AddressMode u, AddressMode v, AddressMode w);
         Desc& setFilterMode(Filter min, Filter mag, Filter mip);
         Desc& setMaxAnisotropy(uint32_t aniso);
+        Desc& setComparisonMode(ComparisonMode mode);
 
     private:
         friend class Sampler;
@@ -651,6 +668,7 @@ public:
         Desc& setRtParams(uint32_t rt, BlendOp colorOp, BlendOp alphaOp, BlendFunc srcColor, BlendFunc dstColor, BlendFunc srcAlpha, BlendFunc dstAlpha);
         Desc& setIndependentBlend(bool enabled);
         Desc& setRenderTargetWriteMask(uint32_t rt, bool red, bool green, bool blue, bool alpha);
+        Desc& setAlphaToCoverage(bool enabled);
 
     private:
         friend class BlendState;
@@ -746,6 +764,7 @@ class DefineList
 {
 public:
     DefineList& add(const std::string& name, const std::string& value);
+    DefineList& DefineList::remove(const std::string& name);
 
     const std::vector<std::pair<std::string, std::string>>& get() const { return m_Defines; }
 
@@ -841,7 +860,7 @@ public:
 
     using BufferVec = std::vector<Buffer::SharedPtr>;
 
-    static SharedPtr create(Topology topology, const VertexLayout::SharedPtr& layout, const BufferVec& vbos, const Buffer::SharedPtr& ib, TEXTURE_FORMAT indexFormat);
+    static SharedPtr create(Topology topology, const VertexLayout::SharedPtr& layout, const BufferVec& vbos, const Buffer::SharedPtr& ib, Falcor::ResourceFormat indexFormat);
 };
 
 class RenderContext
@@ -858,6 +877,7 @@ public:
 
     void clearFbo(Fbo* pFbo, const float4& color, float depth, uint8_t stencil, FboAttachmentType attachments);
     void clearRtv(Diligent::ITextureView* pRtv, const float4& color);
+    void clearTexture(Texture* tx);
     void blit(Diligent::ITextureView* pSrc, Diligent::ITextureView* pDst, const glm::vec4& srcRect, const glm::vec4& dstRect, Sampler::Filter filter, BlendState::SharedPtr blend = nullptr);
     void updateTextureData(Texture* pTexture, const void* pData);
     void copyResource(Texture* pSrc, Texture* pDst);
@@ -888,6 +908,7 @@ public:
     class Window
     {
     public:
+        Window(Gui* pGui, const char* name, bool show_window, float2 size, float2 pos, WindowFlags flags = WindowFlags::None);
         Window(Gui* pGui, const char* name, float2 size, float2 pos, WindowFlags flags = WindowFlags::None);
         ~Window();
 
@@ -935,9 +956,10 @@ enum class Key
     Q,
     R,
     S,
+    T,
     V,
     X,
-    Y,
+    Y, W,
     Del,
     Escape,
     Space,
@@ -951,7 +973,11 @@ enum class Key
     Key2,
     Key3,
     Key4,
+    Key5,
+    Key6,
+    Key7,
     LeftControl,
+    LeftShift
 };
 
 enum class MouseButton
@@ -1083,5 +1109,31 @@ public:
     static void setColor(const float3& color);
     static void render(RenderContext* pContext, const std::string& text, const Fbo::SharedPtr& pFbo, const float2& pos);
 };
+
+class IRenderer {
+
+public:
+    virtual void onLoad(RenderContext* _renderContext) = 0;
+    //virtual void onFrameUpdate(RenderContext* _renderContext) = 0;
+    virtual void onFrameRender(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo) = 0;
+    //virtual void onRenderOverlay(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo);
+    virtual void onShutdown() = 0;
+    virtual void onResizeSwapChain(uint32_t _width, uint32_t _height) = 0;
+    virtual bool onKeyEvent(const KeyboardEvent& keyEvent)            = 0;
+    virtual bool onMouseEvent(const MouseEvent& mouseEvent)           = 0;
+    virtual void initGui(Gui* _gui);
+    virtual void onGuiRender(Gui* _gui) = 0;
+    virtual void onGuiMenubar(Gui* _gui);
+};
+
+class EarthworksWrapper {
+public:
+    EarthworksWrapper();
+    ~EarthworksWrapper();
+
+private:
+    FILE* logFile;
+};
+
 
 } // namespace Falcor

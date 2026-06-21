@@ -3,6 +3,34 @@
 //#include "gpuLights_defines.hlsli"
 
 
+
+// render view data
+#define main_LEFT 1<<0
+#define main_CENTER 1<<1
+#define main_RIGHT 1<<2
+#define rear_LEFT 1<<3
+#define rear_CENTER 1<<4
+#define rear_RIGHT 1<<5
+
+#define cascade_0 1<<6
+#define cascade_1 1<<7
+#define cascade_2 1<<8
+#define cascade_3 1<<9
+
+#define cubeEnv_0 1<<10
+#define cubeEnv_1 1<<11
+#define cubeEnv_2 1<<12
+#define cubeEnv_3 1<<13
+#define cubeEnv_4 1<<14
+#define cubeEnv_5 1<<15
+
+#define parabolic_low 1<<16
+#define parabolic_medium 1<<17
+
+#define numRenderViews 18
+
+
+
  #pragma once
 
 #define THREADSIZE 256	
@@ -161,16 +189,11 @@ struct triangleVertex
 };
 
 
-// but keep it a struct for now in case we need a bit more info
-// this is a shortcut lookup between vertex and tile, given SV_InstanceId , what is tile
 //#define t_LU_blocksize	64
 //#define t_LU_shift		6
 //#define t_LU_mask		0x3f
-struct tileLookupStruct
-{
-	uint tile;
-	uint offset;
-};
+#define tileLookupStruct uint
+
 
 
 /*we can pack this into 32 bytes but not much gain to do so immediately, leave that as a final optimization - EVO does not use the lights, so 46 bytes already*/
@@ -277,33 +300,34 @@ struct GC_feedback			// to log and read back to debug and test the process
 	float4	p_up;
 	float	p_width;
 	
-	uint numPlantShaderCalls;
+	// uint numPlantShaderCalls; DEPRECATED
 	
 	// lookups
-	uint numQuadTiles;
-	uint numQuadBlocks;
-	uint numQuads;
-    uint maxQuads;
-	uint numPlantTiles;
-	uint numPlantBlocks;
-	uint numPlants;
-    uint maxPlants;
+    uint numQuadTiles[numRenderViews];
+    uint numQuadBlocks[numRenderViews];
+    uint numQuads[numRenderViews];
+    uint maxQuads[numRenderViews];
+
+    uint numPlantTiles[numRenderViews];
+    uint numPlantBlocks[numRenderViews];
+    uint numPlants[numRenderViews];
+    uint maxPlants[numRenderViews];
 	
-	uint numTerrainTiles;		// FXIME these wil ahve te be per camera later - maybe allow a max of 16 cameras or somethign like htta
-	uint numTerrainBlocks;
-	uint numTerrainVerts;
-    uint maxTriangles;
+    uint numTerrainTiles[numRenderViews];
+    uint numTerrainBlocks[numRenderViews];
+    uint numTerrainVerts[numRenderViews];
+    uint maxTriangles[numRenderViews];
 	
 	// lookup params
-	uint numLookupBlocks_Quads;
-	uint numLookupBlocks_Plants;
-	uint numLookupBlocks_Terrain;
+    uint numLookupBlocks_Quads[numRenderViews];     // These are not really DDBUG they are critical for build to work
+    uint numLookupBlocks_Plants[numRenderViews];
+    uint numLookupBlocks_Terrain[numRenderViews];       
 	
 	// terrain under mouse
 	float3 	tum_Position;
 	uint 	tum_idx;
 	float3 	tum_Normal;
-	uint 	tumPadd;
+	uint 	tum_lastKnownTile;
 	
 	float3 	colourUnderMouse;
 	float	heightUnderCamera;
@@ -318,11 +342,15 @@ struct GC_feedback			// to log and read back to debug and test the process
 	float2 paddS;
     uint    numPostClippedPlants;
 
+    uint vegRibbonClippedPixels;
+    uint vegRibbonOKPixels;
 
     uint numTiles[20];
     uint numSprite[20];
     uint numPlantsLOD[20];
     uint numTris[20];
+
+    uint numPix[20];
 };
 
 
@@ -428,3 +456,9 @@ struct sprite_material
 	uint 	light_params;
 };
 	*/
+
+
+
+
+
+

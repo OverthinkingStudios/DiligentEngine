@@ -1,10 +1,11 @@
-#include "FalcorCompat.hpp"
+#include "Falcor.h"
 
 #include "imgui.h"
 
 #include <algorithm>
 #include <cstring>
 #include <mutex>
+#include "ots/Log.hpp"
 
 namespace Falcor
 {
@@ -21,15 +22,16 @@ std::vector<std::filesystem::path> g_DataDirectories;
 FrameworkInterface                 g_DefaultFramework;
 DeviceInterface                    g_DefaultDevice;
 
-void EFX_LOG_STUB(const char* msg)
-{
-    (void)msg;
-    // TODO: route to Diligent LOG_INFO once render path is online.
+void EFX_LOG_STUB(const char* msg) {
+    spdlog::info(msg);
 }
 
-TEXTURE_FORMAT ToDiligentFormat(TEXTURE_FORMAT fmt)
-{
-    return fmt;
+TEXTURE_FORMAT ToDiligentFormat(Falcor::ResourceFormat fmt) {
+    return (TEXTURE_FORMAT)fmt;
+}
+
+Falcor::ResourceFormat FromDiligentFormat(TEXTURE_FORMAT fmt) {
+    return (Falcor::ResourceFormat)fmt;
 }
 
 void CreateTextureView(Diligent::ITexture* pTex, Diligent::TEXTURE_VIEW_TYPE viewType, Diligent::RefCntAutoPtr<Diligent::ITextureView>& outView)
@@ -196,6 +198,10 @@ void Camera::setUpVector(const float3& up)
 void Camera::setFarPlane(float zFar)
 {
     m_Data.FarPlane = zFar;
+}
+
+void Camera::setNearPlane(float zNear) {
+    m_Data.NearPlane = zNear;
 }
 
 float4x4 Camera::getViewMatrix() const
@@ -437,7 +443,7 @@ Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, TEXTURE_FO
     return create2D(width, height, static_cast<ResourceFormat>(format), arraySize, mipLevels, pData, bindFlags);
 }
 
-Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, ResourceFormat format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags)
+Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, Falcor::ResourceFormat format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags)
 {
     (void)arraySize;
     (void)mipLevels;
@@ -473,7 +479,7 @@ Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, ResourceFo
     return tex;
 }
 
-Texture::SharedPtr Texture::create3D(uint32_t width, uint32_t height, uint32_t depth, TEXTURE_FORMAT format, uint32_t, const void*, uint32_t bindFlags)
+Texture::SharedPtr Texture::create3D(uint32_t width, uint32_t height, uint32_t depth, Falcor::ResourceFormat format, uint32_t, const void*, uint32_t bindFlags)
 {
     auto tex     = std::make_shared<Texture>();
     tex->m_Width = width;
@@ -651,7 +657,7 @@ Buffer::SharedPtr Buffer::createStructured(size_t structSize, size_t elementCoun
     return CreateFalcorBuffer(size, static_cast<Diligent::BIND_FLAGS>(bindFlags), cpuAccess, pInitData, true, static_cast<uint32_t>(structSize));
 }
 
-Buffer::SharedPtr Buffer::createTyped(TEXTURE_FORMAT format, size_t sizeInBytes, Resource::BindFlags bindFlags)
+Buffer::SharedPtr Buffer::createTyped(Falcor::ResourceFormat format, size_t sizeInBytes, Resource::BindFlags bindFlags)
 {
     (void)format;
     return CreateFalcorBuffer(sizeInBytes, static_cast<Diligent::BIND_FLAGS>(bindFlags), CpuAccess::None, nullptr, false, 0);
@@ -724,33 +730,47 @@ Buffer::SharedPtr Buffer::getUAVCounter()
 }
 
 
-Fbo::Desc& Fbo::Desc::setColorTarget(uint32_t slot, TEXTURE_FORMAT format)
+Fbo::Desc& Fbo::Desc::setColorTarget(uint32_t slot, Falcor::ResourceFormat format)
+{
+    if (slot < m_ColorFormats.size())
+        m_ColorFormats[slot] = ToDiligentFormat(format);
+    return *this;
+}
+
+Fbo::Desc& Fbo::Desc::setColorTarget(uint32_t slot, Diligent::TEXTURE_FORMAT format)
 {
     if (slot < m_ColorFormats.size())
         m_ColorFormats[slot] = format;
     return *this;
 }
 
-Fbo::Desc& Fbo::Desc::setColorTarget(uint32_t slot, TEXTURE_FORMAT format, bool)
+Fbo::Desc& Fbo::Desc::setColorTarget(uint32_t slot, Falcor::ResourceFormat format, bool)
 {
     return setColorTarget(slot, format);
 }
 
-Fbo::Desc& Fbo::Desc::setDepthStencilTarget(TEXTURE_FORMAT format)
+Fbo::Desc& Fbo::Desc::setDepthStencilTarget(Falcor::ResourceFormat falcor_format)
+{
+    m_DepthFormat = ToDiligentFormat(falcor_format);
+    m_HasDepth    = true;
+    return *this;
+}
+
+Fbo::Desc& Fbo::Desc::setDepthStencilTarget(Diligent::TEXTURE_FORMAT format)
 {
     m_DepthFormat = format;
     m_HasDepth    = true;
     return *this;
 }
 
-TEXTURE_FORMAT Fbo::Desc::GetColorFormat(uint32_t slot) const
+Falcor::ResourceFormat Fbo::Desc::GetColorFormat(uint32_t slot) const
 {
-    return slot < m_ColorFormats.size() ? m_ColorFormats[slot] : TEX_FORMAT_UNKNOWN;
+    return FromDiligentFormat(slot < m_ColorFormats.size() ? m_ColorFormats[slot] : TEX_FORMAT_UNKNOWN);
 }
 
-TEXTURE_FORMAT Fbo::Desc::GetDepthFormat() const
+Falcor::ResourceFormat Fbo::Desc::GetDepthFormat() const
 {
-    return m_DepthFormat;
+    return  FromDiligentFormat(m_DepthFormat);
 }
 
 Fbo::SharedPtr Fbo::create2D(uint32_t width, uint32_t height, const Desc& desc)
@@ -760,7 +780,7 @@ Fbo::SharedPtr Fbo::create2D(uint32_t width, uint32_t height, const Desc& desc)
     fbo->m_Height = height;
     for (uint32_t slot = 0; slot < fbo->m_ColorTextures.size(); ++slot)
     {
-        const TEXTURE_FORMAT fmt = desc.GetColorFormat(slot);
+        const TEXTURE_FORMAT fmt = ToDiligentFormat(desc.GetColorFormat(slot));
         if (fmt != TEX_FORMAT_UNKNOWN)
         {
             fbo->m_ColorTextures[slot] = Texture::create2D(
@@ -836,6 +856,11 @@ Sampler::Desc& Sampler::Desc::setMaxAnisotropy(uint32_t aniso)
     return *this;
 }
 
+Sampler::Desc& Sampler::Desc::setComparisonMode(ComparisonMode mode)
+{
+    spdlog::error("Sampler::Desc::setComparisonMode is not implemented");
+}
+
 Sampler::SharedPtr Sampler::create(const Desc& desc)
 {
     auto sampler = std::make_shared<Sampler>();
@@ -890,6 +915,11 @@ BlendState::Desc& BlendState::Desc::setRenderTargetWriteMask(uint32_t rt, bool r
             (alpha ? Diligent::COLOR_MASK_ALPHA : 0));
     }
     return *this;
+}
+
+BlendState::Desc& BlendState::Desc::setAlphaToCoverage(bool enabled)
+{
+    spdlog::error("BlendState::Desc::setAlphaToCoverage is not implemented");
 }
 
 BlendState::SharedPtr BlendState::create(const Desc& desc)
@@ -986,6 +1016,13 @@ Program::DefineList& Program::DefineList::add(const std::string& name, const std
     return *this;
 }
 
+Program::DefineList& Program::DefineList::remove(const std::string& name)
+{
+    m_Defines.emplace_back(name, value);
+    return *this;
+}
+
+
 ComputeProgram::SharedPtr ComputeProgram::createFromFile(const std::filesystem::path& path, const std::string& csEntry, const Program::DefineList& defines)
 {
     auto program    = std::make_shared<ComputeProgram>();
@@ -1044,7 +1081,7 @@ GraphicsProgram::SharedPtr GraphicsProgram::createFromFile(const std::filesystem
 
 VertexLayout::SharedPtr VertexLayout::create() { return std::make_shared<VertexLayout>(); }
 
-Vao::SharedPtr Vao::create(Topology, const VertexLayout::SharedPtr&, const BufferVec&, const Buffer::SharedPtr&, TEXTURE_FORMAT)
+Vao::SharedPtr Vao::create(Topology, const VertexLayout::SharedPtr&, const BufferVec&, const Buffer::SharedPtr&, Falcor::ResourceFormat indexFormat)
 {
     return std::make_shared<Vao>();
 }
@@ -1243,6 +1280,14 @@ void TextRenderer::render(RenderContext* pContext, const std::string& text, cons
 
 // --- Gui ---------------------------------------------------------------------
 
+Gui::Window::Window(Gui*, const char* name, bool show_window, float2 size, float2 pos, WindowFlags)
+{
+    m_Open = show_window;
+    ImGui::SetNextWindowSize(ImVec2(size.x, size.y), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(pos.x, pos.y), ImGuiCond_Always);
+    m_Open = ImGui::Begin(name, &m_Open, ImGuiWindowFlags_NoDecoration);
+}
+
 Gui::Window::Window(Gui*, const char* name, float2 size, float2 pos, WindowFlags)
 {
     ImGui::SetNextWindowSize(ImVec2(size.x, size.y), ImGuiCond_Always);
@@ -1290,6 +1335,23 @@ ImFont* Gui::getFont(const char* name)
 void Gui::addFont(const char*, const std::string&, float)
 {
     // TODO: load fonts through ImGuiImplDiligent / SampleBase.
+}
+
+#include "terrafector.h"
+
+EarthworksWrapper::EarthworksWrapper() {
+    logFile                         = fopen("log.txt", "w");
+    terrafectorSystem::logStartTime = high_resolution_clock::now();
+    terrafectorSystem::_logfile     = logFile;
+
+    JLogger::instancePtr()->open("log.cpp");
+}
+
+EarthworksWrapper::~EarthworksWrapper() {
+    if (logFile) {
+        JLogger::instancePtr()->close();
+        fclose(logFile);
+    }
 }
 
 } // namespace Falcor

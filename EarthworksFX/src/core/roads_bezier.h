@@ -1,6 +1,6 @@
 #pragma once
 
-#include "FalcorCompat.hpp"
+#include "Falcor.h"
 #include "terrafector.h"
 using namespace Falcor;
 

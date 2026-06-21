@@ -1,65 +1,18 @@
 
 #include "groundcover_defines.hlsli"
+#include "groundcover_functions.hlsli"
 #include "terrainDefines.hlsli"
 #include "terrainFunctions.hlsli"
 #include "../PBR.hlsli"
 #include "gpuLights_functions.hlsli"
-
+//#include "../render_Common.hlsli"
 
 Texture2DArray gNormArray;
 Texture2DArray gAlbedoArray;
 Texture2DArray gPBRArray;
 Texture2D gGISAlbedo;
-Texture2D gHalfBuffer;
+//Texture2D gPreviousFrame;
 
-
-
-
-float4 cubic(float v)
-{
-    float4 n = float4(1.0, 2.0, 3.0, 4.0) - v;
-    float4 s = n * n * n;
-    float x = s.x;
-    float y = s.y - 4.0 * s.x;
-    float z = s.z - 4.0 * s.y + 6.0 * s.x;
-    float w = 6.0 - x - y - z;
-    return float4(x, y, z, w) * (1.0 / 6.0);
-}
-
-float4 textureBicubic(float3 texCoords)
-{
-    float4 texSize;
-    gAtmosphereInscatter.GetDimensions(0, texSize.x, texSize.y, texSize.z, texSize.w);
-    float2 invTexSize = 1.0 / texSize.xy;
-   
-    texCoords.xy = texCoords.xy * texSize.xy - 0.5;
-
-   
-    float2 fxy = frac(texCoords.xy);
-    texCoords.xy -= fxy;
-
-    float4 xcubic = cubic(fxy.x);
-    float4 ycubic = cubic(fxy.y);
-
-    float4 c = texCoords.xxyy + float2(-0.5, +1.5).xyxy;
-    
-    float4 s = float4(xcubic.xz + xcubic.yw, ycubic.xz + ycubic.yw);
-    float4 offset = c + float4(xcubic.yw, ycubic.yw) / s;
-    
-    offset *= invTexSize.xxyy;
-
-    
-    float4 sample0 = gAtmosphereInscatter.Sample(gSmpLinearClamp, float3(offset.xz, texCoords.z));
-    float4 sample1 = gAtmosphereInscatter.Sample(gSmpLinearClamp, float3(offset.yz, texCoords.z));
-    float4 sample2 = gAtmosphereInscatter.Sample(gSmpLinearClamp, float3(offset.xw, texCoords.z));
-    float4 sample3 = gAtmosphereInscatter.Sample(gSmpLinearClamp, float3(offset.yw, texCoords.z));
-
-
-    float sx = s.x / (s.x + s.y);
-    float sy = s.z / (s.z + s.w);
-
-    return lerp(lerp(sample3, sample2, sx), lerp(sample1, sample0, sx), sy);
-}
 
 
 
@@ -80,16 +33,7 @@ cbuffer PerFrameCB
     bool gConstColor;
     float3 gAmbient;
 	
-	// volume fog parameters
-	float2 	screenSize;
-	float 	fog_far_Start;
-	float	fog_far_log_F;			//(k-1 / k) / log(far)		// FIXME might be k-2 to make up for half pixel offsets
-	
-	float 	fog_far_one_over_k;		// 1.0 / k
-	float 	fog_near_Start;
-	float	fog_near_log_F;			//(k-1 / k) / log(far)		// FIXME might be k-2 to make up for half pixel offsets
-	float 	fog_near_one_over_k;		// 1.0 / k
-	
+
 	float gisOverlayStrength;
 	int showGIS;
 	float redStrength;
@@ -116,14 +60,6 @@ This does allow for double indirection to save even more space and pack it all t
 
 
 
-float4 sunLight(float3 posKm)
-{
-    float2 sunUV;
-    float dX = dot(posKm.xz, normalize(sunDirection.xz));
-    sunUV.x = saturate(0.5 - (dX / 1600.0f));
-    sunUV.y = 1 - saturate(posKm.y / 100.0f);
-    return SunInAtmosphere.SampleLevel(gSmpLinearClamp, sunUV, 0) * 0.07957747154594766788444188168626;
-}
 
 
 StructuredBuffer<Terrain_vertex> VB;
@@ -137,14 +73,14 @@ terrainVSOut vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
 {
     terrainVSOut output;
 
-    uint tileIDX = tileLookup[ iId >> 6 ].tile &0xffff;
-	uint numQuad = tileLookup[ iId >> 6 ].tile >>16;	
-	uint blockID = (iId & 0x3f);
-	
-	
+    uint tileIDX = lu_Tile(tileLookup[iId >> 6]);
+    uint numQuad = lu_Used(tileLookup[iId >> 6]);
+    uint tileStart = lu_Index(tileLookup[iId >> 6], numVertPerTile, 64 * 3);
+	uint blockID = (iId & 0x3f);    // bottom 64
+
 	if (blockID < numQuad)
 	{
-		uint newID = tileLookup[ iId >> 6 ].offset + (blockID * 3) + vId;
+        uint newID = tileStart + (blockID * 3) + vId;
 		Terrain_vertex V = VB[ newID ];
 
         float x = (V.idx & 0x7f) * 2;
@@ -192,6 +128,7 @@ terrainVSOut vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
         //output.pos.x += 1000.4;// = sign(output.pos.x) * pow(output.pos.x, 2.0);
 		output.texCoords = float3( x / tile_numPixels, y / tile_numPixels, tileIDX);
 	}
+    
 	else
 	{
 		output.pos = float4(0, 0, 0, 0);		// should be enough to kill the triangle
@@ -262,7 +199,7 @@ void prepareMaterialLayerTerrain( in SH_Attributes Attr, inout layer_material MA
 
 float4 psMain(terrainVSOut vIn) : SV_TARGET0
 {
-
+    
     
 	SH_Attributes 	Attr;
 	eval_mat		Values;
@@ -302,7 +239,7 @@ float4 psMain(terrainVSOut vIn) : SV_TARGET0
     Attr.T = cross(Attr.B, Attr.N);
 	
 	Attr.uv = vIn.texCoords.xy;
-    Attr.diffuse = 0.2;//    gAlbedoArray.SampleLevel(gSmpAniso, vIn.texCoords, 0).rgb;
+    Attr.diffuse = 0.0;//    gAlbedoArray.SampleLevel(gSmpAniso, vIn.texCoords, 0).rgb;
 	
 	float3 PBR = gPBRArray.SampleLevel(gSmpAniso, vIn.texCoords, 0).rgb;
 	Attr.alpha = 1.0;
@@ -312,7 +249,7 @@ float4 psMain(terrainVSOut vIn) : SV_TARGET0
 	Attr.mesh_Cavity = 1;
 	Attr.CURVATURE = 0;
 	
-    mat.roughness = saturate(PBR.g);
+    mat.roughness = 0.001;// saturate(PBR.g);
 	
 	prepareMaterialLayerTerrain( Attr, mat );
 	
@@ -349,17 +286,95 @@ float4 psMain(terrainVSOut vIn) : SV_TARGET0
 	//lightIBL( Attr, mat, diffuse, specular );						// 	170us
     float S = pow(shadow(vIn.worldPos, 0), 0.25);
     //S *= S;
-    float4 sunColor = sunLight(vIn.worldPos * 0.001);
-    
+    float4 sunColor = sunLight(vIn.worldPos * 0.001);   // This ome is quote esxpensive but hardish to avoid
+
+    // also very expensive
     lightLayer(Attr, mat, sunDirection, sunColor.rgb * S, diffuse, specular); //	40us  - redelik vinnig maar tel op oor ligte - if() is worth it
 	//diffuse += float3(0.03, 0.04, 0.05) * 0.3;
 
-	diffuse *= (1 - mat.fresnel);
+    diffuse *= (1 - mat.fresnel);
 	specular *= mat.fresnel;
 
-    diffuse += float3(0.01, 0.02, 0.04) * 1.32 * mat.diff.rgb;
-	float3 colour = diffuse + specular * 0.1;
-	
+    //diffuse += float3(0.01, 0.02, 0.04) * 1.32 * mat.diff.rgb;    // FUCK ambient
+	float3 colour = diffuse + specular * 1.0;
+
+
+    // Completely custom
+    // -------------------------------------------------------------------------------------------------------------
+    float3 albedo = mat.diff.rgb;
+    float3 h = normalize(-normalize(sunDirection) - normalize(vIn.eye));
+    float3 n = gNormArray.Sample(gSmpAniso, vIn.texCoords).rgb * 2 - 1;
+    n.y = sqrt(1 - (n.x * n.x) - (n.z * n.z));
+    
+    float3 n_soft = normalize(n - sunDirection * 0.0001302);
+    float ndoth = pow(saturate(dot(n, h)), 2);
+    //colour = sunColor.rgb * saturate(ndoth);
+    colour = S * sunColor.rgb * saturate(dot(n_soft, -sunDirection));// *mat.diff.rgb;
+
+    float TRANS = ndoth;
+    float gray = dot(albedo, float3(0.299, 0.587, 0.114));
+    float3 T = albedo * albedo / gray * 0.5;
+    
+
+    colour += float3(0.3, 0.5, 0.9) * 0.05;
+
+    colour*= albedo;
+
+
+    float3 R = reflect(-normalize(vIn.eye), n);
+    float transClip = saturate((albedo.g - albedo.r) * 30) * 1;
+    colour += transClip * S * sunColor.rgb * pow(saturate(dot(R, sunDirection)), 4) * saturate(dot(n_soft, -sunDirection)) * T;
+
+
+    // TRY 2
+    // ------------------------------------------------------------------------------------------------------------------
+    {
+        float softness = 0.2;
+        float3 n = gNormArray.Sample(gSmpAniso, vIn.texCoords).rgb * 2 - 1;
+        float EOS = dot(normalize(vIn.eye), normalize(sunDirection));
+        float EOSnorm = EOS * 0.5 + 0.5;
+        float NOS = dot(n, -sunDirection);
+        float EON = dot(n, -normalize(vIn.eye));
+
+        //float sun = pow(EOSnorm, 1.3);
+        //float trans = pow(1 - EOSnorm, 1.3);
+        //float shade = 1 - sun - trans;
+
+        float shade = 0.25 + 0.75 * pow((1.f - saturate(NOS)), 2.5f);
+        shade *= 1.f - 0.25f * pow(saturate(EOS), 100.f);
+        shade *= 1.f - 0.85f * pow(1.f - EON, 5.f) ;
+
+        //float S2 
+
+        float split = EOS * 0.5f + 0.5f;
+        float sun = (1 - shade) * split * 0.8;
+        float trans = (1 - shade) * (1 - split) * 0.8;
+
+        float sunlightSpread = lerp(1, NOS, pow(1 - abs(EOS), 0.2));
+        colour = sunlightSpread;
+
+        float transClip = saturate((albedo.g - albedo.r) * 10) * 1;
+
+        //colour.r = sun * sunlightSpread;
+        //colour.g = trans * sunlightSpread * transClip;
+        //colour.b = shade;
+        //S = 1;
+
+        colour = S * sunColor.rgb * sun;// *sunlightSpread;
+        colour += float3(0.3, 0.5, 0.9) * 0.03;
+        colour *= albedo;
+
+        float gray = dot(albedo, float3(0.299, 0.587, 0.114));
+        float3 T = albedo * albedo / gray;
+        colour += S * sunColor.rgb * T * trans;
+
+        float3 colour_hard = (saturate(NOS) * S * sunColor.rgb + (float3(0.3, 0.5, 0.9) * 0.03)) * albedo;
+        colour = lerp(colour, colour_hard, 1 - transClip);
+    }
+
+
+
+    //colour = ndoth * 0.1;
 	/*
     float edgeBlend = smoothstep(0, 0.01, -dot(Attr.E, Attr.N));
 
@@ -368,9 +383,9 @@ float4 psMain(terrainVSOut vIn) : SV_TARGET0
         //colour = float3(edgeBlend, 0, 0);
         
         float2 buffSize;
-        gHalfBuffer.GetDimensions(buffSize.x, buffSize.y);
+        gPreviousFrame.GetDimensions(buffSize.x, buffSize.y);
         float2 uv = vIn.pos.xy / (buffSize * 2.f);
-        float3 prev = saturate(gHalfBuffer.Sample(gSmpAniso, uv).rgb);
+        float3 prev = saturate(gPreviousFrame.Sample(gSmpAniso, uv).rgb);
         colour = lerp(colour, prev, edgeBlend);
 
     }
@@ -380,13 +395,15 @@ float4 psMain(terrainVSOut vIn) : SV_TARGET0
     //colour.rgb = mat.diff.rgb * light;
 
     // MARK the steep slopes
+    
     float slopeMark = saturate((1.0 - Attr.N_mesh.y - redOffset) * redScale);
 
     if (slopeMark > 0.01)
     {
         colour.r = lerp(colour.r, slopeMark, redStrength);
     }
-    
+
+    // also plenty expensive, can we do this per vertex as an option?
 	// Now for my atmospeher code --------------------------------------------------------------------------------------------------------
 	{
 

@@ -39,18 +39,8 @@ struct VSOut
 
 
 
-float4 cubic(float v)
-{
-    float4 n = float4(1.0, 2.0, 3.0, 4.0) - v;
-    float4 s = n * n * n;
-    float x = s.x;
-    float y = s.y - 4.0 * s.x;
-    float z = s.z - 4.0 * s.y + 6.0 * s.x;
-    float w = 6.0 - x - y - z;
-    return float4(x, y, z, w) * (1.0 / 6.0);
-}
 
-float4 textureBicubic(float2 texCoords)
+float4 textureBicubic_2D(float2 texCoords)
 {
     float4 texSize;
     gAtmosphereInscatter_Sky.GetDimensions(texSize.x, texSize.y);
@@ -115,7 +105,7 @@ VSOut vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
 
 float4 psMain(VSOut vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
 {
-
+    
 
     float3 dir = normalize(vOut.world.xyz);
 
@@ -161,7 +151,7 @@ float4 psMain(VSOut vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
         float2 atmosphereUV;
         atmosphereUV = vOut.pos.xy / texSize.xy;
     //clip(-1);
-        float4 inscatter = textureBicubic(atmosphereUV);
+        float4 inscatter = textureBicubic_2D(atmosphereUV);
         inscatter.a = 1;
         
 
@@ -175,13 +165,13 @@ float4 psMain(VSOut vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
 
         texSize.x = 2550;
         texSize.y = 1440;
-        texSize.x = 4096;
-        texSize.y = 2160;
+        //texSize.x = 4096;
+        //texSize.y = 2160;
     
         float2 atmosphereUV;
         atmosphereUV = vOut.pos.xy / texSize.xy;
     //clip(-1);
-        float4 inscatter = textureBicubic(atmosphereUV);
+        float4 inscatter = textureBicubic_2D(atmosphereUV);
         inscatter.a = 1;
         
 

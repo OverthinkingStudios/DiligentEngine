@@ -1,5 +1,5 @@
 #pragma once
-#include "FalcorCompat.hpp"
+#include "Falcor.h"
 #include "computeShader.h"
 using namespace Falcor;
 
@@ -88,7 +88,7 @@ struct FogVolumeParameters {
     int m_x;
     int m_y;
     int m_z;
-    TEXTURE_FORMAT format;
+    Falcor::ResourceFormat format;
     bool m_bRGBOut;
     bool bParabolic;
     float _near = 50.f;

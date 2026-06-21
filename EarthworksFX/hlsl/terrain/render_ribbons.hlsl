@@ -84,7 +84,7 @@ SamplerState gSampler;
 SamplerState gSamplerClamp;
 Texture2D gAlbedo : register(t0);
 TextureCube gEnv : register(t1);
-Texture2D gHalfBuffer : register(t2);
+Texture2D gPreviousFrame : register(t2);
 
 struct ribbonTextures
 {
@@ -578,9 +578,9 @@ float4 psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     if (alphaC < 0.9)
     {
         float2 buffSize;
-        gHalfBuffer.GetDimensions(buffSize.x, buffSize.y);
+        gPreviousFrame.GetDimensions(buffSize.x, buffSize.y);
         float2 uv = vOut.pos.xy / (buffSize * 2.f);
-        float3 prev = saturate(gHalfBuffer.Sample(gSamplerClamp, uv).rgb);
+        float3 prev = saturate(gPreviousFrame.Sample(gSamplerClamp, uv).rgb);
         cSolid = lerp(prev, cSolid, alphaC);
     }
     return float4(cSolid, 1);
@@ -678,10 +678,10 @@ float4 psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     {
         float2 uv = vOut.pos.xy / float2(2560, 1440);
         //uv.y = 1 - uv.y;
-        float3 prev = gHalfBuffer.Sample(gSamplerClamp, uv).rgb;
+        float3 prev = gPreviousFrame.Sample(gSamplerClamp, uv).rgb;
         //int3 sample = vOut.pos.xyz / 2;
         //sample.z = 0;
-        //float3 prev = gHalfBuffer.Load(sample).rgb;
+        //float3 prev = gPreviousFrame.Load(sample).rgb;
         //color = lerp(prev, color, alpha);
     }
     

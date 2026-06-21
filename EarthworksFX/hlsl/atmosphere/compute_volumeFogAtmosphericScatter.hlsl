@@ -99,7 +99,10 @@ float shadow(float3 pos, float step)
 	// start at sliceZero and continue up to the cloudbase, or slice depth-2  ------------------------------------
 	uint SLICE = 0;
 	float R = EarthR + 0.1;
-	while ((SLICE < numSlices) && R < (EarthR + cloudBase_km) && (R > EarthR))
+	//while ((SLICE < numSlices) && R < (EarthR + cloudBase_km) && (R > EarthR))
+    while ((SLICE < numSlices)
+            && (R > EarthR - 100)
+            && (R < (EarthR + cloudBase_km) || direction.y < 0) )   // as ons afkyk hou net aangaan
     {
         float step = depth * sliceStep;
         float3 pos = eye_position + direction * (depth + (step / 2));

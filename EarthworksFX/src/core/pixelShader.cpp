@@ -2,14 +2,20 @@
 
 #include "pixelShader.h"
 
+void pixelShader::remove(std::string _name) { 
+	defineList.remove(_name); 
+}
 
+void pixelShader::add(std::string _name, std::string _val) { 
+	defineList.add(_name, _val);
+}
 
 void pixelShader::load(const std::filesystem::path& _path, const std::string _vsEntry, const std::string _psEntry, Vao::Topology _topology, const std::string _gsEntry)
 {
     if (_gsEntry.size() > 0) {
         GraphicsProgram::Desc d(_path);
         d.vsEntry(_vsEntry).psEntry(_psEntry).gsEntry(_gsEntry);
-        d.setShaderModel("6_6");
+        d.setShaderModel("6_5");
         program = GraphicsProgram::create(d, defineList);
     }
     else {
@@ -35,7 +41,7 @@ void pixelShader::load(const std::filesystem::path& _path, const std::string _vs
 		ibData[i * 6 + 5] = 2 + i * 2;
 	}
 	Buffer::SharedPtr pIB = Buffer::create(128 * 6 * 2, Buffer::BindFlags::Index, Buffer::CpuAccess::Write, ibData.data());
-    state->setVao(Vao::create(_topology, pLayout, bufferVec, pIB, Diligent::TEX_FORMAT_R16_UINT));
+	state->setVao(Vao::create(_topology, pLayout, bufferVec, pIB, ResourceFormat::R16Uint));
 }
 
 

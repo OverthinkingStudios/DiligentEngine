@@ -31,8 +31,8 @@ file(GLOB EFX_HLSL CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/hlsl/**/*.inc")
 
 add_library(EarthworksFX STATIC
-    src/compat/FalcorCompat.cpp
-    interface/FalcorCompat.hpp
+    src/compat/Falcor.cpp
+    interface/Falcor.h
     ${EFX_CORE_SOURCES}
     ${EFX_HLSL})
 

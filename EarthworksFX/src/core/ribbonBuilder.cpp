@@ -3,12 +3,13 @@
 
 
 
-float ribbonVertex::objectScale = 0.002f;  //0.002 for trees  // 32meter block 2mm presision
-float ribbonVertex::radiusScale = 5.0f;//  so biggest radius now objectScale / 2.0f;
+float ribbonVertex::objectScale = 0.0002f;  //0.002 for trees  // 32meter block 2mm presision
+float ribbonVertex::radiusScale = 0.0100f;//  so biggest radius now objectScale / 2.0f;
 float ribbonVertex::O = 16384.0f * ribbonVertex::objectScale * 0.5f;
 float3 ribbonVertex::objectOffset = float3(O, O * 0.5f, O);
 uint ribbonVertex::S_root = 0;
 
+float ribbonBuilder::V_MAX = 127.f; //Maximum V before overflow
 
 
 ribbonVertex8 ribbonVertex::pack()
@@ -112,6 +113,7 @@ void ribbonBuilder::clearStats(int _max)
 
 void ribbonBuilder::clear()
 {
+    fprintf(terrafectorSystem::_logfile, "\n\nribbonBuilder::clear()\n");
     packed.clear();
     ribbons.clear();
 }
@@ -121,6 +123,20 @@ void ribbonBuilder::clear()
 
 void    ribbonBuilder::startRibbon(bool _cameraFacing, uint pv[4])
 {
+    //fprintf(terrafectorSystem::_logfile, "\nribbonBuilder::startRibbon()\n");
+    pushStart = false;       // prepare for a new ribbon to start
+    vertex.faceCamera = _cameraFacing;
+    vertex.S_root = 0;
+
+    vertex.pivots[0] = pv[0];
+    vertex.pivots[1] = pv[1];
+    vertex.pivots[2] = pv[2];
+    vertex.pivots[3] = pv[3];
+}
+
+void    ribbonBuilder::startRibbon(bool _cameraFacing, std::array<uint, 4> pv)
+{
+    //fprintf(terrafectorSystem::_logfile, "\nribbonBuilder::startRibbon()\n");
     pushStart = false;       // prepare for a new ribbon to start
     vertex.faceCamera = _cameraFacing;
     vertex.S_root = 0;
@@ -178,6 +194,7 @@ void ribbonBuilder::set(glm::mat4 _node, float _radius, int _material, float2 _u
     }
 
     vertex.startBit = pushStart;    // badly named its teh inverse, but after the first bit we clear iyt for teh rest of teh ribbon
+    pushStart = true;
 
     uint idx = ribbons.size();
     if ((idx > 0) && (idx % VEG_BLOCK_SIZE == 0) && vertex.startBit == true)
@@ -197,12 +214,15 @@ void ribbonBuilder::set(glm::mat4 _node, float _radius, int _material, float2 _u
             vertex.S_root = vertex.leafRoot + 1;
         }
 
+        //fprintf(terrafectorSystem::_logfile, "repeat\n");
+        //fprintf(terrafectorSystem::_logfile, "V  (%2.2f, %2.2f, %2.2f)m  r - %2.3fm %d\n", R.position.x, R.position.y, R.position.z, R.radius, R.startBit);
         ribbons.push_back(R);
     }
 
+    //fprintf(terrafectorSystem::_logfile, "V  (%2.2f, %2.2f, %2.2f)m  r - %2.3fm %d\n", vertex.position.x, vertex.position.y, vertex.position.z, vertex.radius, vertex.startBit);
     ribbons.push_back(vertex);
 
-    pushStart = true;
+    
 }
 
 
@@ -295,10 +315,15 @@ void ribbonBuilder::lightBasic(float2 extents, float plantDepth, float yOffset)
 void ribbonBuilder::lightBranch(uint from, uint to, float3 root, float3 tip, float plantDepth, float yOffset, float rootAO)
 {
     float3 middle = (root * 0.6667f) + (tip * 0.3333f);
+    float w = glm::length(tip - root) * 0.5;    // just 1/3 width
     // just cheat and use half lenghts for now
     for (int i = from; i < to; i++)
     {
         auto& R = ribbons[i];
+        float3 Ldir = R.position - middle;
+        R.lightCone = float4(glm::normalize(Ldir), 0);    // 0 is just 180 degrees so wide, fixme tighter at ythe bottom
+        //float depthMeters = __max(0, glm::length(edge) - glm::length(Ldir));
+        //R.lightDepth = depthMeters / plantDepth;
     }
 }
 
@@ -307,12 +332,20 @@ void ribbonBuilder::lightBranch(uint from, uint to, float3 root, float3 tip, flo
 
 void ribbonBuilder::finalizeAndFillLastBlock()
 {
-    int last = ribbons.size() % VEG_BLOCK_SIZE;
-    int unusedVerts = 0;
-    if (last > 0) unusedVerts = VEG_BLOCK_SIZE - last;
-    for (int i = 0; i < unusedVerts; i++)
+    if (ribbons.size() > 0)
     {
-        packed.push_back(packed.front());
+        ribbonVertex LAST = ribbons.back();
+        LAST.startBit = false;
+        LAST.radius = 0;
+        ribbonVertex8 pck_last = LAST.pack();
+
+        int last = ribbons.size() % VEG_BLOCK_SIZE;
+        int unusedVerts = 0;
+        if (last > 0) unusedVerts = VEG_BLOCK_SIZE - last;
+        for (int i = 0; i < unusedVerts; i++)
+        {
+            packed.push_back(pck_last);
+        }
     }
 }
 
@@ -321,10 +354,12 @@ void ribbonBuilder::finalizeAndFillLastBlock()
 
 void ribbonBuilder::pack()
 {
+    //fprintf(terrafectorSystem::_logfile, "\n\npack()\n");
     for (auto& R : ribbons)
     {
         ribbonVertex8 pck = R.pack();
         packed.push_back(pck);
+        //fprintf(terrafectorSystem::_logfile, "V  (%2.2f, %2.2f, %2.2f)m  r - %2.3fm %d\n", R.position.x, R.position.y, R.position.z, R.radius, R.startBit);
     }
 }
 
@@ -342,18 +377,27 @@ float2 ribbonBuilder::calculate_extents(glm::mat4 view)
     }
 
     int cnt[8] = { 0, 0, 0, 0, 0, 0, 0, 0};
-    float step = extents.y / 9.f;
+    float step = extents.y / 8.f;
     for (auto& R : ribbons)
     {
-        uint bucket = (uint)glm::clamp(glm::dot(R.position, (float3)view[1]) / step, 0.f, 8.f);
+        uint bucket = (uint)glm::clamp(glm::dot(R.position, (float3)view[1]) / step, 0.f, 7.99f);
         buckets_8[bucket] = __max(glm::dot(R.position, (float3)view[0]), buckets_8[bucket]);
         cnt[bucket]++;
     }
-
+    // FIXME this is still vbersimplistic and wrong
+    /*
+    dU[0] = __max(buckets_8[0], buckets_8[1]);
+    dU[1] = __max(buckets_8[1], buckets_8[2]);
+    dU[1] = __max(dU[1], buckets_8[3]);
+    dU[2] = __max(buckets_8[4], buckets_8[5]);
+    dU[2] = __max(dU[2], buckets_8[6]);
+    dU[3] = __max(buckets_8[7], buckets_8[7]);
+    */
     dU[0] = __max(buckets_8[0], buckets_8[1]);
     dU[1] = __max(buckets_8[2], buckets_8[3]);
     dU[2] = __max(buckets_8[4], buckets_8[5]);
-    dU[3] = __max(buckets_8[6], buckets_8[6]);
+//    dU[2] = __max(dU[2], buckets_8[6]);
+    dU[3] = __max(buckets_8[7], buckets_8[7]);
     dU /= extents.x;
     dU += 0.05f;
     glm::saturate(dU);

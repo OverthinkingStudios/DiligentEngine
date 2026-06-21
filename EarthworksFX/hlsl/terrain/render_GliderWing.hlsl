@@ -18,16 +18,6 @@ cbuffer PerFrameCB
     float3 eye;
     float padd1;
 	
-	// volume fog parameters
-	float2 	screenSize;
-	float 	fog_far_Start;
-	float	fog_far_log_F;			//(k-1 / k) / log(far)		// FIXME might be k-2 to make up for half pixel offsets
-	
-	float 	fog_far_one_over_k;		// 1.0 / k
-	float 	fog_near_Start;
-	float	fog_near_log_F;			//(k-1 / k) / log(far)		// FIXME might be k-2 to make up for half pixel offsets
-	float 	fog_near_one_over_k;		// 1.0 / k
-	
 };
 
 
@@ -73,14 +63,6 @@ gliderwingVSOut vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
 }
 
 
-float4 sunLight(float3 posKm)
-{
-    float2 sunUV;
-    float dX = dot(posKm.xz, normalize(sunDirection.xz));
-    sunUV.x = saturate(0.5 - (dX / 1600.0f));
-    sunUV.y = 1 - saturate(posKm.y / 100.0f);
-    return SunInAtmosphere.SampleLevel(gSmpLinearClamp, sunUV, 0) * 0.07957747154594766788444188168626;
-}
 
 
 float4 psMain(gliderwingVSOut vIn) : SV_TARGET0

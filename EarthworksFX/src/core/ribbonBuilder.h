@@ -1,5 +1,5 @@
 #pragma once
-#include "FalcorCompat.hpp"
+#include "Falcor.h"
 
 #include"terrafector.h"                             //??? why is this needed here
 #include"hlsl/terrain/vegetation_defines.hlsli"
@@ -58,6 +58,7 @@ struct ribbonBuilder
     void clear();
 
     void startRibbon(bool _cameraFacing, uint pv[4]);
+    void startRibbon(bool _cameraFacing, std::array<uint, 4> pv);
     void set(glm::mat4 _node, float _radius, int _material, float2 _uv, float _albedo, float _translucency, bool _clearLeafRoot = true,
         float _stiff = 0.5f, float _freq = 0.1f, float _index = 0.f, bool _diamond = false);
     uint pushPivot(uint _guid, _plant_anim_pivot _pivot);
@@ -68,8 +69,8 @@ struct ribbonBuilder
     void lightBasic(float2 extents, float plantDepth, float yOffset);
     void lightBranch(uint from, uint to, float3 root, float3 tip, float plantDepth, float yOffset, float rootAO);
     
-    uint numPacked() { return (uint)packed.size(); }
-    uint numVerts() { return (uint)ribbons.size(); }
+    uint numPacked() { return packed.size(); }
+    uint numVerts() { return ribbons.size(); }
 
     void finalizeAndFillLastBlock();
     void pack();
@@ -84,9 +85,10 @@ struct ribbonBuilder
     ribbonVertex vertex;        // used for packing since some things accumulate
     std::vector<ribbonVertex>        ribbons;        // can we get this non static
     std::vector<ribbonVertex8>       packed;
-    
 
-    int numPivots() { return (int)pivotPoints.size(); }
+    static float V_MAX;
+
+    int numPivots() { return pivotPoints.size(); }
     std::vector<_plant_anim_pivot>   pivotPoints;
     std::map<int, int> pivotMap;
 

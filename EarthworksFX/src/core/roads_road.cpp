@@ -15,18 +15,21 @@
 
 //#pragma optimize("", off)
 
-
+glm::vec3 lerp(const glm::vec3& a, const glm::vec3& b, float t)
+{
+    return glm::mix(a, b, t);
+}
 
 void cubic_Casteljau_Full(float t, glm::vec3 P0, glm::vec3 P1, glm::vec3 P2, glm::vec3 P3, glm::vec3& pos, glm::vec3& vel, glm::vec3& acc)
 {
-    glm::vec3 pA = glm::lerp(P0, P1, t);
-    glm::vec3 pB = glm::lerp(P1, P2, t);
-    glm::vec3 pC = glm::lerp(P2, P3, t);
+    glm::vec3 pA = lerp(P0, P1, t);
+    glm::vec3 pB = lerp(P1, P2, t);
+    glm::vec3 pC = lerp(P2, P3, t);
 
-    glm::vec3 pD = glm::lerp(pA, pB, t);
-    glm::vec3 pE = glm::lerp(pB, pC, t);
+    glm::vec3 pD = lerp(pA, pB, t);
+    glm::vec3 pE = lerp(pB, pC, t);
 
-    pos = glm::lerp(pD, pE, t);
+    pos = lerp(pD, pE, t);
     vel = (pE - pD) * 3.0f;
 
     glm::vec3 D0 = P1 - P0;
@@ -35,21 +38,21 @@ void cubic_Casteljau_Full(float t, glm::vec3 P0, glm::vec3 P1, glm::vec3 P2, glm
 
     glm::vec3 DD0 = D1 - D0;
     glm::vec3 DD1 = D2 - D1;
-    acc = glm::lerp(DD0, DD1, t) * 6.0f;
+    acc = lerp(DD0, DD1, t) * 6.0f;
 }
 
 
 
 glm::vec3 cubic_Casteljau(float t, glm::vec3 P0, glm::vec3 P1, glm::vec3 P2, glm::vec3 P3)
 {
-    glm::vec3 pA = glm::lerp(P0, P1, t);
-    glm::vec3 pB = glm::lerp(P1, P2, t);
-    glm::vec3 pC = glm::lerp(P2, P3, t);
+    glm::vec3 pA = lerp(P0, P1, t);
+    glm::vec3 pB = lerp(P1, P2, t);
+    glm::vec3 pC = lerp(P2, P3, t);
 
-    glm::vec3 pD = glm::lerp(pA, pB, t);
-    glm::vec3 pE = glm::lerp(pB, pC, t);
+    glm::vec3 pD = lerp(pA, pB, t);
+    glm::vec3 pE = lerp(pB, pC, t);
 
-    return glm::lerp(pD, pE, t);
+    return lerp(pD, pE, t);
 }
 
 
@@ -882,8 +885,8 @@ void roadSection::optimizeTangents(int lane)
         }
 
         float3 pull = pntThis->pullBack - pntThis->pullForward;
-        float3 pullForward = glm::lerp(-pntThis->pullForward, pull, continuity);
-        float3 pullBack = glm::lerp(pntThis->pullBack, pull, continuity);
+        float3 pullForward = lerp(-pntThis->pullForward, pull, continuity);
+        float3 pullBack = lerp(pntThis->pullBack, pull, continuity);
 
         pntThis->tangentForward = glm::normalize(pntThis->tangentForward - pullForward);
         pntThis->tangentBack = glm::normalize(pntThis->tangentBack - pullBack);

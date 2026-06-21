@@ -8,8 +8,6 @@
 namespace Diligent
 {
 
-FILE* EarthworksFXSample::s_LogFile = nullptr;
-
 namespace
 {
 
@@ -58,10 +56,9 @@ EarthworksFXSample::~EarthworksFXSample()
         m_Earthworks.onShutdown();
     }
 
-    if (s_LogFile)
+    if (m_FalcorWrapper)
     {
-        std::fclose(s_LogFile);
-        s_LogFile = nullptr;
+        m_FalcorWrapper.reset();
     }
 }
 
@@ -92,13 +89,7 @@ void EarthworksFXSample::Initialize(const SampleInitInfo& InitInfo)
     overthinking::Env::init("EarthworksFX", "EarthworksFX", overthinking::Env::Stage::Dev);
     SampleBase::Initialize(InitInfo);
 
-    s_LogFile = std::fopen("log.txt", "w");
-    if (s_LogFile)
-    {
-        std::fprintf(s_LogFile, "EarthworksFXSample::Initialize()\n");
-        std::fflush(s_LogFile);
-    }
-    m_Earthworks.logFile = s_LogFile;
+    m_FalcorWrapper = std::make_unique<Falcor::EarthworksWrapper>();
 
     Falcor::SetFalcorDevice(m_pDevice, m_pImmediateContext, m_pSwapChain);
     Falcor::SetFalcorFramework(&m_Framework);
