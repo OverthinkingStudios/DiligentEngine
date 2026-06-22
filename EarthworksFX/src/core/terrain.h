@@ -118,6 +118,9 @@ struct _shadowEdges
 
 struct _lastFile
 {
+    _lastFile() = default;
+    _lastFile(const std::filesystem::path& terrain_root, const std::filesystem::path& resources_root);
+    
     // these are for quick load
     std::string terrain = "F:/terrains/sonoma/sonoma.terrain";
     std::string road = "X:/resources/terrains/eifel/roads/day6.roadnetwork";

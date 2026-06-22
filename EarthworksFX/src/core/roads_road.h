@@ -271,7 +271,7 @@ public:
         {
             std::string relative = materialCache::getRelative(mat.second.c_str());
             
-            fprintf(terrafectorSystem::_logfile, "       relative   %s\n", relative.c_str());
+            spdlog::info("relative   {}", relative.c_str());
             std::string cleanPath = terrafectorEditorMaterial::rootFolder + relative;
             int idx = terrafectorEditorMaterial::static_materials.find_insert_material(cleanPath);
             newMap[idx] = relative;

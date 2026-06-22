@@ -184,14 +184,14 @@ uint roadMaterialCache::find_insert_material(std::string _path)
                 // try to load the thumbnail
                 if (!materialVector[i].thumbnail) {
                     materialVector[i].thumbnail = Texture::createFromFile(_path + ".jpg", false, true);
-                    if (!materialVector[i].thumbnail) fprintf(terrafectorSystem::_logfile, "		Road material - failed to load %s.jpg\n", _path.c_str());
+                    spdlog::error("Road material - failed to load {}.jpg", _path.c_str());
                 }
                 return i;
             }
         }
 
         // not found - add new
-        fprintf(terrafectorSystem::_logfile, "	roadMaterialCache - add %s\n", _path.c_str());
+        spdlog::info("roadMaterialCache - add {}", _path.c_str());
         materialVector.emplace_back();
         materialVector.back().import(relative);
         materialVector.back().thumbnail = Texture::createFromFile(_path + ".jpg", false, true);
@@ -199,8 +199,7 @@ uint roadMaterialCache::find_insert_material(std::string _path)
         // load all the terrafector Materials and set
         roadMaterialGroup& current = materialVector.back();
 
-        fprintf(terrafectorSystem::_logfile, "		  roadMaterialCache (%s)  %d layers\n", _path.c_str(), (int)current.layers.size());
-        fflush(terrafectorSystem::_logfile);
+        spdlog::info("roadMaterialCache ({})  {} layers", _path.c_str(), (int)current.layers.size());
         for (uint i = 0; i < current.layers.size(); i++)
         {
             std::string file = terrafectorEditorMaterial::rootFolder + current.layers[i].material;
@@ -212,8 +211,7 @@ uint roadMaterialCache::find_insert_material(std::string _path)
     }
     else
     {
-        fprintf(terrafectorSystem::_logfile, "		  failed to find rootpath  (%s)  in   %s\n", terrafectorEditorMaterial::rootFolder.c_str(), _path.c_str());
-        fflush(terrafectorSystem::_logfile);
+        spdlog::error("failed to find rootpath  ({})  in   {}", terrafectorEditorMaterial::rootFolder.c_str(), _path.c_str());
     }
     return 0;	//?? is this right
 }
@@ -248,8 +246,7 @@ void roadMaterialCache::reloadMaterials()
             {
                 std::string relative = returnName.substr(terrafectorEditorMaterial::rootFolder.length());
 
-                fprintf(terrafectorSystem::_logfile, "	ROAD MATERIAL CACHE - FILE RELOCATE from  %s     to    %s\n", mat.relativePath.c_str(), relative.c_str());
-                fflush(terrafectorSystem::_logfile);
+                spdlog::info("ROAD MATERIAL CACHE - FILE RELOCATE from  {}     to    {}", mat.relativePath.c_str(), relative.c_str());
 
                 mat.relativePath = relative;
                 mat.save();
@@ -257,8 +254,7 @@ void roadMaterialCache::reloadMaterials()
         }
 
 
-        fprintf(terrafectorSystem::_logfile, "	roadMaterialCache - load %s\n", mat.relativePath.c_str());
-        fflush(terrafectorSystem::_logfile);
+        spdlog::info("roadMaterialCache - load {}", mat.relativePath.c_str());
         if (!mat.import(mat.relativePath))
         {
             reFindMaterial(mat);

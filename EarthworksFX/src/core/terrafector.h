@@ -51,8 +51,31 @@ class JLogger
 {
 private:
     std::stack<logBlock>    stack;
-    FILE* file;
     std::chrono::time_point<std::chrono::high_resolution_clock>  startTime;
+
+    static std::string indent(int depth) { return std::string(static_cast<size_t>(depth) * 4, ' '); }
+
+    static spdlog::level::level_enum levelForType(uint type)
+    {
+        switch (type)
+        {
+        case 3: return spdlog::level::err;
+        case 2: return spdlog::level::warn;
+        default: return spdlog::level::info;
+        }
+    }
+
+    static const char* typeLabel(uint type)
+    {
+        static const char* logTypes[4] = {"verb", "info", "warn", "erro"};
+        return logTypes[type < 4 ? type : 0];
+    }
+
+    float elapsedSecondsSince(const std::chrono::time_point<std::chrono::high_resolution_clock>& from) const
+    {
+        const auto now = high_resolution_clock::now();
+        return static_cast<float>(duration_cast<microseconds>(now - from).count()) / 1000000.f;
+    }
 
 public:
     using SharedPtr = std::shared_ptr<JLogger>;
@@ -64,10 +87,6 @@ public:
     void open(char* _name);
     void close();
 
-    void tab(int depth);
-    void time();
-    void time_stack();
-    void type(uint _type);
     void log(uint _type, std::string _text);
     void logMulti(uint _type, std::string _text);
 };
@@ -519,16 +538,15 @@ public:
     {
         auto a = high_resolution_clock::now();
         float delta_ms = (float)duration_cast<microseconds>(a - terrafectorSystem::logStartTime).count() / 1000.;
-        fprintf(_logfile, "%3.3fms    :    ", delta_ms);
+        spdlog::info("{:.3f}ms    :", delta_ms);
     }
     /*
     static void logTab()
     {
-        fprintf(_logfile, "    ");
+        spdlog::info("");
     }
     static void logHeader()
     {
-        //fprintf(_logfile, "%3.3fms    :    ", delta_ms);
     }
     */
 	terrafectorElement root = terrafectorElement(tf_heading, "root");

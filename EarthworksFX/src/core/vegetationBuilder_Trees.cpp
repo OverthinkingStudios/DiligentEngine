@@ -233,7 +233,6 @@ void _treeBuilder::loadPath()
 {
     if (std::filesystem::exists(terrafectorEditorMaterial::rootFolder + path))
     {
-        fflush(terrafectorSystem::_logfile);
         std::ifstream is(terrafectorEditorMaterial::rootFolder + path);
         cereal::JSONInputArchive archive(is);
         archive(*this);

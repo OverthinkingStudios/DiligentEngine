@@ -26,11 +26,13 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #include "terrain.h"
+#include "ots/Log.hpp"
 #include "imgui.h"
 #include <imgui_internal.h>
 #include <random>
 //#include "Utils/UI/TextRenderer.h"
 #include "assimp/Exporter.hpp"
+#include "overthinkingEnv.h"
 using namespace Assimp;
 #include <chrono>
 using namespace std::chrono;
@@ -44,6 +46,26 @@ using namespace std::chrono;
 
 _lastFile terrainManager::lastfile;
 
+_lastFile::_lastFile(const std::filesystem::path& terrain_root, const std::filesystem::path& resources_root) {
+    terrain             = (terrain_root / "switserland_Steg.root").string();
+    road    = (terrain_root / "roads/steg_010.roadnetwork").string();
+    std::string stamps              = "";
+    std::string roadMaterial        = (resources_root / "roadMaterials" / "asphalt" / "asphalt_17.roadMaterial").string();
+    std::string terrafectorMaterial = "";
+    std::string texture             = "";
+    std::string fbx                 = "";
+    std::string EVO                 = "";
+
+    std::string weed        = (resources_root / "vegetation_weeds").string();
+    std::string twig = (resources_root / "vegetation_twigs").string();
+    std::string leaves      = (resources_root / "vegetation_leaves").string();
+    std::string trees       = (resources_root / "vegetation_trees").string();
+    std::string vegMaterial = (resources_root / "vegetation_trees").string();
+
+    std::string dir_Resource = "";
+    std::string dir_Terrains = "";
+    std::string dir_GIS      = "";
+}
 
 
 void setupVert(ribbonVertex* r, int start, float3 pos, float radius, int _mat = 0)
@@ -469,41 +491,107 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
 {
     LOG_BLOCK("terrainManager::onLoad", 0);
 
-    std::filesystem::path currentPath = std::filesystem::current_path();
+    auto currentPath = std::filesystem::current_path();
+    std::filesystem::path last_file_path = overthinking::Env::getPath(overthinking::Env::SpecialFolder::UserData) / "lastFile.xml";
+    spdlog::info("looking for lastFile.xml at {}", last_file_path.string());
 
-    // Move the constructor code here
-    std::ifstream is("lastFile.xml");
-    if (is.good()) {
-        cereal::XMLInputArchive archive(is);
-        archive(CEREAL_NVP(lastfile));
+    if (std::filesystem::exists(last_file_path))
+    {
+        std::ifstream is("lastFile.xml");
+        if (is.good())
+        {
+            cereal::XMLInputArchive archive(is);
+            archive(CEREAL_NVP(lastfile));
 
-        fprintf(_logfile, " loading lastfile.xml\n");
-        fflush(_logfile);
+            spdlog::info("loading lastfile.xml");
 
-        mRoadNetwork.lastUsedFilename = lastfile.road;
-        mRoadStampCollection.lastUsedFilename = lastfile.stamps;
+            mRoadNetwork.lastUsedFilename         = lastfile.road;
+            mRoadStampCollection.lastUsedFilename = lastfile.stamps;
+        }
+        else
+        {
+            spdlog::error("unable to load lastfile.xml, shutting down");
+            LOG_LINE(3, "unable to load lastfile.xml, shutting down");
+            gpFramework->getWindow()->shutdown();
+            return;
+        }
     }
     else
     {
-        fprintf(_logfile, " ERROR - unable to load lastfile.xml, shutting down\n");
-        fflush(_logfile);
-        LOG_LINE(3, "unable to load lastfile.xml, shutting down");
-        gpFramework->getWindow()->shutdown();
-        return;
+        spdlog::warn("lastFile.xml not found at {}, creating with new defaults");
+        std::filesystem::path default_terrain_root = std::filesystem::current_path() / "terrains" / "switserland_Steg";
+        std::filesystem::path default_resources_root = std::filesystem::current_path() / "terrains" / "_resources";
+        lastfile                                     = _lastFile(default_terrain_root, default_resources_root);
     }
 
+
+    if (std::filesystem::exists(lastfile.terrain)) {
+        std::ifstream isT(lastfile.terrain);
+        if (isT.good())
+        {
+            terrafectorSystem::logTimeX();
+            spdlog::info("loading absolute terrain - {}", lastfile.terrain);
+            cereal::JSONInputArchive archive(isT);
+            settings.serialize(archive, 100);
+
+            std::ifstream a(lastfile.dir_Terrains);
+            std::ifstream b(lastfile.dir_Resource);
+            std::ifstream c(lastfile.dir_GIS);
+
+            if (!std::filesystem::exists(lastfile.dir_Terrains))
+            {
+                spdlog::warn("dir_Terrains does not exist - {}", lastfile.dir_Terrains);
+                std::filesystem::path path;
+                FileDialogFilterVec   filters = {{}};
+                if (openFileDialog(filters, path))
+                {
+                    lastfile.dir_Terrains = path.parent_path().string();
+                }
+            }
+
+            if (!std::filesystem::exists(lastfile.dir_Resource))
+            {
+                spdlog::warn("dir_Resource does not exist - {}", lastfile.dir_Resource);
+                std::filesystem::path path;
+                FileDialogFilterVec   filters = {{}};
+                if (openFileDialog(filters, path))
+                {
+                    lastfile.dir_Resource = path.parent_path().string();
+                }
+            }
+
+            if (!std::filesystem::exists(lastfile.dir_GIS))
+            {
+                spdlog::warn("dir_GIS does not exist - {}", lastfile.dir_GIS);
+                std::filesystem::path path;
+                FileDialogFilterVec   filters = {{}};
+                if (openFileDialog(filters, path))
+                {
+                    lastfile.dir_GIS = path.parent_path().string();
+                }
+            }
+
+            settings.dirRoot     = lastfile.dir_Terrains + settings.dirRoot;
+            settings.dirResource = lastfile.dir_Resource;
+            settings.dirGis      = lastfile.dir_GIS;
+
+            spdlog::info("loading absolute terrain, prepending root directory - {}", lastfile.terrain);
+            spdlog::info("root - {}", settings.dirRoot);
+            spdlog::info("gis - {}", settings.dirGis);
+            spdlog::info("resource - {}", settings.dirResource);
+        }
+    }
+    
     std::string appendedName = currentPath.string() + lastfile.terrain;
     std::ifstream isT(lastfile.terrain);
     std::ifstream isT_2(appendedName);
 
-    fprintf(_logfile, " %s\n", lastfile.terrain.c_str());
+    spdlog::info("last loaded terrain - {}", lastfile.terrain);
 
-    fprintf(_logfile, "  %s\n", appendedName.c_str());
-    fflush(_logfile);
+    spdlog::info("appended terrain - {}", appendedName);
     if (isT.good()) {
         terrafectorSystem::logTimeX();
-        fprintf(_logfile, " loading absolute terrain %s\n", lastfile.terrain.c_str());
-        fflush(_logfile);
+        spdlog::info("loading absolute terrain - {}", lastfile.terrain);
         cereal::JSONInputArchive archive(isT);
         settings.serialize(archive, 100);
 
@@ -513,8 +601,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
 
         if (!std::filesystem::exists(lastfile.dir_Terrains))
         {
-            fprintf(_logfile, "filedialog dir_Terrains\n");
-            fflush(_logfile);
+            spdlog::warn("dir_Terrains does not exist - {}", lastfile.dir_Terrains);
             std::filesystem::path path;
             FileDialogFilterVec filters = { {} };
             if (openFileDialog(filters, path))
@@ -525,8 +612,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
 
         if (!std::filesystem::exists(lastfile.dir_Resource))
         {
-            fprintf(_logfile, "filedialog dir_Resource\n");
-            fflush(_logfile);
+            spdlog::warn("dir_Resource does not exist - {}", lastfile.dir_Resource);
             std::filesystem::path path;
             FileDialogFilterVec filters = { {} };
             if (openFileDialog(filters, path))
@@ -537,8 +623,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
 
         if (!std::filesystem::exists(lastfile.dir_GIS))
         {
-            fprintf(_logfile, "filedialog dir_GIS\n");
-            fflush(_logfile);
+            spdlog::warn("dir_GIS does not exist - {}", lastfile.dir_GIS);
             std::filesystem::path path;
             FileDialogFilterVec filters = { {} };
             if (openFileDialog(filters, path))
@@ -551,38 +636,42 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
         settings.dirResource = lastfile.dir_Resource;
         settings.dirGis = lastfile.dir_GIS;
 
-        fprintf(_logfile, "root - %s\n", settings.dirRoot.c_str());
-        fprintf(_logfile, "gis - %s\n", settings.dirGis.c_str());
-        fprintf(_logfile, "resource - %s\n\n", settings.dirResource.c_str());
-        fflush(_logfile);
+        spdlog::info("loading absolute terrain, prepending root directory - {}", lastfile.terrain);
+        spdlog::info("root - {}", settings.dirRoot);
+        spdlog::info("gis - {}", settings.dirGis);
+        spdlog::info("resource - {}", settings.dirResource);
     }
     else if (isT_2.good())
     {
         cereal::JSONInputArchive archive(isT_2);
         settings.serialize(archive, 100);
 
-        fprintf(_logfile, "loading relative terrain, prepending root directory - %s\n", appendedName.c_str());
-        fprintf(_logfile, "root - %s\n", settings.dirRoot.c_str());
-        fprintf(_logfile, "gis - %s\n", settings.dirGis.c_str());
-        fprintf(_logfile, "resource - %s\n\n", settings.dirResource.c_str());
-        fflush(_logfile);
+        spdlog::info("loading relative terrain - {}, prepending root directory - {}", lastfile.terrain, appendedName);
+        spdlog::info("root - {}", settings.dirRoot);
+        spdlog::info("gis - {}", settings.dirGis);
+        spdlog::info("resource - {}\n", settings.dirResource);
 
         settings.dirRoot = currentPath.string() + settings.dirRoot;
         settings.dirGis = currentPath.string() + settings.dirGis;
         settings.dirResource = currentPath.string() + settings.dirResource;
-
-        fprintf(_logfile, "root - %s\n", settings.dirRoot.c_str());
-        fprintf(_logfile, "gis - %s\n", settings.dirGis.c_str());
-        fprintf(_logfile, "resource - %s\n\n", settings.dirResource.c_str());
-        fflush(_logfile);
     }
     else
     {
         std::filesystem::path path;
         FileDialogFilterVec filters = { {"terrainSettings.json"} };
-        if (openFileDialog(filters, path))
+        if (openFileDialog(filters, path) || true)
         {
-            lastfile.terrain = path.string();
+            if (std::filesystem::exists(path))
+                lastfile.terrain = path.string();
+
+            std::filesystem::path abs_path = currentPath.string() + lastfile.terrain;
+            if (!std::filesystem::exists(abs_path))
+            {
+                spdlog::error("unable to find terrain - {}, shutting down", abs_path.string());
+                gpFramework->getWindow()->shutdown();
+                return;
+            }
+
             std::ifstream isT(lastfile.terrain);
             if (isT.good()) {
                 cereal::JSONInputArchive archive(isT);
@@ -590,8 +679,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
             }
             else
             {
-                fprintf(_logfile, " ERROR - unable to load a terrain  (/terrain/__somewhere__.terrainSettings.json)\n");
-                fprintf(_logfile, " shutting down\n");
+                spdlog::error("unable to load a terrain - {}, shutting down", lastfile.terrain);
                 gpFramework->getWindow()->shutdown();
                 return;
             }
@@ -604,12 +692,10 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
 
     if (terrainMode == _terrainMode::vegetation)
     {
-        //fprintf(_logfile, "terrain.onLoad() - abandn - VEGETATION mode\n");
         //return;
     }
 
-    fprintf(_logfile, "\nterrain.onLoad()\n");
-    fflush(_logfile);
+    spdlog::info("finished loading terrain settings");
 
     terrafectors._logfile = _logfile;
 
@@ -779,8 +865,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
             /*
             LOG_BLOCK("loading buildings /rappersville", 0);
             terrafectorSystem::logTimeX();
-            fprintf(_logfile, "load %s\n", (settings.dirRoot + "/buildings/rappersville").c_str());
-            fflush(_logfile);
+            spdlog::info("load {}", (settings.dirRoot + "/buildings/rappersville").c_str());
 
             std::string filerappersville = settings.dirRoot + "/buildings/rappersville";
             std::ifstream ifs;
@@ -1194,8 +1279,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
 
     terrafectorEditorMaterial::rootFolder = settings.dirResource + "/";
     ecotopeSystem::resPath = settings.dirResource + "/";
-    fprintf(_logfile, "terrafectorEditorMaterial::rootFolder = %s\n", terrafectorEditorMaterial::rootFolder.c_str());
-    fflush(_logfile);
+    spdlog::info("terrafectorEditorMaterial::rootFolder = {}", terrafectorEditorMaterial::rootFolder);
 
     {
         LOG_BLOCK("more stuff", 0);
@@ -1254,7 +1338,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
         std::cout << "      paraglider\n";
 
         terrafectorSystem::logTimeX();
-        fprintf(_logfile, "start of paraBuilder\n");
+        spdlog::info("start of paraBuilder");
 
 
         AirSim.setup();
@@ -1297,7 +1381,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
     }
 
     terrafectorSystem::logTimeX();
-    fprintf(_logfile, "end of paraBuilder\n");
+    spdlog::info("end of paraBuilder");
 
     //_swissBuildings buildings;
     //buildings.process(settings.dirRoot + "/buildings/testQGISDXF.dxf");
@@ -2402,7 +2486,7 @@ void jp2Dir::cacheHash(uint32_t hash)
             auto share = std::make_shared<std::vector<unsigned char>>(dataRoot);
             cache.set(hash, share);
 
-            fprintf(terrafectorSystem::_logfile, "cacheHash()   %s   %s \n", path.c_str(), files[idx].filename.c_str());
+            spdlog::info("cacheHash()   {}   {}", path.c_str(), files[idx].filename.c_str());
         }
     }
 }
@@ -3389,7 +3473,6 @@ void terrainManager::bil_to_jp2Photos(std::string file, const uint size, uint _l
     codestream.close();
 
 
-    //fprintf(summary, "%d %d %d %d %f %f %f %f %f elevation/hgt_%d_%d_%d.jp2\n", _lod, _y, _x, size, _xstart, _ystart, _size, data_min, (data_max - data_min), _lod, _y, _x);
 }
 
 
@@ -3516,7 +3599,7 @@ void terrainManager::bil_to_jp2(std::string file, const uint size, FILE* summary
     codestream.close();
 
 
-    fprintf(summary, "%d %d %d %d %f %f %f %f %f elevation/hgt_%d_%d_%d.jp2\n", _lod, _y, _x, size, _xstart, _ystart, _size, data_min, (data_max - data_min), _lod, _y, _x);
+    std::fputs(fmt::format("{} {} {} {} {} {} {} {} {} elevation/hgt_{}_{}_{}.jp2\n", _lod, _y, _x, size, _xstart, _ystart, _size, data_min, (data_max - data_min), _lod, _y, _x).c_str(), summary);
 }
 
 
@@ -3870,8 +3953,6 @@ bool terrainManager::update(RenderContext* _renderContext)
 
 
         {
-            //fprintf(terrafectorSystem::_logfile, "update_roads\n");
-            //fflush(terrafectorSystem::_logfile);
             FALCOR_PROFILE("update_roads");
             updateDynamicRoad(false);
             mRoadNetwork.testHit(split.feedback.tum_Position);
@@ -4110,8 +4191,7 @@ void terrainManager::hashAndCacheImages_Thread(quadtree_tile* pTile)
     LOG_LINE(1, "imageDirectory 1");
     std::map<uint32_t, uint2>::iterator itH = imageDirectory.tileHash.find(pTile->imageHash);
     if (itH == imageDirectory.tileHash.end()) {
-        fprintf(terrafectorSystem::_logfile, "FAILED tileHash.find\n");
-        fflush(terrafectorSystem::_logfile);
+        spdlog::error("FAILED tileHash.find");
     }
     jp2File& file = imageDirectory.files[itH->second.x];
     jp2Map& mapTile = imageDirectory.files[itH->second.x].tiles[itH->second.y];
@@ -4130,13 +4210,12 @@ void terrainManager::hashAndCacheImages_Thread(quadtree_tile* pTile)
         {
 
             bool bCM = true;
-            fprintf(terrafectorSystem::_logfile, "FIX imageCache.resize(55);  its still too small\n");
-            fprintf(terrafectorSystem::_logfile, "offset %d, lod %d, %s\n", mapTile.fileOffset, mapTile.lod, file.filename.c_str());
-            fprintf(terrafectorSystem::_logfile, "itH file %d, tile %d\n", itH->second.x, itH->second.y);
-            fprintf(terrafectorSystem::_logfile, "Bug is liekly here at teh ned void jp2Dir::load(std::string _name). The thing that changed is that I changed FOV, so diffirent amount fo tiles vissible\n");
+            spdlog::error("FIX imageCache.resize(55);  its still too small");
+            spdlog::info("offset {}, lod {}, {}", mapTile.fileOffset, mapTile.lod, file.filename.c_str());
+            spdlog::info("itH file {}, tile {}", itH->second.x, itH->second.y);
+            spdlog::info("Bug is liekly here at teh ned void jp2Dir::load(std::string _name). The thing that changed is that I changed FOV, so diffirent amount fo tiles vissible");
 
 
-            fflush(terrafectorSystem::_logfile);
             // should never get here but handle it somehow
             // split.compute_tileBicubic.Vars()->setTexture("gInputAlbedo", map.texture);
             // I think it was with very fast movement, not sure how that was possible
@@ -4207,8 +4286,6 @@ bool terrainManager::hashAndCacheImages(quadtree_tile* pTile)
     }
     //    else
     //    {
-            //fprintf(terrafectorSystem::_logfile, "FAILED %d %d %d   imageDirectory.tileHash.find(hash);\n", pTile->lod, pTile->y, pTile->x);
-            //fflush(terrafectorSystem::_logfile);
       //  }
 
         //if (pTile->imageHash > 0)
@@ -5471,7 +5548,7 @@ void terrainManager::bake_start(bool _toMAX)
             oneTile.heightScale = itt->second.hgt_scale;
 
             bake.tileInfoForBinaryExport.push_back(oneTile);
-            fprintf(bake.txt_file, "%d %d %d %d %f %f, size %f, (%f, %f)\n", oneTile.lod, oneTile.y, oneTile.x, split.bakeSize, oneTile.heightOffset, oneTile.heightScale, oneTile.tileSize, oneTile.origin.x, oneTile.origin.y);
+            std::fputs(fmt::format("{} {} {} {} {} {}, size {}, ({}, {})\n", oneTile.lod, oneTile.y, oneTile.x, split.bakeSize, oneTile.heightOffset, oneTile.heightScale, oneTile.tileSize, oneTile.origin.x, oneTile.origin.y).c_str(), bake.txt_file);
         }
     }
 
@@ -5717,7 +5794,7 @@ void terrainManager::bake_Setup(float _size, uint _lod, uint _y, uint _x, Render
         min -= 0.5f;
         float range = max - min + 0.5f;
 
-        fprintf(bake.txt_file, "%d %d %d %d %f %f %f, size %f, (%f, %f)\n", _lod, _y, _x, split.bakeSize, min, max, range, outerSize, origin.x, origin.y);
+        std::fputs(fmt::format("{} {} {} {} {} {} {}, size {}, ({}, {})\n", _lod, _y, _x, split.bakeSize, min, max, range, outerSize, origin.x, origin.y).c_str(), bake.txt_file);
 
         elevationMap oneTile;
         oneTile.lod = _lod;
@@ -7329,7 +7406,7 @@ void terrainManager::bezierRoadstoLOD(uint _lod)
         }
     }
 
-    fprintf(terrafectorSystem::_logfile, "\n\n\nbezierRoadstoLOD\n");
+    spdlog::info("bezierRoadstoLOD");
 
     for (uint i = 0; i < splines.numStaticSplinesIndex; i++)
     {
@@ -7411,15 +7488,13 @@ void terrainManager::bezierRoadstoLOD(uint _lod)
                 splines.startOffset_LOD4[y][x] = start;
                 splines.numIndex_LOD4[y][x] = size;
                 start += size;
-                //fprintf(terrafectorSystem::_logfile, "%6d", size);
             }
-            //fprintf(terrafectorSystem::_logfile, "\n");
         }
         fclose(file);
         fclose(datafile);
 
-        fprintf(terrafectorSystem::_logfile, "\nLOD 4. Total beziers %d from %d.   Most beziers in a block = %d\n", start, splines.numStaticSplinesIndex, largest);
-        fprintf(terrafectorSystem::_logfile, "using %3.1f Mb\n", ((float)(start * sizeof(bezierLayer)) / 1024.0f / 1024.0f));
+        spdlog::info("LOD 4. Total beziers {} from {}.   Most beziers in a block = {}", start, splines.numStaticSplinesIndex, largest);
+        spdlog::info("using {:.1f} Mb", ((float)(start * sizeof(bezierLayer)) / 1024.0f / 1024.0f));
     }
 
 
@@ -7454,8 +7529,8 @@ void terrainManager::bezierRoadstoLOD(uint _lod)
         fclose(file);
         fclose(datafile);
 
-        fprintf(terrafectorSystem::_logfile, "\nLOD 6. Total beziers %d from %d.   Most beziers in a block = %d\n", start, splines.numStaticSplinesIndex, largest);
-        fprintf(terrafectorSystem::_logfile, "using %3.1f Mb\n", ((float)(start * sizeof(bezierLayer)) / 1024.0f / 1024.0f));
+        spdlog::info("LOD 6. Total beziers {} from {}.   Most beziers in a block = {}", start, splines.numStaticSplinesIndex, largest);
+        spdlog::info("using {:.1f} Mb", ((float)(start * sizeof(bezierLayer)) / 1024.0f / 1024.0f));
     }
 
 
@@ -7488,8 +7563,8 @@ void terrainManager::bezierRoadstoLOD(uint _lod)
         fclose(file);
         fclose(datafile);
 
-        fprintf(terrafectorSystem::_logfile, "\nLOD 8. Total beziers %d from %d.   Most beziers in a block = %d\n", start, splines.numStaticSplinesIndex, largest);
-        fprintf(terrafectorSystem::_logfile, "using %3.1f Mb\n", ((float)(start * sizeof(bezierLayer)) / 1024.0f / 1024.0f));
+        spdlog::info("LOD 8. Total beziers {} from {}.   Most beziers in a block = {}", start, splines.numStaticSplinesIndex, largest);
+        spdlog::info("using {:.1f} Mb", ((float)(start * sizeof(bezierLayer)) / 1024.0f / 1024.0f));
     }
 
 
@@ -7533,11 +7608,6 @@ void terrainManager::bezierRoadstoLOD(uint _lod)
 //    //cfd.clipmap.simulate_start(32.0f);
 //
 //
-//    fprintf(terrafectorSystem::_logfile, "cfdThread()\n");
-//    fprintf(terrafectorSystem::_logfile, "T %f %f %f\n", cfd.clipmap.skewT_corners_Data[0][0].x, cfd.clipmap.skewT_corners_Data[0][50].x, cfd.clipmap.skewT_corners_Data[0][99].x);
-//    fprintf(terrafectorSystem::_logfile, "H %f %f %f\n", cfd.clipmap.skewT_corners_Data[0][0].y, cfd.clipmap.skewT_corners_Data[0][50].y, cfd.clipmap.skewT_corners_Data[0][99].y);
-//    fprintf(terrafectorSystem::_logfile, "V %f %f %f\n", glm::length(cfd.clipmap.skewT_corners_V[0][0]), glm::length(cfd.clipmap.skewT_corners_V[0][50]), glm::length(cfd.clipmap.skewT_corners_V[0][99]));
-//    fflush(terrafectorSystem::_logfile);
 //    /*
 //    uint saveidx = 0;
 //    for (int k = 0; k < 256 * 64 * 100; k++)   //1500 = 937 seconds in 210
@@ -7577,9 +7647,7 @@ void terrainManager::bezierRoadstoLOD(uint _lod)
 //                cfd.clipmap.simulate_start(32.0f);
 //                cfd.clipmap.windrequest = false;
 //                firstStart = false;
-//                fprintf(terrafectorSystem::_logfile, "cfd.clipmap.setWind on %s\n", cfd.rootPath.c_str());
 //                if (cfd.clipmap.windSeperateSkewt) {
-//                    fprintf(terrafectorSystem::_logfile, "windSeperateSkewt (%2.1f, %2.1f, %2.1f) m/s\n", cfd.clipmap.newWind.x, cfd.clipmap.newWind.y, cfd.clipmap.newWind.z);
 //                }
 //            }
 //
@@ -7609,3 +7677,10 @@ void terrainManager::bezierRoadstoLOD(uint _lod)
 //        k++;
 //    }
 //}
+
+void terrainManager::onGuiRender_Right_Glider(Gui* _gui, Gui::Window& _window)
+{
+    (void)_gui;
+    (void)_window;
+    // EARTHWORKSFX_DEFERRED_GLIDER: UI body lives in glider sources not yet linked.
+}

@@ -2,6 +2,7 @@
 #include"roads_AI.h"
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "ots/Log.hpp"
 
 
 
@@ -466,15 +467,17 @@ void AI_bezier::exportAI(FILE* file)
 
 void AI_bezier::exportAITXTDEBUG(FILE* file)
 {
-    if (isClosedPath)	fprintf(file, "closed loop\n");
-    else				fprintf(file, "open\n");
-    fprintf(file, "start %2.3f, %2.3f, %2.3f\n", startpos.x, startpos.y, startpos.z);
-    fprintf(file, "end %2.3f, %2.3f, %2.3f\n", endpos.x, endpos.y, endpos.z);
-    fprintf(file, "pathLength %2.3fkm\n", pathLenght);
-    fprintf(file, "# %d\n\n", numBezier);
+    if (isClosedPath)
+        std::fputs("closed loop\n", file);
+    else
+        std::fputs("open\n", file);
+    std::fputs(fmt::format("start {:.3f}, {:.3f}, {:.3f}\n", startpos.x, startpos.y, startpos.z).c_str(), file);
+    std::fputs(fmt::format("end {:.3f}, {:.3f}, {:.3f}\n", endpos.x, endpos.y, endpos.z).c_str(), file);
+    std::fputs(fmt::format("pathLength {:.3f}km\n", pathLenght).c_str(), file);
+    std::fputs(fmt::format("# {}\n\n", numBezier).c_str(), file);
 
     for (uint i = 0; i < (uint)bezierPatches.size(); i++) {
-        fprintf(file, "%3d  (%2.3f, %2.3f, %2.3f, %2.3f)  (%2.3f, %2.3f, %2.3f, %2.3f) \n", i, bezierPatches[i].data[0][0].x, bezierPatches[i].data[0][0].y, bezierPatches[i].data[0][0].z, bezierPatches[i].data[0][0].w, bezierPatches[i].data[1][0].x, bezierPatches[i].data[1][0].y, bezierPatches[i].data[1][0].z, bezierPatches[i].data[1][0].w);
+        std::fputs(fmt::format("{:3d}  ({:.3f}, {:.3f}, {:.3f}, {:.3f})  ({:.3f}, {:.3f}, {:.3f}, {:.3f}) \n", i, bezierPatches[i].data[0][0].x, bezierPatches[i].data[0][0].y, bezierPatches[i].data[0][0].z, bezierPatches[i].data[0][0].w, bezierPatches[i].data[1][0].x, bezierPatches[i].data[1][0].y, bezierPatches[i].data[1][0].z, bezierPatches[i].data[1][0].w).c_str(), file);
     }
 }
 
@@ -490,7 +493,7 @@ void AI_bezier::exportGates(FILE* file)
         glm::vec3 startR = cubic_Casteljau(0, bezierPatches[i].data[1][0], bezierPatches[i].data[1][1], bezierPatches[i].data[1][2], bezierPatches[i + 1].data[1][0]);
         glm::vec3 midR = cubic_Casteljau(0.5, bezierPatches[i].data[1][0], bezierPatches[i].data[1][1], bezierPatches[i].data[1][2], bezierPatches[i + 1].data[1][0]);
 
-        fprintf(file, "%f %f %f %f  %f %f\n", startL.x, startL.z, startR.x, startR.z, segments[i * 16].camber, segments[i * 16].radius);
+        std::fputs(fmt::format("{} {} {} {}  {} {}\n", startL.x, startL.z, startR.x, startR.z, segments[i * 16].camber, segments[i * 16].radius).c_str(), file);
     }
 }
 
@@ -515,8 +518,7 @@ void AI_bezier::exportCSV(FILE* file, uint _side)
             break;
         }
 
-        //fprintf(file, "%f %f %f %f %f %f\n", pos.x, pos.y, pos.z, segments[i].camber, segments[i].radius, segments[i].optimalShift);
-        fprintf(file, "%f %f %f\n", pos.x, pos.y, pos.z);
+        std::fputs(fmt::format("{} {} {}\n", pos.x, pos.y, pos.z).c_str(), file);
     }
 }
 

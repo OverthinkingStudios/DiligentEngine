@@ -222,9 +222,8 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
 {
     LOG_BLOCK("Earthworks_4::onLoad", 0);
     terrafectorSystem::logTimeX();
-    std::cout << "onLoad()\n";
-    fprintf(logFile, "Earthworks_4::onLoad()\n");
-    fflush(logFile);
+    //std::cout << "onLoad()\n";
+    spdlog::info("Earthworks_4::onLoad()");
 
     graphicsState = GraphicsState::create();
 
@@ -253,9 +252,8 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
 
 
     terrafectorSystem::logTimeX();
-    std::cout << "  atmosphere\n";
-    fprintf(logFile, "atmosphere.onLoad()\n");
-    fflush(logFile);
+    spdlog::info("atmosphere.onLoad()");
+    //std::cout << "  atmosphere\n";
     {
         LOG_BLOCK("atmosphereAndFog::onLoad", 0);
 
@@ -309,8 +307,7 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
         LOG_LINE(0, "just testing");
         terrafectorSystem::logTimeX();
         std::cout << "  cfd\n";
-        fprintf(logFile, "terrain.cfdStart()\n");
-        fflush(logFile);
+        spdlog::info("terrain.cfdStart()");
         terrain.cfdStart();
         std::thread thread_obj_cfd(&terrainManager::cfdThread, &terrain);
         thread_obj_cfd.detach();
@@ -403,8 +400,7 @@ void Earthworks_4::loadColorCube(std::string name)
     }
     else
     {
-        fprintf(logFile, "ERROR - loadColorCube() - failed\n");
-        fflush(logFile);
+        spdlog::error("ERROR - loadColorCube() - failed");
     }
 }
 
@@ -420,8 +416,7 @@ void Earthworks_4::onFrameUpdate(RenderContext* _renderContext)
         if (terrain.shadowEdges.shadowReady)
         {
             LOG_LINE(1, "terrain.shadowEdges.shadowReady");
-            fprintf(logFile, "terrain.shadowEdges.shadowReady\n");
-            fflush(logFile);
+            spdlog::info("terrain.shadowEdges.shadowReady");
             FALCOR_PROFILE("shadow update");
             _renderContext->updateTextureData(terrain.terrainShadowTexture.get(), terrain.shadowEdges.shadowH);
             global_sun_direction = terrain.shadowEdges.sunAng;
@@ -600,8 +595,7 @@ void Earthworks_4::onResizeSwapChain(uint32_t _width, uint32_t _height)
     hdrPreviousFrame = Texture::create2D(_width / 2, _height / 2, ResourceFormat::R11G11B10Float, 1, 1, nullptr, Falcor::Resource::BindFlags::AllColorViews);
 
     terrafectorSystem::logTimeX();
-    fprintf(logFile, "Earthworks_4::onResizeSwapChain()  %d, %d\n", _width, _height);
-    fflush(logFile);
+    spdlog::info("Earthworks_4::onResizeSwapChain()  {}, {}", _width, _height);
 
     //SampleConfig cfg = this->getConfig();
 }

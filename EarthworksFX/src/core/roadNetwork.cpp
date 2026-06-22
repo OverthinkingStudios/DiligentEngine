@@ -371,8 +371,8 @@ void roadNetwork::saveRoadGeometry(roadSection* _road, int _vertex)
         if (file) {
             for (int i = 0; i < 9; i++)
             {
-                fprintf(file, "%f\n", _road->points[_vertex].lanesLeft[i].laneWidth);
-                fprintf(file, "%f\n", _road->points[_vertex].lanesRight[i].laneWidth);
+                std::fputs(fmt::format("{}\n", _road->points[_vertex].lanesLeft[i].laneWidth).c_str(), file);
+                std::fputs(fmt::format("{}\n", _road->points[_vertex].lanesRight[i].laneWidth).c_str(), file);
             }
         }
         fclose(file);
@@ -426,9 +426,6 @@ void roadNetwork::saveRoadMaterials(roadSection* _road, int _vertex)
     {
         FILE* file = fopen(path.string().c_str(), "w");
         if (file) {
-            //for (int i = 0; i < 15; i++) fprintf(file, "%d\n", _road->points[_vertex].matLeft[i]);
-            //for (int i = 0; i < 2; i++) fprintf(file, "%d\n", _road->points[_vertex].matCenter[i]);
-            //for (int i = 0; i < 15; i++) fprintf(file, "%d\n", _road->points[_vertex].matRight[i]);
             //fwrite(&_road->points[_vertex].matLeft[0], sizeof(int), 15, file);
             //fwrite(&_road->points[_vertex].matCenter[0], sizeof(int), 2, file);
             //fwrite(&_road->points[_vertex].matRight[0], sizeof(int), 15, file);
@@ -436,35 +433,32 @@ void roadNetwork::saveRoadMaterials(roadSection* _road, int _vertex)
             //roadMaterialCache::getInstance().materialVector[idx].relativePath
 
             //int m_size = (int)roadMaterialCache::getInstance().materialVector.size();
-            //fprintf(file, "%d sizeof materialVector\n");
             
             for (int i = 0; i < 15; i++)
             {
                 int idx = _road->points[_vertex].matLeft[i];
                 if ( idx >= 0)
-                    fprintf(file, "%s\n", roadMaterialCache::getInstance().materialVector[idx].relativePath.c_str());
-                    //fprintf(file, "L\n");
+                    std::fputs(fmt::format("{}\n", roadMaterialCache::getInstance().materialVector[idx].relativePath.c_str()).c_str(), file);
                 else
-                    fprintf(file, "\n");
+                    std::fputs(fmt::format("\n").c_str(), file);
             }
 
             for (int i = 0; i < 2; i++)
             {
                 int idx = _road->points[_vertex].matCenter[i];
                 if (idx >= 0)
-                    fprintf(file, "%s\n", roadMaterialCache::getInstance().materialVector[idx].relativePath.c_str());
+                    std::fputs(fmt::format("{}\n", roadMaterialCache::getInstance().materialVector[idx].relativePath.c_str()).c_str(), file);
                 else
-                    fprintf(file, "\n");
+                    std::fputs(fmt::format("\n").c_str(), file);
             }
 
             for (int i = 0; i < 15; i++)
             {
                 int idx = _road->points[_vertex].matRight[i];
                 if (idx >= 0)
-                    fprintf(file, "%s\n", roadMaterialCache::getInstance().materialVector[idx].relativePath.c_str());
-                    //fprintf(file, "R\n");
+                    std::fputs(fmt::format("{}\n", roadMaterialCache::getInstance().materialVector[idx].relativePath.c_str()).c_str(), file);
                 else
-                    fprintf(file, "\n");
+                    std::fputs(fmt::format("\n").c_str(), file);
             }
 
             
@@ -1504,7 +1498,7 @@ void roadNetwork::exportBridges() {
                 if (pnt.isBridge)
                 {
                     glm::vec3 origin = (pnt.bezier[left].pos + road.points[cnt + 1].bezier[left].pos + pnt.bezier[right].pos + road.points[cnt + 1].bezier[right].pos) * 0.25f;
-                    fprintf(listfile, "%5.4f, %5.4f, %5.4f, %s\n", origin.x, origin.y, origin.z, pnt.bridgeName.c_str());
+                    std::fputs(fmt::format("{:5.4f}, {:5.4f}, {:5.4f}, {}\n", origin.x, origin.y, origin.z, pnt.bridgeName.c_str()).c_str(), listfile);
 
                     char filename[256];
                     sprintf(filename, "%s_export//bridges//bridge_%s_%s.obj", rootPath.c_str(), blockFromPosition(origin).c_str(), pnt.bridgeName.c_str());

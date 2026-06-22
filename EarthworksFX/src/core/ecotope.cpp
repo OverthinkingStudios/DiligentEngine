@@ -72,7 +72,6 @@ void ecotope::loadTexture(int i) {
 
 void ecotope::reloadTextures(std::string _resPath)
 {
-    //fprintf(terrafectorSystem::_logfile, "loading ecotope resources from  %s\n", resPath.c_str());
 
     texAlbedo = Texture::createFromFile(_resPath + albedoName, true, false);
     texNoise = Texture::createFromFile(_resPath + noiseName, false, false);

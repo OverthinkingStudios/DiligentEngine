@@ -15,11 +15,14 @@
 #include <unordered_map>
 #include <vector>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
 #ifndef GLM_ENABLE_EXPERIMENTAL
 #    define GLM_ENABLE_EXPERIMENTAL
 #endif
+#ifndef GLM_FORCE_SWIZZLE
+#    define GLM_FORCE_SWIZZLE
+#endif
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/compatibility.hpp>
 
 #include "BasicMath.hpp"
@@ -38,6 +41,12 @@
 #    include "WinHPostface.h"
 #endif
 #include "imgui.h"
+
+// ImGui 1.92+ renamed ImFont::FontSize to LegacySize; keep Falcor-era member access working.
+#define FontSize LegacySize
+
+#include <spdlog/fmt/fmt.h>
+#include <spdlog/spdlog.h>
 
 #ifndef UCHAR
 using UCHAR = unsigned char;
@@ -115,6 +124,8 @@ struct float4x4 : public Diligent::float4x4
         std::memcpy(r.Data(), t.Data(), sizeof(float) * 16);
         return r;
     }
+
+    operator glm::mat4() const { return glm::make_mat4x4(Data()); }
 };
 
 class TriangleMesh
@@ -149,6 +160,11 @@ enum class FboAttachmentType
     Stencil = 4,
     All     = Color | Depth | Stencil,
 };
+
+inline FboAttachmentType operator|(FboAttachmentType a, FboAttachmentType b)
+{
+    return static_cast<FboAttachmentType>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
 
 struct CameraData
 {
@@ -236,6 +252,11 @@ enum BindFlags : uint32_t
     IndirectArg     = Diligent::BIND_INDIRECT_DRAW_ARGS,
     AllColorViews   = ShaderResource | RenderTarget | UnorderedAccess,
 };
+
+inline BindFlags operator|(BindFlags a, BindFlags b)
+{
+    return static_cast<BindFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
 
 enum class State
 {
@@ -338,19 +359,22 @@ class ShaderVar
 public:
     ShaderVar() = default;
 
-    ShaderVar& operator[](const char* name);
-    ShaderVar& operator[](const char* name) const;
-    ShaderVar& operator[](size_t index);
-    ShaderVar& operator[](size_t index) const;
+    ShaderVar operator[](const char* name);
+    ShaderVar operator[](const char* name) const;
+    ShaderVar operator[](size_t index);
+    ShaderVar operator[](size_t index) const;
+
+    ShaderVar& operator=(const Falcor::SharedPtr<Texture>& tex);
+    ShaderVar& operator=(const Falcor::SharedPtr<Buffer>& buf);
 
     template<typename T>
     ShaderVar& operator=(const T& value)
     {
-        (void)value;
-        return *this;
+        return assignScalar(&value, sizeof(T));
     }
 
     operator Falcor::SharedPtr<Texture>() const;
+    operator Falcor::SharedPtr<Buffer>() const;
 
     struct Node;
     std::shared_ptr<Node> m_pNode;
@@ -360,6 +384,7 @@ public:
     friend class GraphicsVars;
 
 private:
+    ShaderVar& assignScalar(const void* data, size_t size);
 };
 
 template<typename VarsT>
@@ -393,11 +418,15 @@ public:
 
     SharedPtr getParameterBlock(const char* name);
 
-    ShaderVar& findMember(const char* name);
-    ShaderVar  findMember(const char* name) const;
+    ShaderVar findMember(const char* name);
+    ShaderVar findMember(const char* name) const;
 
 private:
     std::shared_ptr<struct ComputeVarsData> m_pData;
+    std::shared_ptr<ShaderVar::Node>        m_pBlockRoot;
+
+    ShaderVar getRootVar();
+    ShaderVar getRootVar() const;
 };
 
 class GraphicsVars
@@ -420,11 +449,15 @@ public:
 
     SharedPtr getParameterBlock(const char* name);
 
-    ShaderVar& findMember(const char* name);
-    ShaderVar  findMember(const char* name) const;
+    ShaderVar findMember(const char* name);
+    ShaderVar findMember(const char* name) const;
 
 private:
     std::shared_ptr<struct GraphicsVarsData> m_pData;
+    std::shared_ptr<ShaderVar::Node>         m_pBlockRoot;
+
+    ShaderVar getRootVar();
+    ShaderVar getRootVar() const;
 };
 
 
@@ -451,7 +484,7 @@ class Texture
 public:
     using SharedPtr = Falcor::SharedPtr<Texture>;
 
-    static SharedPtr create2D(uint32_t width, uint32_t height, Falcor::ResourceFormat format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
+    static SharedPtr create2D(uint32_t width, uint32_t height, TEXTURE_FORMAT format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
     static SharedPtr create2D(uint32_t width, uint32_t height, Falcor::ResourceFormat format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
     static SharedPtr create3D(uint32_t width, uint32_t height, uint32_t depth, Falcor::ResourceFormat format, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
     static SharedPtr createFromFile(const char* path, bool srgb, bool generateMips, Resource::BindFlags bind_flags = Resource::BindFlags::ShaderResource);
@@ -764,7 +797,7 @@ class DefineList
 {
 public:
     DefineList& add(const std::string& name, const std::string& value);
-    DefineList& DefineList::remove(const std::string& name);
+    DefineList& remove(const std::string& name);
 
     const std::vector<std::pair<std::string, std::string>>& get() const { return m_Defines; }
 
@@ -875,7 +908,7 @@ public:
     void drawIndexedInstanced(GraphicsState* pState, GraphicsVars* pVars, uint32_t indexCount, uint32_t instanceCount, uint32_t startIndex, int32_t baseVertex, uint32_t startInstance);
     void drawInstanced(GraphicsState* pState, GraphicsVars* pVars, uint32_t vertexCount, uint32_t instanceCount, uint32_t startVertex, uint32_t startInstance);
 
-    void clearFbo(Fbo* pFbo, const float4& color, float depth, uint8_t stencil, FboAttachmentType attachments);
+    void clearFbo(Fbo* pFbo, const float4& color, float depth, uint8_t stencil, FboAttachmentType attachments = FboAttachmentType::All);
     void clearRtv(Diligent::ITextureView* pRtv, const float4& color);
     void clearTexture(Texture* tx);
     void blit(Diligent::ITextureView* pSrc, Diligent::ITextureView* pDst, const glm::vec4& srcRect, const glm::vec4& dstRect, Sampler::Filter filter, BlendState::SharedPtr blend = nullptr);
@@ -929,6 +962,11 @@ public:
 private:
     std::unordered_map<std::string, ImFont*> m_Fonts;
 };
+
+inline Gui::WindowFlags operator|(Gui::WindowFlags a, Gui::WindowFlags b)
+{
+    return static_cast<Gui::WindowFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
 
 namespace Input
 {
@@ -1130,10 +1168,11 @@ class EarthworksWrapper {
 public:
     EarthworksWrapper();
     ~EarthworksWrapper();
-
-private:
-    FILE* logFile;
 };
 
+inline void reportError(const std::string& msg)
+{
+    spdlog::error("{}", msg);
+}
 
 } // namespace Falcor

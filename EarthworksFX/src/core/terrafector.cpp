@@ -11,6 +11,7 @@
 #include <iostream>
 #include <filesystem>
 #include "roads_materials.h"
+#include "ots/Log.hpp"
 
 //lodTriangleMesh     terrafectorSystem::lod_4_mesh;
 
@@ -24,79 +25,44 @@ const JLogger::SharedPtr& JLogger::instancePtr()
 
 void JLogger::log(uint _type, std::string _text)
 {
-    tab(stack.size());
-    time_stack();
-    type(_type);
-    fprintf(file, "%s\n", _text.c_str());
-    fflush(file);
+    const float delta_s = stack.empty() ? elapsedSecondsSince(startTime) : elapsedSecondsSince(stack.top().startTime);
+    spdlog::log(levelForType(_type), "{}{:.3f} {{{}}} {}", indent(static_cast<int>(stack.size())), delta_s, typeLabel(_type), _text);
 }
 
 void JLogger::logMulti(uint _type, std::string _text)
 {
-    tab(stack.size());
-    fprintf(file, "    %s\n", _text.c_str());
+    spdlog::log(levelForType(_type), "{}{}", indent(static_cast<int>(stack.size())), _text);
 }
 
 void JLogger::startBlock(char *_name, uint _type)
 {
-    tab(stack.size());
-    time();
-    fprintf(file, "    %s {     \n", _name);
+    const float delta_s = elapsedSecondsSince(startTime);
+    spdlog::log(levelForType(_type), "{}{:.3f} {} {{", indent(static_cast<int>(stack.size())), delta_s, _name);
     stack.emplace();
     stack.top().startTime = high_resolution_clock::now();
     stack.top().type = _type;
-    fflush(file);
 }
 
 void JLogger::endBlock()
 {
-    
-    tab(stack.size() - 1);
-    fprintf(file, "}  ");
-    time_stack();
-    fprintf(file, "\n\n");
+    if (stack.empty())
+        return;
+
+    const float delta_s = elapsedSecondsSince(stack.top().startTime);
+    spdlog::info("{} }} {:.3f}", indent(static_cast<int>(stack.size()) - 1), delta_s);
     stack.pop();
-    fflush(file);
 }
 
 void JLogger::open(char *_name)
 {
-    file = fopen(_name, "w");
+    (void)_name;
     startTime = high_resolution_clock::now();
 }
 
 void JLogger::close()
 {
-    fclose(file);
-}
-
-
-void JLogger::tab(int depth)
-{
-    for (int i = 0; i < depth; i++)
-    {
-        fprintf(file, "    ");
-    }
-}
-
-void JLogger::time()
-{
-    auto a = high_resolution_clock::now();
-    float delta_s = (float)duration_cast<microseconds>(a - startTime).count() / 1000000.;
-    fprintf(file, "%4.3f  ", delta_s);
-}
-
-void JLogger::time_stack()
-{
-    auto a = high_resolution_clock::now();
-    float delta_s = (float)duration_cast<microseconds>(a - stack.top().startTime).count() / 1000000.;
-    fprintf(file, "%4.3f ", delta_s);
-}
-
-void JLogger::type(uint _type)
-{
-    std::string logTypes[4] = { "verb", "info", "warn", "erro" };
-    fprintf(file, "{%s} ", logTypes[_type].c_str());
+    while (!stack.empty())
+        stack.pop();
 }
 
 //#pragma optimize( "", off )
@@ -333,15 +299,15 @@ void lodTriangleMesh::prepForMesh(aiAABB _aabb, uint _size, std::string _name, b
     float zRange = _aabb.mMax.z - _aabb.mMin.z;
     if ((_aabb.mMin.z < -1) || (_aabb.mMax.z < -1))
     {
-        fprintf(terrafectorSystem::_logfile, "          YZ-flip error likely: z values are negative\n");
+        spdlog::error("YZ-flip error likely: z values are negative");
     }
     if ((_aabb.mMin.z > 2000) || (_aabb.mMax.z > 2000))
     {
-        fprintf(terrafectorSystem::_logfile, "          YZ-flip error likely: z values larger than 2000m\n");
+        spdlog::error("YZ-flip error likely: z values larger than 2000m");
     }
     if (yRange < zRange)
     {
-        fprintf(terrafectorSystem::_logfile, "          YZ-flip error likely: yRange < zRange\n");
+        spdlog::error("YZ-flip error likely: yRange < zRange");
     }
 }
 
@@ -441,8 +407,7 @@ void lodTriangleMesh::logStats()
     int i = 0;
     for (auto& tile : tiles) {
         if (tile.verts.size() > 0) {
-            fprintf(terrafectorSystem::_logfile, "\n		(%d, %d) - %d)\n", i >> 4, i & 0xf, (int)tile.verts.size());
-            fflush(terrafectorSystem::_logfile);
+            spdlog::info("({}, {}) - {})", i >> 4, i & 0xf, (int)tile.verts.size());
         }
         i++;
     }
@@ -603,8 +568,8 @@ void lodTriangleMesh_LoadCombiner::loadToGPU(std::string _path, bool _log)
 
                 if (_log)
                 {
-                    if (i % (int)(pow(2, lod)) == 0)fprintf(terrafectorSystem::_logfile, "\n");
-                    fprintf(terrafectorSystem::_logfile, "%7.d ", gpuTiles[i].numVerts);
+                    spdlog::info("");
+                    spdlog::info("{}", gpuTiles[i].numVerts);
                 }
             }
             fclose(file);
@@ -617,9 +582,9 @@ void lodTriangleMesh_LoadCombiner::loadToGPU(std::string _path, bool _log)
 
     if (_log)
     {
-        fprintf(terrafectorSystem::_logfile, "\n  lod %d  %dx%d\n", lod, grid, grid);
-        fprintf(terrafectorSystem::_logfile, "  block with most triangles has %d\n", mostTri / 3);
-        fprintf(terrafectorSystem::_logfile, "  %d Mb VB   %d Mb IB\n\n", vertexData / 1024 / 1024, indexData / 1024 / 1024);
+        spdlog::info("lod {}  {}x{}", lod, grid, grid);
+        spdlog::info("block with most triangles has {}", mostTri / 3);
+        spdlog::info("{} Mb VB   {} Mb IB", vertexData / 1024 / 1024, indexData / 1024 / 1024);
     }
 
 
@@ -631,11 +596,8 @@ void lodTriangleMesh_LoadCombiner::loadToGPU(std::string _path, bool _log)
 // ############################################################################################################################
 std::string materialCache::getRelative(std::string _path)
 {
-    //fprintf(terrafectorSystem::_logfile, "path -  %s\n", _path.c_str());
     cleanPath(_path);
     cleanPath(terrafectorEditorMaterial::rootFolder);
-    //fprintf(terrafectorSystem::_logfile, "cleanpath -  %s\n", _path.c_str());
-    //fprintf(terrafectorSystem::_logfile, "root -  %s\n", terrafectorEditorMaterial::rootFolder.c_str());
     if (_path.find(terrafectorEditorMaterial::rootFolder) == 0)
     {
         _path = _path.substr(terrafectorEditorMaterial::rootFolder.length());
@@ -693,8 +655,8 @@ uint materialCache::find_insert_material(const std::string _path, const std::str
     }
 
     // we got here, not good
-    for (uint i = 0; i < logTab; i++)   fprintf(terrafectorSystem::_logfile, "  ");
-    fprintf(terrafectorSystem::_logfile, "error : material - %s does not exist\n", _name.c_str());
+    spdlog::info("");
+    spdlog::error("error : material - {} does not exist", _name.c_str());
     logTab--;
 
     return 0;
@@ -712,8 +674,6 @@ uint materialCache::find_insert_material(const std::filesystem::path _path)
     {
         if (materialVector[i].fullPath.compare(_path) == 0)
         {
-            //for (uint i = 0; i < logTab; i++)   fprintf(terrafectorSystem::_logfile, "  ");
-            //fprintf(terrafectorSystem::_logfile, "materialCache - found (%s)\n", _path.filename().string().c_str());
             logTab--;
 
             if (!materialVector[i].thumbnail) {
@@ -733,9 +693,8 @@ uint materialCache::find_insert_material(const std::filesystem::path _path)
     material.import(_path);
     material.thumbnail = Texture::createFromFile(_path.string() + ".jpg", false, true);
 
-    for (uint i = 0; i < logTab; i++)   fprintf(terrafectorSystem::_logfile, "  ");
-    fprintf(terrafectorSystem::_logfile, "add Material[%d] - %s\n", materialIndex, _path.filename().string().c_str());
-    fflush(terrafectorSystem::_logfile);
+    spdlog::info("");
+    spdlog::info("add Material[{}] - {}", materialIndex, _path.filename().string().c_str());
 
     logTab--;
     return materialIndex;
@@ -764,7 +723,7 @@ int materialCache::find_insert_texture(const std::filesystem::path _path, bool i
         std::string pathOnly = ddsFilename.substr(0, ddsFilename.find_last_of("\\/") + 1);
         std::string cmdExp = "F:\\terrains\\_resources\\Compressonator\\CompressonatorCLI -miplevels 6 \"" + _path.string() + "\" " + "F:\\terrains\\_resources\\Compressonator\\temp_mip.dds";
 
-        fprintf(terrafectorSystem::_logfile, "%s\n", cmdExp.c_str());
+        spdlog::info("{}", cmdExp.c_str());
         system(cmdExp.c_str());
         if (isSRGB)
         {
@@ -789,18 +748,16 @@ int materialCache::find_insert_texture(const std::filesystem::path _path, bool i
 
         texture_memory_in_Mb += (float)(tex->getWidth() * tex->getHeight() * 4.0f * 1.333f) / 1024.0f / 1024.0f / compression;	// for 4:1 compression + MIPS
 
-        for (uint i = 0; i < logTab; i++)   fprintf(terrafectorSystem::_logfile, "  ");
-        fprintf(terrafectorSystem::_logfile, "%s\n", tex->getName().c_str());
-        fflush(terrafectorSystem::_logfile);
+        spdlog::info("");
+        spdlog::info("{}", tex->getName().c_str());
 
         logTab--;
         return (uint)(textureVector.size() - 1);
     }
     else
     {
-        for (uint i = 0; i < logTab; i++)   fprintf(terrafectorSystem::_logfile, "  ");
-        fprintf(terrafectorSystem::_logfile, "failed %s \n", _path.string().c_str());
-        fflush(terrafectorSystem::_logfile);
+        spdlog::info("");
+        spdlog::error("failed {}", _path.string().c_str());
 
         logTab--;
         return -1;
@@ -1282,7 +1239,7 @@ void terrafectorElement::splitAndCacheMesh(const std::string _path)
         {
             aiMesh* M = scene->mMeshes[i];
 
-            fprintf(terrafectorSystem::_logfile, "BB (%f - %f,%f - %f,%f - %f) \n", M->mAABB.mMin.x, M->mAABB.mMax.x, M->mAABB.mMin.y, M->mAABB.mMax.y, M->mAABB.mMin.z, M->mAABB.mMax.z);
+            spdlog::info("BB ({} - {},{} - {},{} - {})", M->mAABB.mMin.x, M->mAABB.mMax.x, M->mAABB.mMin.y, M->mAABB.mMax.y, M->mAABB.mMin.z, M->mAABB.mMax.z);
 
             lodder_2.prepForMesh(M->mAABB, M->mNumVertices, scene->mMaterials[M->mMaterialIndex]->GetName().C_Str(), true);
             lodder_4.prepForMesh(M->mAABB, M->mNumVertices, scene->mMaterials[M->mMaterialIndex]->GetName().C_Str(), true);
@@ -1369,9 +1326,8 @@ terrafectorElement& terrafectorElement::find_insert(const std::string _name, tfT
 
     if (_type == tf_heading)
     {
-        for (uint i = 0; i < logTab; i++)   fprintf(terrafectorSystem::_logfile, "  ");
-        fprintf(terrafectorSystem::_logfile, "%s\n", _name.c_str());
-        fflush(terrafectorSystem::_logfile);
+        spdlog::info("");
+        spdlog::info("{}", _name.c_str());
     }
 
     if (_type == tf_fbx)
@@ -1383,9 +1339,8 @@ terrafectorElement& terrafectorElement::find_insert(const std::string _name, tfT
         std::string fullName = _path;
         std::string fullPath = fullName.substr(0, fullName.find_last_of("\\/") + 1);
 
-        for (uint i = 0; i < logTab; i++)   fprintf(terrafectorSystem::_logfile, "  ");
-        fprintf(terrafectorSystem::_logfile, "add mesh - %s\n", fullName.c_str());
-        fflush(terrafectorSystem::_logfile);
+        spdlog::info("");
+        spdlog::info("add mesh - {}", fullName.c_str());
 
 
         if (forceAllTerrfectorRebuild || !isMeshCached(_path)) {
@@ -2221,7 +2176,7 @@ void terrafectorSystem::loadPath(std::string _path, std::string _exportPath, boo
 {
     forceAllTerrfectorRebuild = _rebuild;
 
-    fprintf(terrafectorSystem::_logfile, "terrafectorSystem::loadPath    %s\n", _path.c_str());
+    spdlog::info("terrafectorSystem::loadPath    {}", _path.c_str());
     logTab = 0;
 
     terrafectorSystem::loadCombine_LOD2.create(2);
@@ -2235,38 +2190,30 @@ void terrafectorSystem::loadPath(std::string _path, std::string _exportPath, boo
     terrafectorSystem::loadCombine_LOD4_overlay.create(4);
 
     root.loadPath(_path);
-    fprintf(terrafectorSystem::_logfile, "\n\n");
+    spdlog::info("");
 
     bool donotlog = false;
-    //fprintf(terrafectorSystem::_logfile, "loadCombine_LOD2.loadToGPU()\n");
     terrafectorSystem::loadCombine_LOD2.loadToGPU(_exportPath + "/terrafector_lod2.gpu", donotlog);   // this also releases CPU memory
-    //fprintf(terrafectorSystem::_logfile, "loadCombine_LOD4.loadToGPU()\n");
     terrafectorSystem::loadCombine_LOD4.loadToGPU(_exportPath + "/terrafector_lod4.gpu", donotlog);   // this also releases CPU memory
-    //fprintf(terrafectorSystem::_logfile, "loadCombine_LOD6.loadToGPU()\n");
     terrafectorSystem::loadCombine_LOD6.loadToGPU(_exportPath + "/terrafector_lod6.gpu", donotlog);   // this also releases CPU memory
 
-    //fprintf(terrafectorSystem::_logfile, "loadCombine_LOD4_top.loadToGPU()\n");
     terrafectorSystem::loadCombine_LOD4_top.loadToGPU(_exportPath + "/terrafector_lod4_top.gpu", donotlog);   // this also releases CPU memory
-    //fprintf(terrafectorSystem::_logfile, "loadCombine_LOD6_top.loadToGPU()\n");
     terrafectorSystem::loadCombine_LOD6_top.loadToGPU(_exportPath + "/terrafector_lod6_top.gpu", donotlog);   // this also releases CPU memory
 
 
-    //fprintf(terrafectorSystem::_logfile, "loadCombine_LOD4_bakeLow.loadToGPU()\n");
     terrafectorSystem::loadCombine_LOD4_bakeLow.loadToGPU("", donotlog);   // this also releases CPU memory
-    //fprintf(terrafectorSystem::_logfile, "loadCombine_LOD4_bakeHigh.loadToGPU()\n");
     terrafectorSystem::loadCombine_LOD4_bakeHigh.loadToGPU("", donotlog);   // this also releases CPU memory
-    //fprintf(terrafectorSystem::_logfile, "loadCombine_LOD4_overlay.loadToGPU()\n");
     terrafectorSystem::loadCombine_LOD4_overlay.loadToGPU("", donotlog);   // this also releases CPU memory
 
     terrafectorEditorMaterial::static_materials.rebuildAll();
 
     /*
-    fprintf(terrafectorSystem::_logfile, "\n\nmeshLoadCombiner\n");
+    spdlog::info("meshLoadCombiner");
     for (int y = 0; y < 16; y++) {
         for (int x = 0; x < 16; x++) {
-            fprintf(terrafectorSystem::_logfile, "%6d", terrafectorSystem::loadCombine_LOD4_bakeLow.getTile(y * 16 + x)->numVerts);
+            spdlog::info("{}", terrafectorSystem::loadCombine_LOD4_bakeLow.getTile(y * 16 + x)->numVerts);
         }
-        fprintf(terrafectorSystem::_logfile, "\n");
+        spdlog::info("");
     }
     */
 }
@@ -2299,7 +2246,7 @@ void terrafectorSystem::exportMaterialBinary(std::string _path, std::string _evo
             //C:/Kunos/acevo_content/content/
             if (!std::filesystem::exists(_evoRoot + path))
             {
-                fprintf(terrafectorSystem::_logfile, "EVO _ DOES NOT EXISTS %s\n", (_evoRoot + path).c_str());
+                spdlog::info("EVO _ DOES NOT EXISTS {}", (_evoRoot + path).c_str());
             }
         }
 

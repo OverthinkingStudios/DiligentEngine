@@ -99,14 +99,17 @@ void EarthworksFXSample::Initialize(const SampleInitInfo& InitInfo)
 
     m_RenderContext = Falcor::RenderContext{m_pImmediateContext};
 
+    try {
+        ScopedFalcorFramework scope{&m_Framework};
+        m_Earthworks.onLoad(&m_RenderContext);
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to initialize EarthworksFX: " << e.what() << std::endl;
+        throw;
+    }
+
     const auto& scDesc = m_pSwapChain->GetDesc();
     m_Earthworks.onResizeSwapChain(scDesc.Width, scDesc.Height);
     m_TargetFbo = CreateSwapChainTargetFbo(m_pSwapChain);
-
-    {
-        ScopedFalcorFramework scope{&m_Framework};
-        m_Earthworks.onLoad(&m_RenderContext);
-    }
 
     m_Initialized = true;
 }

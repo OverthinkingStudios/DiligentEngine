@@ -100,7 +100,7 @@ int materialCache_plants::find_insert_material(const std::string _path, const st
         }
     }
 
-    fprintf(terrafectorSystem::_logfile, "error : vegetation material - %s does not exist\n", _name.c_str());
+    spdlog::error("error : vegetation material - {} does not exist", _name.c_str());
     return -1;
 }
 
@@ -128,7 +128,7 @@ int materialCache_plants::find_insert_material(const std::filesystem::path _path
         _plantMaterial& material = materialVector.emplace_back();
         material.import(_path);
         material.makeRelative(_path);
-        fprintf(terrafectorSystem::_logfile, "add vegeatation material[%d] - %s\n", materialIndex, _path.filename().string().c_str());
+        spdlog::info("add vegeatation material[{}] - {}", materialIndex, _path.filename().string().c_str());
         return materialIndex;
     }
 
@@ -181,20 +181,20 @@ int materialCache_plants::find_insert_texture(const std::filesystem::path _path,
 
             std::string cmdExp = comprs + " -miplevels 6  \"" + _path.string() + "\"  " + temp;
             replaceAllVEG(cmdExp, "/", "\\");
-            fprintf(terrafectorSystem::_logfile, "%s\n", cmdExp.c_str());
+            spdlog::info("{}", cmdExp.c_str());
             system(cmdExp.c_str());
             if (isSRGB)
             {
                 std::string cmdExp2 = comprs + " -fd BC7 -Quality 0.01 " + temp + ddsFilename;
                 replaceAllVEG(cmdExp2, "/", "\\");
-                fprintf(terrafectorSystem::_logfile, "%s\n", cmdExp2.c_str());
+                spdlog::info("{}", cmdExp2.c_str());
                 system(cmdExp2.c_str());
             }
             else
             {
                 std::string cmdExp2 = comprs + " -fd BC6H " + temp + ddsFilename;
                 replaceAllVEG(cmdExp2, "/", "\\");
-                fprintf(terrafectorSystem::_logfile, "%s\n", cmdExp2.c_str());
+                spdlog::info("{}", cmdExp2.c_str());
                 system(cmdExp2.c_str());
 
             }
@@ -213,13 +213,13 @@ int materialCache_plants::find_insert_texture(const std::filesystem::path _path,
 
         texMb += (float)(tex->getWidth() * tex->getHeight() * 4.0f * 1.333f) / 1024.0f / 1024.0f / compression;	// for 4:1 compression + MIPS
 
-        fprintf(terrafectorSystem::_logfile, "%s\n", tex->getName().c_str());
+        spdlog::info("{}", tex->getName().c_str());
 
         return (uint)(textureVector.size() - 1);
     }
     else
     {
-        fprintf(terrafectorSystem::_logfile, "failed %s \n", _path.string().c_str());
+        spdlog::error("failed {}", _path.string().c_str());
         return -1;
     }
 
@@ -798,22 +798,22 @@ void _plantRND::loadFromFile()
         if (filepath.string().find(".leaf") != std::string::npos)
         {
             plantPtr.reset(new _leafBuilder); type = P_LEAF;
-            fprintf(terrafectorSystem::_logfile, "_plantRND   _leafBuilder  %s\n", filepath.string().c_str());
+            spdlog::info("_plantRND   _leafBuilder  {}", filepath.string().c_str());
         }
         if (filepath.string().find(".stem") != std::string::npos)
         {
             plantPtr.reset(new _stemBuilder);  type = P_STEM;
-            fprintf(terrafectorSystem::_logfile, "_plantRND   _stemBuilder  %s\n", filepath.string().c_str());
+            spdlog::info("_plantRND   _stemBuilder  {}", filepath.string().c_str());
         }
         if (filepath.string().find(".clump") != std::string::npos)
         {
             plantPtr.reset(new _clumpBuilder);  type = P_CLUMP;
-            fprintf(terrafectorSystem::_logfile, "_plantRND   _clumpBuilder  %s\n", filepath.string().c_str());
+            spdlog::info("_plantRND   _clumpBuilder  {}", filepath.string().c_str());
         }
         if (filepath.string().find(".flower") != std::string::npos)
         {
             plantPtr.reset(new _flowerBuilder);  type = P_FLOWER;
-            fprintf(terrafectorSystem::_logfile, "_plantRND   _flowerBuilder  %s\n", filepath.string().c_str());
+            spdlog::info("_plantRND   _flowerBuilder  {}", filepath.string().c_str());
         }
 
         path = materialCache::getRelative(filepath.string());
@@ -821,7 +821,6 @@ void _plantRND::loadFromFile()
         plantPtr->path = path;
         plantPtr->name = name;
         plantPtr->loadPath();
-        fflush(terrafectorSystem::_logfile);
     }
 }
 
@@ -834,19 +833,19 @@ void _plantRND::reload()
         {
         case P_LEAF:
             plantPtr.reset(new _leafBuilder);
-            fprintf(terrafectorSystem::_logfile, "_plantRND   _leafBuilder  %s\n", path.c_str());
+            spdlog::info("_plantRND   _leafBuilder  {}", path.c_str());
             break;
         case P_STEM:
             plantPtr.reset(new _stemBuilder);
-            fprintf(terrafectorSystem::_logfile, "_plantRND   _stemBuilder  %s\n", path.c_str());
+            spdlog::info("_plantRND   _stemBuilder  {}", path.c_str());
             break;
         case P_CLUMP:
             plantPtr.reset(new _clumpBuilder);
-            fprintf(terrafectorSystem::_logfile, "_plantRND   _clumpBuilder  %s\n", path.c_str());
+            spdlog::info("_plantRND   _clumpBuilder  {}", path.c_str());
             break;
         case P_FLOWER:
             plantPtr.reset(new _flowerBuilder);
-            fprintf(terrafectorSystem::_logfile, "_plantRND   _flowerBuilder  %s\n", path.c_str());
+            spdlog::info("_plantRND   _flowerBuilder  {}", path.c_str());
             break;
         default:  plantPtr.reset();  break;
         }
@@ -947,8 +946,7 @@ void _randomBranch::reload()
         default:  plantPtr.reset();  break;
         }
 
-        fprintf(terrafectorSystem::_logfile, "_randomBranch::reload  %s\n", path.c_str());
-        fflush(terrafectorSystem::_logfile);
+        spdlog::info("_randomBranch::reload  {}", path.c_str());
 
         if (plantPtr)
         {
@@ -1340,7 +1338,6 @@ glm::mat4 _leafBuilder::build(buildSetting _settings, bool _addVerts)
             _ribbonBuilder.startRibbon(true, _settings.pivotIndex);
             _ribbonBuilder.set(node, width * 0.5f, stem_Material.index, float2(1.f, 0.f), 1.f, 1.f, !(pivotType == pivot_leaf), stiffness, freq);
             stemVisible = true;
-            //fprintf(terrafectorSystem::_logfile, "  leaf-stem : mat %d  -  % \n", stem_Material.index, stem_Material.name.c_str());
         }
 
         for (int i = 0; i < 100; i++)
@@ -1368,7 +1365,6 @@ glm::mat4 _leafBuilder::build(buildSetting _settings, bool _addVerts)
     // build the leaf
     {
         _vegMaterial mat = materials.get();
-        //fprintf(terrafectorSystem::_logfile, "  leaf : mat %d  -  % \n", mat.index, mat.name.c_str());
         float albedoScale = RND_ALBEDO(glm::lerp(mat.albedoScale.y, mat.albedoScale.x, age));
         float translucentScale = glm::lerp(mat.translucencyScale.y, mat.translucencyScale.x, age);
 
@@ -1703,7 +1699,6 @@ glm::mat4  _flowerBuilder::build_2(buildSetting _settings, uint _bakeIndex, bool
         float w = lB.extents.x * lB.bakeWidth;
         uint mat = lB.material.index;
 
-        //fprintf(terrafectorSystem::_logfile, "  _stemBuilder::build_2 : mat %d  -  % \n", lB.material.index, lB.material.name.c_str());
         _ribbonBuilder.startRibbon(lB.faceCamera, _settings.pivotIndex);
         PITCH(node, 1.57f);
         GROW(node, -w);
@@ -1784,7 +1779,6 @@ glm::mat4 _flowerBuilder::build(buildSetting _settings, bool _addVerts)
                         _ribbonBuilder.startRibbon(true, _settings.pivotIndex);
                         _ribbonBuilder.set(node, width * 0.5f, stem_Material.index, float2(1.f, 0.f), 1.f, 1.f, !(pivot_leaf), stiffness, freq);
                         stemVisible = true;
-                        //fprintf(terrafectorSystem::_logfile, "  leaf-stem : mat %d  -  % \n", stem_Material.index, stem_Material.name.c_str());
                     }
 
                     for (int i = 0; i < 100; i++)
@@ -2234,7 +2228,6 @@ glm::mat4  _stemBuilder::build_2(buildSetting _settings, uint _bakeIndex, bool _
         node[1] = tangent;
         last[1] = tangent;
 
-        //fprintf(terrafectorSystem::_logfile, "  _stemBuilder::build_2 : mat %d  -  % \n", lB.material.index, lB.material.name.c_str());
         _ribbonBuilder.startRibbon(lB.faceCamera, _settings.pivotIndex);
         _ribbonBuilder.set(node, w, mat, float2(1.f, 1.f), 1.f, 1.f, true, 0.5f, 0.1f, 0.0f, true);
         _ribbonBuilder.set(last, w, mat, float2(1.f, 0.f), 1.f, 1.f, true, 0.5f, 0.1f, 0.0f, true);
@@ -2271,7 +2264,6 @@ glm::mat4  _stemBuilder::build_4(buildSetting _settings, uint _bakeIndex, bool _
     //step *= (lB.bake_V.y - lB.bake_V.x) / 3.f;
    // binorm_step *= (lB.bake_V.y - lB.bake_V.x) / 3.f;
 
-    //fprintf(terrafectorSystem::_logfile, "  _stemBuilder::build_4 : mat %d  -  % \n", lB.material.index, lB.material.name.c_str());
     _ribbonBuilder.startRibbon(lB.faceCamera, _settings.pivotIndex);
 
     for (int i = 0; i < 4; i++)
@@ -2327,7 +2319,6 @@ glm::mat4  _stemBuilder::build_n(buildSetting _settings, uint _bakeIndex, bool _
     step *= (lB.bake_V.y - lB.bake_V.x) / 6.f;
     binorm_step *= (lB.bake_V.y - lB.bake_V.x) / 6.f;
 
-    //fprintf(terrafectorSystem::_logfile, "  _stemBuilder::build_4 : mat %d  -  % \n", lB.material.index, lB.material.name.c_str());
     _ribbonBuilder.startRibbon(lB.faceCamera, _settings.pivotIndex);
 
     for (int i = 0; i < 7; i++)
@@ -2391,8 +2382,6 @@ void _stemBuilder::build_tip(buildSetting _settings, bool _addVerts)
         {
             if (_addVerts)
             {
-                //for (int i = 0; i < _settings.callDepth; i++) fprintf(terrafectorSystem::_logfile, "    ");
-                //fprintf(terrafectorSystem::_logfile, "tip - %d     %s\n", _settings.pivotDepth, this->name.c_str());
             }
             _settings.node_age = RND_B(tip_age);
             tip_NODE = tip.get().plantPtr->build(_settings, _addVerts);
@@ -2589,8 +2578,6 @@ void _stemBuilder::build_NODES(buildSetting _settings, bool _addVerts)
 
     bool visible = root_width > pixRandFoViz && (stem_Material.index >= 0);
     if (_addVerts && visible) {
-        //fprintf(terrafectorSystem::_logfile, "  _stemBuilder::build_NODES : mat %d  -  % \n", stem_Material.index, stem_Material.name.c_str());
-        //fprintf(terrafectorSystem::_logfile, "(%d, %d, %d, %d)\n", _settings.pivotIndex[0], _settings.pivotIndex[1], _settings.pivotIndex[2], _settings.pivotIndex[3]);
         _ribbonBuilder.startRibbon(true, _settings.pivotIndex);
         _ribbonBuilder.set(node, root_width * 0.5f, stem_Material.index, float2(1.f, V), 1.f, 1.f);   // set very first one
     }
@@ -2744,8 +2731,8 @@ glm::mat4 _stemBuilder::build(buildSetting _settings, bool _addVerts)
 {
     if (_addVerts)
     {
-        for (int i = 0; i < _settings.callDepth; i++) fprintf(terrafectorSystem::_logfile, "    ");
-        fprintf(terrafectorSystem::_logfile, "%s\n", this->name.c_str());
+        spdlog::info("    {}", std::string(static_cast<size_t>(_settings.callDepth) * 4, ' '));
+        spdlog::info("{}", this->name.c_str());
     }
 
     _settings.callDepth++;
@@ -2783,12 +2770,12 @@ glm::mat4 _stemBuilder::build(buildSetting _settings, bool _addVerts)
             numPivots++;
 
 
-            for (int i = 0; i < _settings.callDepth; i++) fprintf(terrafectorSystem::_logfile, "    ");
-            fprintf(terrafectorSystem::_logfile, "add pivot {%d}\n", _settings.pivotDepth);
+            spdlog::info("    {}", std::string(static_cast<size_t>(_settings.callDepth) * 4, ' '));
+            spdlog::info("add pivot {{}}", _settings.pivotDepth);
         }
         else
         {
-            fprintf(terrafectorSystem::_logfile, "pivot depth exceeded\n");
+            spdlog::info("pivot depth exceeded");
         }
     }
 
@@ -2811,8 +2798,8 @@ glm::mat4 _stemBuilder::build(buildSetting _settings, bool _addVerts)
             }
         }
 
-        for (int i = 0; i < _settings.callDepth; i++) fprintf(terrafectorSystem::_logfile, "    ");
-        fprintf(terrafectorSystem::_logfile, "lod - %d, settings - %2.1fmm,lod - %2,1fmm\n", lodIndex, _settings.pixelSize * 1000.f, lod.pixelSize);
+        spdlog::info("    {}", std::string(static_cast<size_t>(_settings.callDepth) * 4, ' '));
+        spdlog::info("lod - {}, settings - {:.1f}mm,lod - {:.1f}mm", lodIndex, _settings.pixelSize * 1000.f, lod.pixelSize);
 
         // HUHGE FUCKING WARNING IF NOT TRUE
         if (lodInfo.size() > 0)
@@ -2828,15 +2815,12 @@ glm::mat4 _stemBuilder::build(buildSetting _settings, bool _addVerts)
             if (lod.useGeometry || _settings.isBaking)
             {
 
-                //for (int i = 0; i < buildTAB; i++) fprintf(terrafectorSystem::_logfile, "    ");
-                //fprintf(terrafectorSystem::_logfile, "TIP, %d, (%d, %d, %d, %d)\n", _settings.pivotDepth, _settings.pivotIndex[0], _settings.pivotIndex[1], _settings.pivotIndex[2], _settings.pivotIndex[3]);
                 build_tip(_settings, true);
                 tipVerts = _ribbonBuilder.numVerts();
 
                 if (lod.bakeType == BAKE_NONE || _settings.isBaking)      // Only build nodes if we dont use the core bake at all, or we are Baking
                 {
-                    for (int i = 0; i < _settings.callDepth; i++) fprintf(terrafectorSystem::_logfile, "    ");
-                    //fprintf(terrafectorSystem::_logfile, "NODES, %d, (%d, %d, %d, %d)\n", _settings.pivotDepth, _settings.pivotIndex[0], _settings.pivotIndex[1], _settings.pivotIndex[2], _settings.pivotIndex[3]);
+                    spdlog::info("    {}", std::string(static_cast<size_t>(_settings.callDepth) * 4, ' '));
                     build_NODES(_settings, true);
                 }
 
@@ -3882,10 +3866,8 @@ void _rootPlant::onLoad()
     for (int i = 0; i < 1024; i++)
     {
         perlinData[i] = (float)perlin.normalizedOctave1D((float)i / 8.f, 4, 0.5);
-        //fprintf(terrafectorSystem::_logfile, "%f, ", perlinData[i]);
         sum += perlinData[i];
     }
-    //fprintf(terrafectorSystem::_logfile, "\n sum %f, \n\n", sum);
 
     sum /= 1024.f;
     for (int i = 0; i < 1024; i++)
@@ -4649,8 +4631,7 @@ void _rootPlant::renderGui_Baking(Gui* _gui)
                 style.Colors[ImGuiCol_Button] = ImVec4(0.01f, 0.01f, 0.01f, 1.f);
                 if (ImGui::Button("Bake materials", ImVec2(columnWidth - 25, 40)))
                 {
-                    fprintf(terrafectorSystem::_logfile, "\n New bake started - %s \n", root->name.c_str());
-                    fflush(terrafectorSystem::_logfile);
+                    spdlog::info("New bake started - {}", root->name.c_str());
 
                     std::filesystem::path PT = selectedPart->path;
                     std::string resource = terrafectorEditorMaterial::rootFolder;
@@ -4663,8 +4644,7 @@ void _rootPlant::renderGui_Baking(Gui* _gui)
                     std::string makeCmd = "mkdir " + newDir; //"\"" + resource + PT.parent_path().string() + "\\bake_" + PT.stem().string() + "\"";
                     //replaceAllVEG(newDir, "/", "\\");
                     system(makeCmd.c_str());
-                    fprintf(terrafectorSystem::_logfile, "%s \n", makeCmd.c_str());
-                    fflush(terrafectorSystem::_logfile);
+                    spdlog::info("{}", makeCmd.c_str());
 
                     for (int seed = 1000; seed < 1001; seed++)
                     {
@@ -4674,11 +4654,10 @@ void _rootPlant::renderGui_Baking(Gui* _gui)
                             if (lod)
                             {
                                 settings.pixelSize = lod->pixelSize * 0.001f;
-                                fprintf(terrafectorSystem::_logfile, "lod found - %d, %2.2fmm \n", j, lod->pixelSize * 1000.f);
+                                spdlog::info("lod found - {}, {:.2f}mm", j, lod->pixelSize * 1000.f);
                             }
                         }
 
-                        fflush(terrafectorSystem::_logfile);
                         settings.seed = seed;
                         //settings.pixelSize = 0.01f;
                         settings.isBaking = true;    //??????
@@ -4686,8 +4665,7 @@ void _rootPlant::renderGui_Baking(Gui* _gui)
                         //build(true); // For baking
                         buildFullResolution();
                         settings.isBaking = false;
-                        fprintf(terrafectorSystem::_logfile, "build done - %d verts \n", (int)_ribbonBuilder.numPacked());
-                        fflush(terrafectorSystem::_logfile);
+                        spdlog::info("build done - {} verts", (int)_ribbonBuilder.numPacked());
 
                         bakeViewMatrix = glm::mat4(1.0);
                         glm::mat4 tip = selectedPart->getTip(true); // FIXME later bool for stem length only
@@ -4711,8 +4689,6 @@ void _rootPlant::renderGui_Baking(Gui* _gui)
                         bakeViewAdjusted[2][2] = d.z;
 
 
-                        //fprintf(terrafectorSystem::_logfile, "\n\nBAKE\n");
-                        //fflush(terrafectorSystem::_logfile);
 
 
                         extents = selectedPart->calculate_extents(bakeViewAdjusted);
@@ -5742,15 +5718,14 @@ void _rootPlant::buildAllLods()
     LOGTHEBUILD = true;
     if (LOGTHEBUILD)
     {
-        fprintf(terrafectorSystem::_logfile, "\nbuildAllLods()n");
+        spdlog::info("buildAllLods()n");
     }
 
     displayModeSinglePlant = false;
 
     uint start = 0;
     float Y = extents.y;
-    fprintf(terrafectorSystem::_logfile, "buildAllLods() Y = %2.2fm\n", Y);
-    fflush(terrafectorSystem::_logfile);
+    spdlog::info("buildAllLods() Y = {:.2f}m", Y);
 
     _ribbonBuilder.clear();
 
@@ -5787,8 +5762,7 @@ void _rootPlant::buildAllLods()
             levelOfDetail* lodInfo = root->getLodInfo(lod);
             if (lodInfo)
             {
-                fprintf(terrafectorSystem::_logfile, "lod %d : pixelSize = %2.2fmm\n", lod, lodInfo->pixelSize);
-                fflush(terrafectorSystem::_logfile);
+                spdlog::info("lod {} : pixelSize = {:.2f}mm", lod, lodInfo->pixelSize);
 
                 //lodInfo->pixelSize = Y / lodInfo->numPixels;// *lodInfo->geometryPixelScale;
                 settings.pixelSize = lodInfo->pixelSize * 0.001f;
@@ -5800,8 +5774,7 @@ void _rootPlant::buildAllLods()
                 lodInfo->unused = _ribbonBuilder.numPacked() - _ribbonBuilder.numVerts();
                 lodInfo->startBlock = start;
 
-                fprintf(terrafectorSystem::_logfile, "post build %d verts\n", lodInfo->numVerts);
-                fflush(terrafectorSystem::_logfile);
+                spdlog::info("post build {} verts", lodInfo->numVerts);
 
                 startBlock[pIndex][lod] = start;
                 numBlocks[pIndex][lod] = lodInfo->numBlocks;
@@ -5816,7 +5789,7 @@ void _rootPlant::buildAllLods()
 
                 start += lodInfo->numBlocks;
 
-                fprintf(terrafectorSystem::_logfile, "plant lod : %d, %fmm, %d blocks\n", lod, (float)lodInfo->pixelSize * 1000.f, lodInfo->numBlocks);
+                spdlog::info("plant lod : {}, {}mm, {} blocks", lod, (float)lodInfo->pixelSize * 1000.f, lodInfo->numBlocks);
             }
         }
         // need to make a copy of the pivot data here after most detailed build I guess
@@ -5824,29 +5797,27 @@ void _rootPlant::buildAllLods()
     }
 
     // Now log this
-    fprintf(terrafectorSystem::_logfile, "\nbuildAllLods() : %s\n", root->name.c_str());
-    fprintf(terrafectorSystem::_logfile, "  size : %2.2f, %2.2f\n", plantBuf[0].size.x, plantBuf[0].size.y);
-    fprintf(terrafectorSystem::_logfile, "  lod, blocks, startV, pixSize\n");
+    spdlog::info("buildAllLods() : {}", root->name.c_str());
+    spdlog::info("size : {:.2f}, {:.2f}", plantBuf[0].size.x, plantBuf[0].size.y);
+    spdlog::info("lod, blocks, startV, pixSize");
     for (int i = 0; i < plantBuf[0].numLods; i++)
     {
-        fprintf(terrafectorSystem::_logfile, "  %d : %d, %d, %2.2f\n", i, plantBuf[0].lods[i].numBlocks, plantBuf[0].lods[i].startVertex, plantBuf[0].lods[i].pixSize);
+        spdlog::info("{} : {}, {}, {:.2f}", i, plantBuf[0].lods[i].numBlocks, plantBuf[0].lods[i].startVertex, plantBuf[0].lods[i].pixSize);
     }
 
 
     plantData->setBlob(plantBuf.data(), 0, 8 * sizeof(plant));
     numBinaryPlants = 8;
     builInstanceBuffer();
-    fprintf(terrafectorSystem::_logfile, "  just set plants\n");
-    fflush(terrafectorSystem::_logfile);
+    spdlog::info("just set plants");
 
     int numV = __min(65536 * 8, _ribbonBuilder.numPacked());
     vertexData->setBlob(_ribbonBuilder.getPackedData(), 0, numV * sizeof(ribbonVertex8));                // FIXME uploads should be smaller
-    fprintf(terrafectorSystem::_logfile, "  just set verts (%d), packed %d, numMaterials %d\n", numV, (int)_ribbonBuilder.packed.size(), (int)_plantMaterial::static_materials_veg.materialVector.size());
+    spdlog::info("just set verts ({}), packed {}, numMaterials {}", numV, (int)_ribbonBuilder.packed.size(), (int)_plantMaterial::static_materials_veg.materialVector.size());
     for (int i = 0; i < (int)_plantMaterial::static_materials_veg.materialVector.size(); i++)
     {
-        fprintf(terrafectorSystem::_logfile, "    material %d, %s\n", i, _plantMaterial::static_materials_veg.materialVector[i].displayName.c_str());
+        spdlog::info("material {}, {}", i, _plantMaterial::static_materials_veg.materialVector[i].displayName.c_str());
     }
-    fflush(terrafectorSystem::_logfile);
 
     settings.seed = 1000;
 
@@ -5857,8 +5828,7 @@ void _rootPlant::buildAllLods()
     for (int i = 0; i < numV; i++)
     {
         int idx = (_ribbonBuilder.packed[i].b >> 8) & 0x3ff;
-        fprintf(terrafectorSystem::_logfile, "  %d,", idx);
-        fflush(terrafectorSystem::_logfile);
+        spdlog::info("{},", idx);
 
 
         _vegMaterial M;
@@ -5867,8 +5837,7 @@ void _rootPlant::buildAllLods()
         M.index = idx;
         OnDisk.materials[idx] = M;
     }
-    fprintf(terrafectorSystem::_logfile, "  found %d materials % \n", (int)OnDisk.materials.size());
-    fflush(terrafectorSystem::_logfile);
+    spdlog::info("found {} materials %", (int)OnDisk.materials.size());
 
     lodBake* lodZero = root->getBakeInfo(0);
     if (lodZero)
@@ -5876,16 +5845,14 @@ void _rootPlant::buildAllLods()
         OnDisk.billboardMaterial = lodZero->material;
     }
 
-    fprintf(terrafectorSystem::_logfile, "  about to save\n");
-    fflush(terrafectorSystem::_logfile);
+    spdlog::info("about to save");
 
     std::string resource = terrafectorEditorMaterial::rootFolder;
     std::ofstream os(resource + root->path + ".binary");
     cereal::JSONOutputArchive archive(os);
     archive(OnDisk);
 
-    fprintf(terrafectorSystem::_logfile, "  about to save binary\n");
-    fflush(terrafectorSystem::_logfile);
+    spdlog::info("about to save binary");
 
     std::ofstream osData(resource + root->path + ".binaryData", std::ios::binary);
     osData.write((const char*)plantBuf.data(), OnDisk.numP * sizeof(plant));
@@ -5899,7 +5866,7 @@ void _rootPlant::buildAllLods()
 
 void binaryPlantOnDisk::onLoad(std::string path, uint vOffset)
 {
-    fprintf(terrafectorSystem::_logfile, "\n\n onLoad()  %s\n", path.c_str());
+    spdlog::info("onLoad()  {}", path.c_str());
     plantData.resize(numP);
     vertexData.resize(numV);
     pivotData.resize(numP * 256);
@@ -5909,7 +5876,7 @@ void binaryPlantOnDisk::onLoad(std::string path, uint vOffset)
     osData.read((char*)vertexData.data(), numV * sizeof(ribbonVertex8));
     osData.read((char*)pivotData.data(), numP * 256 * sizeof(_plant_anim_pivot));
 
-    fprintf(terrafectorSystem::_logfile, "%d plants, %d verts, %d pivots\n", numP, numV, numP * 256);
+    spdlog::info("{} plants, {} verts, {} pivots", numP, numV, numP * 256);
 
     // load materials, and build remapper
     std::string resource = terrafectorEditorMaterial::rootFolder;
@@ -5929,13 +5896,13 @@ void binaryPlantOnDisk::onLoad(std::string path, uint vOffset)
     }
 
     vOffset /= VEG_BLOCK_SIZE;
-    fprintf(terrafectorSystem::_logfile, "set voFFSET %d BLOCKS\n", vOffset);
+    spdlog::info("set voFFSET {} BLOCKS", vOffset);
     for (auto& P : plantData)
     {
         P.billboardMaterialIndex = billboardIndex;
         for (int i = 0; i < P.numLods; i++)
         {
-            fprintf(terrafectorSystem::_logfile, "LOD %d, start %d, size %d, pixSize %2.2f\n", i, P.lods[i].startVertex, P.lods[i].numBlocks, P.lods[i].pixSize);
+            spdlog::info("LOD {}, start {}, size {}, pixSize {:.2f}", i, P.lods[i].startVertex, P.lods[i].numBlocks, P.lods[i].pixSize);
             P.lods[i].startVertex += vOffset;  // count in blocks
         }
     }
@@ -5970,9 +5937,9 @@ int _rootPlant::importBinary(std::filesystem::path filepath)
 
     plantpivotData->setBlob(OnDisk.pivotData.data(), binPivotOffset, OnDisk.numP * 256 * sizeof(_plant_anim_pivot));
 
-    fprintf(terrafectorSystem::_logfile, "sizeof(ribbonVertex8) %d\n", (int)sizeof(ribbonVertex8));
-    fprintf(terrafectorSystem::_logfile, "sizeof(plant) %d\n", (int)sizeof(plant));
-    fprintf(terrafectorSystem::_logfile, "sizeof(_plant_anim_pivot) %d\n", (int)sizeof(_plant_anim_pivot));
+    spdlog::info("sizeof(ribbonVertex8) {}", (int)sizeof(ribbonVertex8));
+    spdlog::info("sizeof(plant) {}", (int)sizeof(plant));
+    spdlog::info("sizeof(_plant_anim_pivot) {}", (int)sizeof(_plant_anim_pivot));
 
     binVertexOffset += numV * sizeof(ribbonVertex8);
     binPlantOffset += OnDisk.numP * sizeof(plant);
@@ -6084,9 +6051,8 @@ void _rootPlant::build(uint pivotOffset)
 #define bakeMipToSave 3
 void _rootPlant::bake(std::string _path, std::string _seed, lodBake* _info, glm::mat4 VIEW)
 {
-    fprintf(terrafectorSystem::_logfile, "_rootPlant::bake()\n");
-    fprintf(terrafectorSystem::_logfile, "extents %2.3f, %2.3f\n", _info->extents.x, _info->extents.y);
-    fflush(terrafectorSystem::_logfile);
+    spdlog::info("_rootPlant::bake()");
+    spdlog::info("extents {:.3f}, {:.3f}", _info->extents.x, _info->extents.y);
     if (!root) return;
 
     int maxMIPY = (int)log2(_info->pixHeight / 16); // how many mips to get to 16
@@ -6157,8 +6123,7 @@ void _rootPlant::bake(std::string _path, std::string _seed, lodBake* _info, glm:
         iW = newIW * bakeSuperSample;
         HorizontalScale = (float)newIW / fW;
     }
-    fprintf(terrafectorSystem::_logfile, "bake hgt %d, width %d, lods %d, %2.2f horScale, %2.2f fW pix\n", _info->pixHeight, newIW, maxMIPY, HorizontalScale, fW);
-    //fflush(terrafectorSystem::_logfile);
+    spdlog::info("bake hgt {}, width {}, lods {}, {:.2f} horScale, {:.2f} fW pix", _info->pixHeight, newIW, maxMIPY, HorizontalScale, fW);
 
     Fbo::SharedPtr fbo;
     {
@@ -6704,7 +6669,7 @@ void _rootPlant::render(RenderContext* _renderContext, const Fbo::SharedPtr& _fb
 
 void _rootPlant::builInstanceBuffer()
 {
-    std::array<plant_instance, MAX_PLANT_INSTANCES> instanceBuf;
+    std::vector<plant_instance> instanceBuf(MAX_PLANT_INSTANCES);
     const siv::PerlinNoise perlin{ 100 };
 
     if (cropLines)

@@ -3,9 +3,11 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cmath>
+#include <chrono>
 #include <cstring>
-#include <mutex>
 #include "ots/Log.hpp"
+#include "terrafector.h"
 
 namespace Falcor
 {
@@ -252,14 +254,16 @@ bool Camera::isObjectCulled(const AABB&) const
 
 struct ShaderVar::Node
 {
-    std::string                     Name;
+    std::string                                            Name;
     std::unordered_map<std::string, std::shared_ptr<Node>> Children;
-    Texture::SharedPtr              TextureValue;
+    Texture::SharedPtr                                     TextureValue;
+    Buffer::SharedPtr                                      BufferValue;
+    std::vector<uint8_t>                                   ScalarData;
 };
 
 ShaderVar::ShaderVar(std::shared_ptr<Node> node) : m_pNode(std::move(node)) {}
 
-ShaderVar& ShaderVar::operator[](const char* name)
+ShaderVar ShaderVar::operator[](const char* name)
 {
     if (!m_pNode)
         m_pNode = std::make_shared<Node>();
@@ -270,24 +274,63 @@ ShaderVar& ShaderVar::operator[](const char* name)
     return ShaderVar(child);
 }
 
-ShaderVar& ShaderVar::operator[](const char* name) const
+ShaderVar ShaderVar::operator[](const char* name) const
 {
     return const_cast<ShaderVar*>(this)->operator[](name);
 }
 
-ShaderVar& ShaderVar::operator[](size_t index)
+ShaderVar ShaderVar::operator[](size_t index)
 {
-    return (*this)[std::to_string(index).c_str()];
+    const std::string key = std::to_string(index);
+    return (*this)[key.c_str()];
 }
 
-ShaderVar& ShaderVar::operator[](size_t index) const
+ShaderVar ShaderVar::operator[](size_t index) const
 {
     return const_cast<ShaderVar*>(this)->operator[](index);
+}
+
+ShaderVar& ShaderVar::operator=(const Falcor::SharedPtr<Texture>& tex)
+{
+    if (!m_pNode)
+        m_pNode = std::make_shared<Node>();
+    m_pNode->TextureValue = tex;
+    m_pNode->BufferValue  = nullptr;
+    m_pNode->ScalarData.clear();
+    return *this;
+}
+
+ShaderVar& ShaderVar::operator=(const Falcor::SharedPtr<Buffer>& buf)
+{
+    if (!m_pNode)
+        m_pNode = std::make_shared<Node>();
+    m_pNode->BufferValue  = buf;
+    m_pNode->TextureValue = nullptr;
+    m_pNode->ScalarData.clear();
+    return *this;
+}
+
+ShaderVar& ShaderVar::assignScalar(const void* data, size_t size)
+{
+    if (!data || size == 0)
+        return *this;
+    if (!m_pNode)
+        m_pNode = std::make_shared<Node>();
+    m_pNode->TextureValue = nullptr;
+    m_pNode->BufferValue  = nullptr;
+    m_pNode->ScalarData.resize(size);
+    std::memcpy(m_pNode->ScalarData.data(), data, size);
+    return *this;
 }
 
 ShaderVar::operator Falcor::SharedPtr<Texture>() const
 {
     return m_pNode ? m_pNode->TextureValue : nullptr;
+}
+
+ShaderVar::operator Falcor::SharedPtr<Buffer>() const
+{
+    return m_pNode ? m_pNode->BufferValue : nullptr;
 }
 
 struct ComputeVarsData
@@ -304,11 +347,21 @@ ComputeVars::SharedPtr ComputeVars::create(ComputeProgram*)
     return std::make_shared<ComputeVars>();
 }
 
-ShaderVar ComputeVars::operator[](const char* name)
+ShaderVar ComputeVars::getRootVar()
 {
     if (!m_pData)
         m_pData = std::make_shared<ComputeVarsData>();
-    return ShaderVar(m_pData->Root).operator[](name);
+    return ShaderVar(m_pBlockRoot ? m_pBlockRoot : m_pData->Root);
+}
+
+ShaderVar ComputeVars::getRootVar() const
+{
+    return const_cast<ComputeVars*>(this)->getRootVar();
+}
+
+ShaderVar ComputeVars::operator[](const char* name)
+{
+    return getRootVar()[name];
 }
 
 ShaderVar ComputeVars::operator[](const char* name) const
@@ -351,15 +404,16 @@ void ComputeVars::setBlob(const void* pData, size_t offset, size_t size)
 
 ComputeVars::SharedPtr ComputeVars::getParameterBlock(const char* name)
 {
-    auto block   = std::make_shared<ComputeVars>();
-    block->m_pData = std::make_shared<ComputeVarsData>();
-    block->m_pData->Root->Name = name;
+    const ShaderVar blockNode = getRootVar()[name];
+    auto          block       = std::make_shared<ComputeVars>();
+    block->m_pData            = m_pData;
+    block->m_pBlockRoot       = blockNode.m_pNode;
     return block;
 }
 
-ShaderVar& ComputeVars::findMember(const char* name)
+ShaderVar ComputeVars::findMember(const char* name)
 {
-    return operator[](name);
+    return getRootVar()[name];
 }
 
 ShaderVar ComputeVars::findMember(const char* name) const
@@ -385,11 +439,21 @@ GraphicsVars::SharedPtr GraphicsVars::create(ProgramReflection::SharedConstPtr p
     return create(pReflection.get());
 }
 
-ShaderVar GraphicsVars::operator[](const char* name)
+ShaderVar GraphicsVars::getRootVar()
 {
     if (!m_pData)
         m_pData = std::make_shared<GraphicsVarsData>();
-    return ShaderVar(m_pData->Root).operator[](name);
+    return ShaderVar(m_pBlockRoot ? m_pBlockRoot : m_pData->Root);
+}
+
+ShaderVar GraphicsVars::getRootVar() const
+{
+    return const_cast<GraphicsVars*>(this)->getRootVar();
+}
+
+ShaderVar GraphicsVars::operator[](const char* name)
+{
+    return getRootVar()[name];
 }
 
 ShaderVar GraphicsVars::operator[](const char* name) const
@@ -420,20 +484,21 @@ void GraphicsVars::setBuffer(const char* name, const Falcor::SharedPtr<Buffer>& 
 
 GraphicsVars::SharedPtr GraphicsVars::getParameterBlock(const char* name)
 {
-    auto block     = std::make_shared<GraphicsVars>();
-    block->m_pData = std::make_shared<GraphicsVarsData>();
-    block->m_pData->Root->Name = name;
+    const ShaderVar blockNode = getRootVar()[name];
+    auto          block       = std::make_shared<GraphicsVars>();
+    block->m_pData            = m_pData;
+    block->m_pBlockRoot       = blockNode.m_pNode;
     return block;
 }
 
-ShaderVar& GraphicsVars::findMember(const char* name)
+ShaderVar GraphicsVars::findMember(const char* name)
 {
-    return operator[](name);
+    return getRootVar()[name];
 }
 
 ShaderVar GraphicsVars::findMember(const char* name) const
 {
-    return const_cast<GraphicsVars*>(this)->operator[](name);
+    return const_cast<GraphicsVars*>(this)->findMember(name);
 }
 
 // --- Resources ---------------------------------------------------------------
@@ -858,7 +923,9 @@ Sampler::Desc& Sampler::Desc::setMaxAnisotropy(uint32_t aniso)
 
 Sampler::Desc& Sampler::Desc::setComparisonMode(ComparisonMode mode)
 {
+    (void)mode;
     spdlog::error("Sampler::Desc::setComparisonMode is not implemented");
+    return *this;
 }
 
 Sampler::SharedPtr Sampler::create(const Desc& desc)
@@ -919,7 +986,9 @@ BlendState::Desc& BlendState::Desc::setRenderTargetWriteMask(uint32_t rt, bool r
 
 BlendState::Desc& BlendState::Desc::setAlphaToCoverage(bool enabled)
 {
+    (void)enabled;
     spdlog::error("BlendState::Desc::setAlphaToCoverage is not implemented");
+    return *this;
 }
 
 BlendState::SharedPtr BlendState::create(const Desc& desc)
@@ -1018,7 +1087,10 @@ Program::DefineList& Program::DefineList::add(const std::string& name, const std
 
 Program::DefineList& Program::DefineList::remove(const std::string& name)
 {
-    m_Defines.emplace_back(name, value);
+    m_Defines.erase(
+        std::remove_if(m_Defines.begin(), m_Defines.end(),
+                       [&name](const auto& p) { return p.first == name; }),
+        m_Defines.end());
     return *this;
 }
 
@@ -1127,6 +1199,12 @@ void RenderContext::clearFbo(Fbo*, const float4& color, float depth, uint8_t ste
     (void)stencil;
     (void)attachments;
     EFX_LOG_STUB("RenderContext::clearFbo stub");
+}
+
+void RenderContext::clearTexture(Texture* tx)
+{
+    (void)tx;
+    EFX_LOG_STUB("RenderContext::clearTexture stub");
 }
 
 void RenderContext::blit(Diligent::ITextureView* pSrc, Diligent::ITextureView* pDst, const glm::vec4&, const glm::vec4&, Sampler::Filter, BlendState::SharedPtr)
@@ -1337,21 +1415,23 @@ void Gui::addFont(const char*, const std::string&, float)
     // TODO: load fonts through ImGuiImplDiligent / SampleBase.
 }
 
-#include "terrafector.h"
-
 EarthworksWrapper::EarthworksWrapper() {
-    logFile                         = fopen("log.txt", "w");
     terrafectorSystem::logStartTime = high_resolution_clock::now();
-    terrafectorSystem::_logfile     = logFile;
-
     JLogger::instancePtr()->open("log.cpp");
 }
 
 EarthworksWrapper::~EarthworksWrapper() {
-    if (logFile) {
-        JLogger::instancePtr()->close();
-        fclose(logFile);
-    }
+    JLogger::instancePtr()->close();
+}
+
+void IRenderer::initGui(Gui* _gui)
+{
+    (void)_gui;
+}
+
+void IRenderer::onGuiMenubar(Gui* _gui)
+{
+    (void)_gui;
 }
 
 } // namespace Falcor

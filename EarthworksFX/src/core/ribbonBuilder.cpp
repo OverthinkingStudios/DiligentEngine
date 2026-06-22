@@ -113,7 +113,7 @@ void ribbonBuilder::clearStats(int _max)
 
 void ribbonBuilder::clear()
 {
-    fprintf(terrafectorSystem::_logfile, "\n\nribbonBuilder::clear()\n");
+    spdlog::info("ribbonBuilder::clear()");
     packed.clear();
     ribbons.clear();
 }
@@ -123,7 +123,6 @@ void ribbonBuilder::clear()
 
 void    ribbonBuilder::startRibbon(bool _cameraFacing, uint pv[4])
 {
-    //fprintf(terrafectorSystem::_logfile, "\nribbonBuilder::startRibbon()\n");
     pushStart = false;       // prepare for a new ribbon to start
     vertex.faceCamera = _cameraFacing;
     vertex.S_root = 0;
@@ -136,7 +135,6 @@ void    ribbonBuilder::startRibbon(bool _cameraFacing, uint pv[4])
 
 void    ribbonBuilder::startRibbon(bool _cameraFacing, std::array<uint, 4> pv)
 {
-    //fprintf(terrafectorSystem::_logfile, "\nribbonBuilder::startRibbon()\n");
     pushStart = false;       // prepare for a new ribbon to start
     vertex.faceCamera = _cameraFacing;
     vertex.S_root = 0;
@@ -152,7 +150,6 @@ void    ribbonBuilder::startRibbon(bool _cameraFacing, std::array<uint, 4> pv)
 void ribbonBuilder::set(glm::mat4 _node, float _radius, int _material, float2 _uv, float _albedo, float _translucency, bool _clearLeafRoot,
     float _stiff, float _freq, float _index, bool _diamond)
 {
-    //fprintf(terrafectorSystem::_logfile, "  set : mat %d  -   \n", _material);
 
     if (_uv.y < 0)
     {
@@ -214,12 +211,9 @@ void ribbonBuilder::set(glm::mat4 _node, float _radius, int _material, float2 _u
             vertex.S_root = vertex.leafRoot + 1;
         }
 
-        //fprintf(terrafectorSystem::_logfile, "repeat\n");
-        //fprintf(terrafectorSystem::_logfile, "V  (%2.2f, %2.2f, %2.2f)m  r - %2.3fm %d\n", R.position.x, R.position.y, R.position.z, R.radius, R.startBit);
         ribbons.push_back(R);
     }
 
-    //fprintf(terrafectorSystem::_logfile, "V  (%2.2f, %2.2f, %2.2f)m  r - %2.3fm %d\n", vertex.position.x, vertex.position.y, vertex.position.z, vertex.radius, vertex.startBit);
     ribbons.push_back(vertex);
 
     
@@ -239,12 +233,10 @@ uint ribbonBuilder::pushPivot(uint _guid, _plant_anim_pivot _pivot)
         auto it = pivotMap.find(_guid);
         if (it != pivotMap.end())
         {
-            //if (LOGTHEBUILD) { fprintf(terrafectorSystem::_logfile, "PIVOT %d - found  %d\n", _guid, it->second); }
             return it->second;
         }
         else
         {
-            //if (LOGTHEBUILD) { fprintf(terrafectorSystem::_logfile, "new pivot %d, ", _guid); }
             pivotMap[_guid] = (int)ribbonBuilder::pivotPoints.size();
             pivotPoints.push_back(_pivot);
             return pivotMap[_guid];
@@ -252,7 +244,6 @@ uint ribbonBuilder::pushPivot(uint _guid, _plant_anim_pivot _pivot)
     }
     else
     {
-        //if (LOGTHEBUILD) { fprintf(terrafectorSystem::_logfile, "tooManyPivots\n"); }
         tooManyPivots = true;
         return 255; // so just turn it off
     }
@@ -354,12 +345,10 @@ void ribbonBuilder::finalizeAndFillLastBlock()
 
 void ribbonBuilder::pack()
 {
-    //fprintf(terrafectorSystem::_logfile, "\n\npack()\n");
     for (auto& R : ribbons)
     {
         ribbonVertex8 pck = R.pack();
         packed.push_back(pck);
-        //fprintf(terrafectorSystem::_logfile, "V  (%2.2f, %2.2f, %2.2f)m  r - %2.3fm %d\n", R.position.x, R.position.y, R.position.z, R.radius, R.startBit);
     }
 }
 
