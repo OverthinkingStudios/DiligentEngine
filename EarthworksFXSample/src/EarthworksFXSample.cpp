@@ -1,9 +1,11 @@
 #include "EarthworksFXSample.hpp"
-#include "overthinkingEnv.h"
+
+#include "ots/CrashGuard.hpp"
+#include "imgui.h"
 
 #include <cstdio>
 #include <filesystem>
-
+#include <iostream>
 
 namespace Diligent
 {
@@ -44,7 +46,8 @@ Falcor::Fbo::SharedPtr CreateSwapChainTargetFbo(ISwapChain* pSwapChain)
 } // namespace
 
 EarthworksFXSample::EarthworksFXSample()
-    : m_RenderContext(nullptr)
+    : EarthworksFXApplicationBase("EarthworksFX", "EarthworksFX", overthinking::Env::Stage::Dev)
+    , m_RenderContext(nullptr)
 {
 }
 
@@ -56,39 +59,33 @@ EarthworksFXSample::~EarthworksFXSample()
         m_Earthworks.onShutdown();
     }
 
-    if (m_FalcorWrapper)
-    {
-        m_FalcorWrapper.reset();
-    }
+    m_FalcorWrapper.reset();
 }
 
 void EarthworksFXSample::ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& Attribs)
 {
-    SampleBase::ModifyEngineInitInfo(Attribs);
+    EarthworksFXApplicationBase::ModifyEngineInitInfo(Attribs);
 
     Attribs.EngineCI.Features.ComputeShaders = DEVICE_FEATURE_STATE_ENABLED;
     Attribs.EngineCI.Features.DepthClamp     = DEVICE_FEATURE_STATE_OPTIONAL;
     Attribs.SCDesc.ColorBufferFormat         = TEX_FORMAT_R11G11B10_FLOAT;
 }
 
-DesiredApplicationSettings EarthworksFXSample::GetDesiredApplicationSettings(bool IsInitialization)
+EarthworksFXAppSettings EarthworksFXSample::GetAppSettings(bool IsInitialization)
 {
-    DesiredApplicationSettings Settings;
+    EarthworksFXAppSettings Settings;
     if (IsInitialization)
     {
-        Settings.SetDeviceType(RENDER_DEVICE_TYPE_VULKAN);
-        Settings.SetVSync(true);
-        Settings.SetWindowWidth(2560);
-        Settings.SetWindowHeight(1440);
+        Settings.DeviceType  = RENDER_DEVICE_TYPE_VULKAN;
+        Settings.VSync       = true;
+        Settings.WindowWidth  = 2560;
+        Settings.WindowHeight = 1440;
     }
     return Settings;
 }
 
-void EarthworksFXSample::Initialize(const SampleInitInfo& InitInfo)
+void EarthworksFXSample::OnGraphicsInitialized()
 {
-    overthinking::Env::init("EarthworksFX", "EarthworksFX", overthinking::Env::Stage::Dev);
-    SampleBase::Initialize(InitInfo);
-
     m_FalcorWrapper = std::make_unique<Falcor::EarthworksWrapper>();
 
     Falcor::SetFalcorDevice(m_pDevice, m_pImmediateContext, m_pSwapChain);
@@ -99,13 +96,8 @@ void EarthworksFXSample::Initialize(const SampleInitInfo& InitInfo)
 
     m_RenderContext = Falcor::RenderContext{m_pImmediateContext};
 
-    try {
-        ScopedFalcorFramework scope{&m_Framework};
-        m_Earthworks.onLoad(&m_RenderContext);
-    } catch (const std::exception& e) {
-        std::cerr << "Failed to initialize EarthworksFX: " << e.what() << std::endl;
-        throw;
-    }
+    ScopedFalcorFramework scope{&m_Framework};
+    m_Earthworks.onLoad(&m_RenderContext);
 
     const auto& scDesc = m_pSwapChain->GetDesc();
     m_Earthworks.onResizeSwapChain(scDesc.Width, scDesc.Height);
@@ -114,7 +106,7 @@ void EarthworksFXSample::Initialize(const SampleInitInfo& InitInfo)
     m_Initialized = true;
 }
 
-void EarthworksFXSample::Render()
+void EarthworksFXSample::RenderSample()
 {
     if (!m_Initialized)
         return;
@@ -128,9 +120,10 @@ void EarthworksFXSample::Render()
     m_Earthworks.onFrameRender(&m_RenderContext, m_TargetFbo);
 }
 
-void EarthworksFXSample::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
+void EarthworksFXSample::UpdateSample(double CurrTime, double ElapsedTime, bool DoUpdateUI)
 {
-    SampleBase::Update(CurrTime, ElapsedTime, DoUpdateUI);
+    (void)CurrTime;
+    (void)ElapsedTime;
 
     if (!m_Initialized)
         return;
@@ -144,10 +137,8 @@ void EarthworksFXSample::Update(double CurrTime, double ElapsedTime, bool DoUpda
     }
 }
 
-void EarthworksFXSample::WindowResize(Uint32 Width, Uint32 Height)
+void EarthworksFXSample::OnWindowResized(Uint32 Width, Uint32 Height)
 {
-    SampleBase::WindowResize(Width, Height);
-
     if (!m_Initialized)
         return;
 
@@ -213,7 +204,7 @@ Falcor::WindowInterface* EarthworksFXSample::SampleFramework::getWindow()
     return &m_Window;
 }
 
-SampleBase* CreateSample()
+NativeAppBase* CreateApplication()
 {
     return new EarthworksFXSample();
 }

@@ -5,8 +5,6 @@ project(EarthworksFX CXX)
 option(EARTHWORKSFX_ENABLE_OPENJPH "Enable JP2 elevation decode via OpenJPH (through Earthworks)" ON)
 option(EARTHWORKSFX_ENABLE_ASSIMP "Enable Assimp mesh IO for terrafector import (through Earthworks)" ON)
 
-# OpenJPH and Assimp are resolved inside Earthworks (extern/, find_package, or FetchContent).
-# EarthworksFX must not duplicate that logic with find_package alone.
 if(EARTHWORKSFX_ENABLE_OPENJPH)
     set(EARTHWORKS_WITH_OPENJPH ON CACHE BOOL "Enable OpenJPH via Earthworks" FORCE)
 endif()
@@ -30,15 +28,38 @@ file(GLOB EFX_HLSL CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/hlsl/**/*.hlsli"
     "${CMAKE_CURRENT_SOURCE_DIR}/hlsl/**/*.inc")
 
+set(EFX_APP_SOURCES
+    src/app/EarthworksFXApplicationBase.cpp
+    src/app/EarthworksFXWindowBase.cpp
+)
+
+set(EFX_INPUT_SOURCES "")
+
+set(EFX_APP_INCLUDES
+    interface/EarthworksFXApplicationBase.hpp
+    interface/EarthworksFXWindowBase.hpp
+    interface/InputController.hpp
+)
+
+if(PLATFORM_WIN32)
+    list(APPEND EFX_INPUT_SOURCES src/input/Win32/InputControllerWin32.cpp)
+    list(APPEND EFX_APP_INCLUDES interface/Win32/InputControllerWin32.hpp)
+elseif(PLATFORM_LINUX)
+    list(APPEND EFX_INPUT_SOURCES src/input/Linux/InputControllerLinux.cpp)
+    list(APPEND EFX_APP_INCLUDES interface/Linux/InputControllerLinux.hpp)
+endif()
+
 add_library(EarthworksFX STATIC
     src/compat/Falcor.cpp
     interface/Falcor.h
     ${EFX_CORE_SOURCES}
-    ${EFX_HLSL})
+    ${EFX_HLSL}
+    ${EFX_APP_SOURCES}
+    ${EFX_INPUT_SOURCES}
+    ${EFX_APP_INCLUDES})
 
 add_library(EarthworksFX::EarthworksFX ALIAS EarthworksFX)
 
-# PUBLIC: inherit OpenJPH / Assimp + compile defs from Earthworks when enabled.
 target_link_libraries(EarthworksFX PUBLIC Earthworks::Earthworks)
 
 target_compile_features(EarthworksFX PUBLIC cxx_std_17)
@@ -57,7 +78,6 @@ if(NOT EARTHWORKS_WITH_OPENJPH OR NOT EARTHWORKS_WITH_ASSIMP)
         "(EARTHWORKSFX_ENABLE_OPENJPH / EARTHWORKSFX_ENABLE_ASSIMP).")
 endif()
 
-# GUARDRAIL: Diligent links live here and ONLY here.
 target_link_libraries(EarthworksFX
     PUBLIC
         Diligent-GraphicsEngine
@@ -83,31 +103,62 @@ if(NOT TARGET Diligent-Imgui)
 endif()
 target_link_libraries(EarthworksFX PUBLIC Diligent-Imgui)
 
+if(PLATFORM_WIN32 OR PLATFORM_LINUX)
+    if(NOT TARGET Diligent-NativeAppBase)
+        if(NOT TARGET Diligent-TextureLoader)
+            add_subdirectory(
+                ${CMAKE_SOURCE_DIR}/DiligentTools/ThirdParty
+                ${CMAKE_BINARY_DIR}/EarthworksFX/DiligentTools/ThirdParty)
+            add_subdirectory(
+                ${CMAKE_SOURCE_DIR}/DiligentTools/TextureLoader
+                ${CMAKE_BINARY_DIR}/EarthworksFX/DiligentTools/TextureLoader)
+        endif()
+        add_subdirectory(
+            ${CMAKE_SOURCE_DIR}/DiligentTools/NativeApp
+            ${CMAKE_BINARY_DIR}/EarthworksFX/DiligentTools/NativeApp)
+    endif()
+
+    get_supported_backends(ENGINE_LIBRARIES)
+
+    target_link_libraries(EarthworksFX
+    PUBLIC
+        Diligent-NativeAppBase
+        Diligent-TargetPlatform
+        Diligent-TextureLoader
+        ${ENGINE_LIBRARIES})
+
+    if(PLATFORM_LINUX)
+        find_package(X11 REQUIRED)
+        find_package(OpenGL REQUIRED)
+        target_link_libraries(EarthworksFX PUBLIC XCBKeySyms OpenGL::GL OpenGL::GLX X11::X11)
+    endif()
+endif()
+
 set_common_target_properties(EarthworksFX)
 
 if(MSVC)
-    target_compile_options(EarthworksFX PRIVATE /bigobj /FS)
+    target_compile_options(EarthworksFX PRIVATE /bigobj /FS /wd4201)
     target_compile_definitions(EarthworksFX PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
-# Shaders and HLSL-included struct headers are runtime / IDE assets, not compiled by CMake.
 set_source_files_properties(${EFX_HLSL} PROPERTIES VS_TOOL_OVERRIDE "None")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/hlsl" PREFIX "hlsl" FILES ${EFX_HLSL})
 source_group("src/core" FILES ${EFX_CORE_SOURCES})
-source_group("src/compat" FILES src/compat/FalcorCompat.cpp interface/FalcorCompat.hpp)
+source_group("src/compat" FILES src/compat/Falcor.cpp interface/Falcor.h)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src/app" PREFIX "src/app" FILES
+    src/app/EarthworksFXApplicationBase.cpp
+    src/app/EarthworksFXWindowBase.cpp)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src/input" PREFIX "src/input" FILES ${EFX_INPUT_SOURCES})
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/interface" PREFIX "interface" FILES ${EFX_APP_INCLUDES})
 set_target_properties(EarthworksFX PROPERTIES FOLDER "EarthworksFX")
 
-# HLSL source of truth: EarthworksFX/hlsl/
-# Deploy to $ACSMP_GAMEROOT/hlsl at build time so runtime paths like hlsl/terrain/*.hlsl resolve.
-# Uses a cmake script (not $ENV{...} baked at configure time) so VS builds pick up the env var
-# that is set when MSBuild runs, and skip cleanly when ACSMP_GAMEROOT is unset.
 add_custom_command(TARGET EarthworksFX POST_BUILD
     COMMAND ${CMAKE_COMMAND}
         "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/hlsl"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployHLSL.cmake"
     COMMENT "Deploying EarthworksFX HLSL to ACSMP_GAMEROOT/hlsl"
     VERBATIM)
-# Re-run HLSL deploy whenever the sample exe is built, even if the static lib is up-to-date.
+
 add_custom_target(EarthworksFX_DeployHLSL
     COMMAND ${CMAKE_COMMAND}
         "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/hlsl"
@@ -116,4 +167,3 @@ add_custom_target(EarthworksFX_DeployHLSL
     COMMENT "Deploying EarthworksFX HLSL to ACSMP_GAMEROOT/hlsl"
     VERBATIM)
 set_target_properties(EarthworksFX_DeployHLSL PROPERTIES FOLDER "EarthworksFX")
-

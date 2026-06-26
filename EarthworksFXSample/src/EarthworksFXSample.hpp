@@ -1,26 +1,24 @@
 #pragma once
 
-#include "SampleBase.hpp"
+#include "EarthworksFXApplicationBase.hpp"
 #include "Falcor.h"
 #include "Earthworks_4.h"
 
 namespace Diligent
 {
 
-class EarthworksFXSample final : public SampleBase
+class EarthworksFXSample final : public EarthworksFXApplicationBase
 {
 public:
     EarthworksFXSample();
     ~EarthworksFXSample() override;
 
     void ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& Attribs) override final;
-    DesiredApplicationSettings GetDesiredApplicationSettings(bool IsInitialization) override final;
-    void Initialize(const SampleInitInfo& InitInfo) override final;
-    void Render() override final;
-    void Update(double CurrTime, double ElapsedTime, bool DoUpdateUI) override final;
-    void WindowResize(Uint32 Width, Uint32 Height) override final;
-
-    const Char* GetSampleName() const override final { return "EarthworksFX"; }
+    EarthworksFXAppSettings GetAppSettings(bool IsInitialization) override final;
+    void OnGraphicsInitialized() override final;
+    void RenderSample() override final;
+    void UpdateSample(double CurrTime, double ElapsedTime, bool DoUpdateUI) override final;
+    void OnWindowResized(Uint32 Width, Uint32 Height) override final;
 
 protected:
     void UpdateUI() override final;
@@ -50,7 +48,5 @@ private:
     Falcor::Fbo::SharedPtr    m_TargetFbo;
     bool                      m_Initialized = false;
 };
-
-SampleBase* CreateSample();
 
 } // namespace Diligent
