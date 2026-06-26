@@ -47,7 +47,7 @@ using namespace std::chrono;
 _lastFile terrainManager::lastfile;
 
 _lastFile::_lastFile(const std::filesystem::path& terrain_root, const std::filesystem::path& resources_root) {
-    terrain             = (terrain_root / "switserland_Steg.root").string();
+    terrain             = (terrain_root / "switserland_Steg.terrainSettings.json").string();
     road    = (terrain_root / "roads/steg_010.roadnetwork").string();
     std::string stamps              = "";
     std::string roadMaterial        = (resources_root / "roadMaterials" / "asphalt" / "asphalt_17.roadMaterial").string();
@@ -476,7 +476,7 @@ terrainManager::terrainManager()
 
 terrainManager::~terrainManager()
 {
-    std::ofstream os("lastFile.xml");
+  std::ofstream os(overthinking::Env::getPath(overthinking::Env::SpecialFolder::UserData) / "lastFile.xml");
     if (os.good()) {
         cereal::XMLOutputArchive archive(os);
         lastfile.road = mRoadNetwork.lastUsedFilename.string();
@@ -497,7 +497,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
 
     if (std::filesystem::exists(last_file_path))
     {
-        std::ifstream is("lastFile.xml");
+        std::ifstream is(last_file_path);
         if (is.good())
         {
             cereal::XMLInputArchive archive(is);
@@ -682,6 +682,16 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
                 spdlog::error("unable to load a terrain - {}, shutting down", lastfile.terrain);
                 gpFramework->getWindow()->shutdown();
                 return;
+            }
+        }
+    }
+
+    if (!settings.dirRoot.empty()) {
+        // there's a potential bug: if the reletive path starts with "/", this is becoming an abs. path on both windows and linux.
+        if (!std::filesystem::exists(settings.dirRoot)) {
+            auto candidate = std::filesystem::current_path().string() + settings.dirRoot;
+            if (std::filesystem::exists(candidate)) {
+                settings.dirRoot = candidate;
             }
         }
     }
