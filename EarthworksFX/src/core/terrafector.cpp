@@ -1483,6 +1483,10 @@ void terrafectorElement::renderGui(Gui* _pGui, float tab)
 
 void terrafectorElement::loadPath(std::string _path)
 {
+    //if (!std::filesystem::exists(_path)) {
+        return;
+    //}
+
     for (const auto& entry : std::filesystem::directory_iterator(_path))
     {
         std::string newPath = entry.path().string();
