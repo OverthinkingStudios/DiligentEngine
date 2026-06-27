@@ -5,10 +5,10 @@
 
 
 
-RWTexture2D	gAlbedo;
-RWTexture2D gNormal;
-RWTexture2D gTranslucency;
-RWTexture2D gpbr;
+RWTexture2D<float4>	gAlbedo;
+RWTexture2D<float4> gNormal;
+RWTexture2D<float4> gTranslucency;
+RWTexture2D<float4> gpbr;
 
 
 
@@ -47,8 +47,9 @@ void main(int2 crd : SV_DispatchThreadId)
 
         if (cnt > 0)
         {
-            gAlbedo[crd] = bA / cnt;
-            gAlbedo[crd].a = 0.0;
+            float4 albedo = bA / cnt;
+            albedo.a = 0.0;
+            gAlbedo[crd] = albedo;
 
             gNormal[crd] = bN / cnt;
 

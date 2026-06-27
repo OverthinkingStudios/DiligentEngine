@@ -104,9 +104,25 @@ void setupVert(ribbonVertex* r, int start, float3 pos, float radius, int _mat = 
 
 #include <iostream>
 #include <fstream>
+
+_shadowEdges ::~_shadowEdges() {
+    
+    threadRunning = false;
+      
+    if (threadShadows && threadShadows->joinable()) {
+        threadShadows->join();
+    }
+}
+
+void _shadowEdges::launchSolveThread() { 
+    threadShadows = std::make_unique<std::thread>(&_shadowEdges::solveThread, this); 
+}
+
 void _shadowEdges::solveThread()
 {
-    while (1)
+    threadRunning = true;
+
+    while (threadRunning)
     {
         if (requestNewShadow)
         {
@@ -1180,15 +1196,14 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
             split.compute_tileBuildLookup.Vars()->setBuffer("feedback", split.buffer_feedback);
             split.compute_tileBuildLookup.Vars()->setBuffer("DispatchArgs_Plants", split.dispatchArgs_plants);
             split.compute_tileBuildLookup.Vars()->setBuffer("tileCenters", split.buffer_tileCenters);  // to clear unused tile
-            auto& block = split.compute_tileBuildLookup.Vars()->getParameterBlock("viewRenderData");
-            ShaderVar terrainLookup = block->findMember("terrainLookup");
-            ShaderVar plantLookup = block->findMember("plantLookup");
-            ShaderVar quadLookup = block->findMember("quadLookup");
             for (int i = 0; i < numRenderViews; i++)
             {
-                terrainLookup[i] = split.buffer_lookup_terrain[i];
-                plantLookup[i] = split.buffer_lookup_plants[i];
-                quadLookup[i] = split.buffer_lookup_quads[i];
+                const std::string terrainName = "viewRenderData_terrainLookup_" + std::to_string(i);
+                const std::string plantName  = "viewRenderData_plantLookup_" + std::to_string(i);
+                const std::string quadName   = "viewRenderData_quadLookup_" + std::to_string(i);
+                (*split.compute_tileBuildLookup.Vars())[terrainName.c_str()] = split.buffer_lookup_terrain[i];
+                (*split.compute_tileBuildLookup.Vars())[plantName.c_str()]  = split.buffer_lookup_plants[i];
+                (*split.compute_tileBuildLookup.Vars())[quadName.c_str()]   = split.buffer_lookup_quads[i];
             }
 
             // bicubic
@@ -4532,8 +4547,7 @@ void terrainManager::splitChild(quadtree_tile* _tile, RenderContext* _renderCont
             auto pCB = split.compute_tileEcotopes.Vars()->getParameterBlock("gConstants");
 
             // bad herer but lets set the textures
-            auto& block = split.compute_tileEcotopes.Vars()->getParameterBlock("gmyTextures");
-            ShaderVar& var = block->findMember("T");        // FIXME pre get
+            ShaderVar var = (*split.compute_tileEcotopes.Vars())["gmyTextures_T"];
             {
                 for (size_t i = 0; i < mEcosystem.ecotopes.size(); i++)
                 {
@@ -4730,8 +4744,7 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
         split.shader_meshTerrafector.Vars()["gConstantBuffer"]["viewproj"] = viewproj;
         split.shader_meshTerrafector.Vars()["gConstantBuffer"]["overlayAlpha"] = 1.0f;
 
-        auto& block = split.shader_meshTerrafector.Vars()->getParameterBlock("gmyTextures");
-        ShaderVar& var = block->findMember("T");        // FIXME pre get
+        ShaderVar var = (*split.shader_meshTerrafector.Vars())["gmyTextures_T"];
         terrafectorEditorMaterial::static_materials.setTextures(var);
     }
 
@@ -4746,8 +4759,7 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
         split.shader_splineTerrafector.Vars()["gConstantBuffer"]["startOffset"] = 0;
         split.shader_splineTerrafector.Vars()->setBuffer("materials", terrafectorEditorMaterial::static_materials.sb_Terrafector_Materials);
 
-        auto& block = split.shader_splineTerrafector.Vars()->getParameterBlock("gmyTextures");
-        ShaderVar& var = block->findMember("T");        // FIXME pre get
+        ShaderVar var = (*split.shader_splineTerrafector.Vars())["gmyTextures_T"];
         terrafectorEditorMaterial::static_materials.setTextures(var);
 
         split.shader_splineTerrafector.Vars()->setBuffer("splineData", splines.bezierData);     // not created yet
@@ -5126,8 +5138,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
 
         if (_plantMaterial::static_materials_veg.modified)
         {
-            auto& block = ribbonShader.Vars()->getParameterBlock("textures");
-            ShaderVar& var = block->findMember("T");        // FIXME pre get
+            ShaderVar var = (*ribbonShader.Vars())["textures_T"];
             _plantMaterial::static_materials_veg.setTextures(var);
             _plantMaterial::static_materials_veg.modified = false;
         }
@@ -5226,8 +5237,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         terrainSpiteShader.Vars()->setTexture("gEnv", vegetation.envTexture);
 
         // FIXME need a way to do only on change
-        auto& blockBB = terrainSpiteShader.Vars()->getParameterBlock("textures");
-        ShaderVar varBBTextures = blockBB->findMember("T");
+        ShaderVar varBBTextures = (*terrainSpiteShader.Vars())["textures_T"];
         _plantMaterial::static_materials_veg.setTextures(varBBTextures);
 
     }
@@ -5360,8 +5370,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
 
         split.shader_spline3D.Vars()->setBuffer("materials", terrafectorEditorMaterial::static_materials.sb_Terrafector_Materials);
 
-        auto& block = split.shader_spline3D.Vars()->getParameterBlock("gmyTextures");
-        ShaderVar& var = block->findMember("T");        // FIXME pre get
+        ShaderVar var = (*split.shader_spline3D.Vars())["gmyTextures_T"];
         terrafectorEditorMaterial::static_materials.setTextures(var);
 
         split.shader_spline3D.Vars()->setBuffer("splineData", splines.dynamic_bezierData);
@@ -5386,8 +5395,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
 
         split.shader_spline3D.Vars()->setBuffer("materials", terrafectorEditorMaterial::static_materials.sb_Terrafector_Materials);
 
-        auto& block = split.shader_spline3D.Vars()->getParameterBlock("gmyTextures");
-        ShaderVar& var = block->findMember("T");        // FIXME pre get
+        ShaderVar var = (*split.shader_spline3D.Vars())["gmyTextures_T"];
         terrafectorEditorMaterial::static_materials.setTextures(var);
 
         if (splines.numDynamicSplines > 0)
@@ -5921,8 +5929,7 @@ void terrainManager::bake_RenderTopdown(float _size, uint _lod, uint _y, uint _x
 
 
 
-        auto& block = split.shader_meshTerrafector.Vars()->getParameterBlock("gmyTextures");
-        ShaderVar& var = block->findMember("T");        // FIXME pre get
+        ShaderVar var = (*split.shader_meshTerrafector.Vars())["gmyTextures_T"];
         terrafectorEditorMaterial::static_materials.setTextures(var);
     }
 
@@ -5937,8 +5944,7 @@ void terrainManager::bake_RenderTopdown(float _size, uint _lod, uint _y, uint _x
         split.shader_splineTerrafector.Vars()["gConstantBuffer"]["startOffset"] = 0;
         split.shader_splineTerrafector.Vars()->setBuffer("materials", terrafectorEditorMaterial::static_materials.sb_Terrafector_Materials);
 
-        auto& block = split.shader_splineTerrafector.Vars()->getParameterBlock("gmyTextures");
-        ShaderVar& var = block->findMember("T");        // FIXME pre get
+        ShaderVar var = (*split.shader_splineTerrafector.Vars())["gmyTextures_T"];
         terrafectorEditorMaterial::static_materials.setTextures(var);
 
         split.shader_splineTerrafector.Vars()->setBuffer("splineData", splines.bezierData);     // not created yet

@@ -23,14 +23,7 @@ RWStructuredBuffer<GC_feedback>			feedback;
 
 
 
-struct views
-{
-    RWStructuredBuffer<tileLookupStruct> terrainLookup[numRenderViews];
-    RWStructuredBuffer<tileLookupStruct> plantLookup[numRenderViews];
-    RWStructuredBuffer<tileLookupStruct> quadLookup[numRenderViews];
-};
-ParameterBlock<views> viewRenderData;
-
+#include "viewRenderData_lookupBuffers.hlsli"
 
 
 cbuffer gConstants
@@ -67,7 +60,7 @@ void packTile(uint _t, uint _view)
     // can we pre-create all of these blocks ad do a larger memcopy here instead of a loop
     for (uint i = 0; i < numBlocks; i++)
     {
-        viewRenderData.terrainLookup[_view][startBlock + i] = lu_Pack(_t, i, min(totalTriangles, 64));
+        StoreTerrainLookup(_view, startBlock + i, lu_Pack(_t, i, min(totalTriangles, 64)));
         totalTriangles -= 64;
     }
 
@@ -94,7 +87,7 @@ void packBillboard(uint _t, uint _view)
     // can we pre-create all of these blocks ad do a larger memcopy here instead of a loop
     for (uint i = 0; i < numBlocks; i++)
     {
-        viewRenderData.quadLookup[_view][startBlock + i] = lu_Pack(_t, i, min(totalQuads, 64));
+        StoreQuadLookup(_view, startBlock + i, lu_Pack(_t, i, min(totalQuads, 64)));
         totalQuads -= 64;
     }
 
@@ -121,7 +114,7 @@ void packPlants(uint _t, uint _view)
     // can we pre-create all of these blocks ad do a larger memcopy here instead of a loop
     for (uint i = 0; i < numBlocks; i++)
     {
-        viewRenderData.plantLookup[_view][startBlock + i] = lu_Pack(_t, i, min(totalPlants, 64));
+        StorePlantLookup(_view, startBlock + i, lu_Pack(_t, i, min(totalPlants, 64)));
         totalPlants -= 64;
     }
 

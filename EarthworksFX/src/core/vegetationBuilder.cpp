@@ -3611,8 +3611,7 @@ void _rootPlant::reloadShader()
     vegetationShader.Vars()->setSampler("gSamplerDepth", sampler_Depth);
     vegetationShader.Vars()->setSampler("gSmpLinearClamp", sampler_ClampAnisotropic);              // fixme only cvlamlX
     vegetationShader.Vars()->setTexture("highResShadow", shadowFbo->getDepthStencilTexture());
-    auto& block = vegetationShader.Vars()->getParameterBlock("textures");
-    varVegTextures = block->findMember("T");
+    varVegTextures = (*vegetationShader.Vars())["textures_T"];
 
     _plantMaterial::static_materials_veg.setTextures(varVegTextures);
 
@@ -3737,8 +3736,7 @@ void _rootPlant::onLoad()
     vegetationShader_GOURAUD.Vars()->setSampler("gSamplerDepth", sampler_Depth);
     vegetationShader_GOURAUD.Vars()->setSampler("gSmpLinearClamp", sampler_ClampAnisotropic);              // fixme only cvlamlX
     vegetationShader_GOURAUD.Vars()->setTexture("highResShadow", shadowFbo->getDepthStencilTexture());
-    auto& blockGouraud = vegetationShader_GOURAUD.Vars()->getParameterBlock("textures");
-    varTextures_Gauraud = blockGouraud->findMember("T");
+    varTextures_Gauraud = (*vegetationShader_GOURAUD.Vars())["textures_T"];
     /*
         vegetationShader_DEBUG_PIVOTS.add("_DEBUG_PIVOTS", "");
         vegetationShader_DEBUG_PIVOTS.load("Samples/Earthworks_4/hlsl/terrain/render_vegetation_ribbons.hlsl", "vsMain", "psMain", Vao::Topology::LineStrip, "gsMain");
@@ -3780,8 +3778,7 @@ void _rootPlant::onLoad()
     vegetationShader_RGB_SAMPLE.Vars()->setSampler("gSamplerDepth", sampler_Depth);
     vegetationShader_RGB_SAMPLE.Vars()->setSampler("gSmpLinearClamp", sampler_ClampAnisotropic);              // fixme only cvlamlX
     vegetationShader_RGB_SAMPLE.Vars()->setTexture("highResShadow", shadowFbo->getDepthStencilTexture());
-    auto& blockRGBsample = vegetationShader_RGB_SAMPLE.Vars()->getParameterBlock("textures");
-    varTextures_RGBSample = blockRGBsample->findMember("T");
+    varTextures_RGBSample = (*vegetationShader_RGB_SAMPLE.Vars())["textures_T"];
 
     vegetationShader_DEPTH.add("_DEPTH", "");
     vegetationShader_DEPTH.load("Samples/Earthworks_4/hlsl/terrain/render_vegetation_ribbons.hlsl", "vsMain", "psMain", Vao::Topology::LineStrip, "gsMain");
@@ -3793,8 +3790,7 @@ void _rootPlant::onLoad()
     vegetationShader_DEPTH.Vars()->setBuffer("materials", _plantMaterial::static_materials_veg.sb_vegetation_Materials);
     vegetationShader_DEPTH.Vars()->setSampler("gSmpLinear", sampler_Ribbons);              // fixme only cvlamlX
     vegetationShader_DEPTH.Vars()->setSampler("gSmpLinearClamp", sampler_ClampAnisotropic);              // fixme only cvlamlX
-    auto& blockDepth = vegetationShader_DEPTH.Vars()->getParameterBlock("textures");
-    varTextures_Depth = blockDepth->findMember("T");
+    varTextures_Depth = (*vegetationShader_DEPTH.Vars())["textures_T"];
 
 
 
@@ -3807,8 +3803,7 @@ void _rootPlant::onLoad()
     billboardShader.Vars()->setBuffer("materials", _plantMaterial::static_materials_veg.sb_vegetation_Materials);
     billboardShader.Vars()->setSampler("gSmpLinear", sampler_Ribbons);              // fixme only cvlamlX
     billboardShader.Vars()->setSampler("gSmpLinearClamp", sampler_ClampAnisotropic);              // fixme only cvlamlX
-    auto& blockBB = billboardShader.Vars()->getParameterBlock("textures");
-    varBBTextures = blockBB->findMember("T");
+    varBBTextures = (*billboardShader.Vars())["textures_T"];
 
     bakeShader.add("_BAKE", "");
     bakeShader.load("Samples/Earthworks_4/hlsl/terrain/render_vegetation_ribbons.hlsl", "vsMain", "psMain", Vao::Topology::LineStrip, "gsMain");
@@ -3818,8 +3813,7 @@ void _rootPlant::onLoad()
     bakeShader.Vars()->setBuffer("vertex_buffer", vertexData);
     bakeShader.Vars()->setBuffer("materials", _plantMaterial::static_materials_veg.sb_vegetation_Materials);
     bakeShader.Vars()->setSampler("gSmpLinear", sampler_Ribbons);              // fixme only cvlamlX
-    auto& blockB = bakeShader.Vars()->getParameterBlock("textures");
-    varBakeTextures = blockB->findMember("T");
+    varBakeTextures = (*bakeShader.Vars())["textures_T"];
 
     reloadShader();
 

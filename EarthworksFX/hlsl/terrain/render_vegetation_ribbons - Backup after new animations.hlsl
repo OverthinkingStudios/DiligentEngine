@@ -19,8 +19,7 @@ struct ribbonTextures
 {
     Texture2D<float4> T[4096];
 };
-ParameterBlock<ribbonTextures>
-textures;
+ribbonTextures textures;
 
 
 

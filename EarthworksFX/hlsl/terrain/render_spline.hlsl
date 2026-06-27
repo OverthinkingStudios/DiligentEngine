@@ -1,20 +1,28 @@
 #define CALLEDFROMHLSL
-#include "materials.hlsli"
 
 SamplerState gSmpPoint : register(s0);
 SamplerState gSmpLinear : register(s1);
 SamplerState gSmpAniso : register(s2);
 SamplerState gSmpLinearClamp : register(s3);
 
+Texture2D<float4> gmyTextures_T[4096];
+
+#include "materials.hlsli"
+
+struct cubicDouble
+{
+	float4 data[2][4];	//[center, outside][p0, p1, p2, p3]  //128 bytes
+};
+
+struct bezierLayer
+{
+	uint A;			// flags, material, index [4][14][16]			combine with rootindex in constant buffer
+	uint B;			// w0, w1 [4][14][14]
+};
+
 StructuredBuffer<TF_material> materials;
 StructuredBuffer<cubicDouble> splineData;
 StructuredBuffer<bezierLayer> indexData;
-
-struct myTextures
-{
-    Texture2D<float4> T[4096];
-};
-ParameterBlock<myTextures> gmyTextures;
 
 cbuffer gConstantBuffer : register(b0)
 {
@@ -31,31 +39,6 @@ struct splineVSOut
 	uint4 flags : TEXCOORD1;
 	float4 colour : COLOR;
 };
-
-
-struct cubicDouble
-{
-	float4 data[2][4];	//[center, outside][p0, p1, p2, p3]  //128 bytes
-};
-// [2][4] fully contained  float 128, u16 64
-
-// If we save this as a left and a right matrix. and save a float4(t)  Its a single matrix multiply for the answer
-// 200,000 beziers -> (128) 25Mb, lot but not too bad, and probably perfect if split
-// expanded 32X -> 2xfloat4 (32) X 32 = (1024)
-// SO this is SUPER interesting - Turns out beziers MAY NOT be the best way to do this at runtime It is only a 1:8 improvement on memory [32 splits],
-// we could optimally sample on curvature, and use significantly less than 32 splits on average
-// However 4 splits would be same data rate, so maybe still good
-
-struct bezierLayer
-{
-	uint A;			// flags, material, index [4][14][16]			combine with rootindex in constant buffer
-	uint B;			// w0, w1 [4][14][14]
-};
-
-
-
-
-
 
 
 // Cateljau
@@ -226,8 +209,8 @@ float4 solveColor(const TF_material _mat, const _uv uv, const float alpha)
 
     if (_mat.useColour)
     {
-        float3 albedo = gmyTextures.T[_mat.baseAlbedoTexture].Sample(gSmpLinear, uv.object).rgb;
-        float3 albedoDetail = gmyTextures.T[_mat.detailAlbedoTexture].Sample(gSmpLinear, uv.world).rgb;
+        float3 albedo = gmyTextures_T[_mat.baseAlbedoTexture].Sample(gSmpLinear, uv.object).rgb;
+        float3 albedoDetail = gmyTextures_T[_mat.detailAlbedoTexture].Sample(gSmpLinear, uv.world).rgb;
 
         float3 A = lerp(albedo, 0.5, saturate(_mat.albedoBlend));
         float3 B = lerp(albedoDetail, 0.5, saturate(-_mat.albedoBlend));

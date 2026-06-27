@@ -2,8 +2,10 @@
 #include "../render_Common.hlsli"
 
 #define CALLEDFROMHLSL
-#include "materials.hlsli"
 
+Texture2D<float4> gmyTextures_T[4096];
+
+#include "materials.hlsli"
 
 struct triVertex
 {
@@ -20,14 +22,6 @@ struct triVertex
 StructuredBuffer<TF_material> materials;
 StructuredBuffer<triVertex> vertexData;
 StructuredBuffer<uint> indexData;
-
-
-struct myTextures
-{
-    Texture2D<float4> T[4096];
-};
-ParameterBlock<myTextures>
-gmyTextures;
 
 
 

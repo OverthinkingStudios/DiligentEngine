@@ -1,4 +1,5 @@
 #include "Falcor.h"
+#include "FalcorGpuInternal.hpp"
 
 #include "imgui.h"
 
@@ -6,11 +7,14 @@
 #include <cmath>
 #include <chrono>
 #include <cstring>
+#include <unordered_set>
 #include "ots/Log.hpp"
 #include "terrafector.h"
 
 namespace Falcor
 {
+
+std::vector<std::filesystem::path> g_DataDirectories;
 
 namespace
 {
@@ -20,12 +24,13 @@ Diligent::IDeviceContext* g_pContext    = nullptr;
 Diligent::ISwapChain*     g_pSwapChain  = nullptr;
 bool                      g_VSync       = true;
 
-std::vector<std::filesystem::path> g_DataDirectories;
 FrameworkInterface                 g_DefaultFramework;
 DeviceInterface                    g_DefaultDevice;
 
 void EFX_LOG_STUB(const char* msg) {
-    spdlog::info(msg);
+    static std::unordered_set<std::string> s_Logged;
+    if (s_Logged.insert(msg).second)
+        spdlog::debug(msg);
 }
 
 TEXTURE_FORMAT ToDiligentFormat(Falcor::ResourceFormat fmt) {
@@ -50,11 +55,13 @@ void CreateTextureView(Diligent::ITexture* pTex, Diligent::TEXTURE_VIEW_TYPE vie
 DeviceInterface*    gpDevice    = &g_DefaultDevice;
 FrameworkInterface* gpFramework = &g_DefaultFramework;
 
-void SetFalcorDevice(Diligent::IRenderDevice* pDevice, Diligent::IDeviceContext* pContext, Diligent::ISwapChain* pSwapChain)
+void SetFalcorDevice(Diligent::IRenderDevice* pDevice, Diligent::IDeviceContext* pContext, Diligent::ISwapChain* pSwapChain,
+                     Diligent::IEngineFactory* pFactory)
 {
     g_pDevice    = pDevice;
     g_pContext   = pContext;
     g_pSwapChain = pSwapChain;
+    Gpu::OnSetFalcorDevice(pDevice, pContext, pSwapChain, pFactory);
 }
 
 void SetFalcorFramework(FrameworkInterface* pFramework)
@@ -86,6 +93,7 @@ void addDataDirectory(const std::filesystem::path& path, bool prepend)
         g_DataDirectories.insert(g_DataDirectories.begin(), path);
     else
         g_DataDirectories.push_back(path);
+    Gpu::RebuildShaderSearchPaths();
 }
 
 std::filesystem::path RemapShaderPath(const std::filesystem::path& falcorPath)
@@ -252,15 +260,6 @@ bool Camera::isObjectCulled(const AABB&) const
 
 // --- ShaderVar / vars --------------------------------------------------------
 
-struct ShaderVar::Node
-{
-    std::string                                            Name;
-    std::unordered_map<std::string, std::shared_ptr<Node>> Children;
-    Texture::SharedPtr                                     TextureValue;
-    Buffer::SharedPtr                                      BufferValue;
-    std::vector<uint8_t>                                   ScalarData;
-};
-
 ShaderVar::ShaderVar(std::shared_ptr<Node> node) : m_pNode(std::move(node)) {}
 
 ShaderVar ShaderVar::operator[](const char* name)
@@ -332,15 +331,6 @@ ShaderVar::operator Falcor::SharedPtr<Buffer>() const
 {
     return m_pNode ? m_pNode->BufferValue : nullptr;
 }
-
-struct ComputeVarsData
-{
-    std::unordered_map<std::string, Texture::SharedPtr> Textures;
-    std::unordered_map<std::string, Sampler::SharedPtr> Samplers;
-    std::unordered_map<std::string, Buffer::SharedPtr>  Buffers;
-    std::vector<uint8_t>                                Blob;
-    std::shared_ptr<ShaderVar::Node>                    Root = std::make_shared<ShaderVar::Node>();
-};
 
 ComputeVars::SharedPtr ComputeVars::create(ComputeProgram*)
 {
@@ -420,14 +410,6 @@ ShaderVar ComputeVars::findMember(const char* name) const
 {
     return const_cast<ComputeVars*>(this)->findMember(name);
 }
-
-struct GraphicsVarsData
-{
-    std::unordered_map<std::string, Texture::SharedPtr> Textures;
-    std::unordered_map<std::string, Sampler::SharedPtr> Samplers;
-    std::unordered_map<std::string, Buffer::SharedPtr>  Buffers;
-    std::shared_ptr<ShaderVar::Node>                    Root = std::make_shared<ShaderVar::Node>();
-};
 
 GraphicsVars::SharedPtr GraphicsVars::create(const ProgramReflection*)
 {
@@ -559,6 +541,32 @@ Texture::SharedPtr Texture::create3D(uint32_t width, uint32_t height, uint32_t d
     desc.Width     = width;
     desc.Height    = height;
     desc.Depth     = depth;
+    desc.Format    = ToDiligentFormat(format);
+    desc.BindFlags = static_cast<Diligent::BIND_FLAGS>(bindFlags);
+    desc.MipLevels = 1;
+    g_pDevice->CreateTexture(desc, nullptr, &tex->m_pTexture);
+    if (tex->m_pTexture && (bindFlags & Resource::BindFlags::ShaderResource))
+        CreateTextureView(tex->m_pTexture, Diligent::TEXTURE_VIEW_SHADER_RESOURCE, tex->m_SRV);
+    if (tex->m_pTexture && (bindFlags & Resource::BindFlags::UnorderedAccess))
+        CreateTextureView(tex->m_pTexture, Diligent::TEXTURE_VIEW_UNORDERED_ACCESS, tex->m_UAV);
+    return tex;
+}
+
+Texture::SharedPtr Texture::createCube(uint32_t size, Falcor::ResourceFormat format, uint32_t bindFlags)
+{
+    auto tex      = std::make_shared<Texture>();
+    tex->m_Width  = size;
+    tex->m_Height = size;
+    tex->m_Format = ToDiligentFormat(format);
+    tex->m_MipCount = 1;
+    if (!g_pDevice)
+        return tex;
+
+    Diligent::TextureDesc desc;
+    desc.Type      = Diligent::RESOURCE_DIM_TEX_CUBE;
+    desc.Width     = size;
+    desc.Height    = size;
+    desc.ArraySize = 6;
     desc.Format    = ToDiligentFormat(format);
     desc.BindFlags = static_cast<Diligent::BIND_FLAGS>(bindFlags);
     desc.MipLevels = 1;
@@ -868,6 +876,20 @@ Fbo::SharedPtr Fbo::create2D(uint32_t width, uint32_t height, const Desc& desc, 
     return create2D(width, height, desc);
 }
 
+Fbo::SharedPtr Fbo::createFromSwapChain(Diligent::ISwapChain* pSwapChain)
+{
+    auto fbo = std::make_shared<Fbo>();
+    if (!pSwapChain)
+        return fbo;
+
+    const auto& scDesc = pSwapChain->GetDesc();
+    fbo->m_Width           = scDesc.Width;
+    fbo->m_Height          = scDesc.Height;
+    fbo->m_pSwapChain      = pSwapChain;
+    fbo->m_IsSwapChainProxy = true;
+    return fbo;
+}
+
 Texture::SharedPtr Fbo::getColorTexture(uint32_t slot) const
 {
     return slot < m_ColorTextures.size() ? m_ColorTextures[slot] : nullptr;
@@ -880,12 +902,16 @@ Texture::SharedPtr Fbo::getDepthStencilTexture() const
 
 Diligent::ITextureView* Fbo::getRenderTargetView(uint32_t slot) const
 {
+    if (m_IsSwapChainProxy && m_pSwapChain && slot == 0)
+        return m_pSwapChain->GetCurrentBackBufferRTV();
     const auto tex = getColorTexture(slot);
     return tex ? tex->getRTV() : nullptr;
 }
 
 Diligent::ITextureView* Fbo::getDepthStencilView() const
 {
+    if (m_IsSwapChainProxy && m_pSwapChain)
+        return m_pSwapChain->GetDepthBufferDSV();
     return m_DepthTexture ? m_DepthTexture->getRTV() : nullptr;
 }
 
@@ -953,6 +979,7 @@ BlendState::Desc& BlendState::Desc::setRtParams(uint32_t rt, BlendOp, BlendOp, B
         {
         case BlendFunc::Zero: return Diligent::BLEND_FACTOR_ZERO;
         case BlendFunc::One: return Diligent::BLEND_FACTOR_ONE;
+        case BlendFunc::OneMinusSrcAlpha: return Diligent::BLEND_FACTOR_INV_SRC_ALPHA;
         case BlendFunc::SrcAlphaSaturate: return Diligent::BLEND_FACTOR_SRC_ALPHA_SAT;
         default: return Diligent::BLEND_FACTOR_SRC_ALPHA;
         }
@@ -1097,13 +1124,7 @@ Program::DefineList& Program::DefineList::remove(const std::string& name)
 
 ComputeProgram::SharedPtr ComputeProgram::createFromFile(const std::filesystem::path& path, const std::string& csEntry, const Program::DefineList& defines)
 {
-    auto program    = std::make_shared<ComputeProgram>();
-    program->m_Path   = RemapShaderPath(path);
-    program->m_Entry  = csEntry;
-    program->m_Defines = defines;
-    program->m_pReflection = std::make_shared<ProgramReflection>();
-    EFX_LOG_STUB("ComputeProgram::createFromFile stub");
-    return program;
+    return Gpu::CompileComputeProgram(path, csEntry, defines);
 }
 
 GraphicsProgram::Desc& GraphicsProgram::Desc::vsEntry(const std::string& entry)
@@ -1132,16 +1153,7 @@ GraphicsProgram::Desc& GraphicsProgram::Desc::setShaderModel(const std::string& 
 
 GraphicsProgram::SharedPtr GraphicsProgram::create(const Desc& desc, const Program::DefineList& defines)
 {
-    auto program         = std::make_shared<GraphicsProgram>();
-    program->m_Path      = RemapShaderPath(desc.getPath());
-    program->m_VsEntry   = desc.getVsEntry();
-    program->m_PsEntry   = desc.getPsEntry();
-    program->m_GsEntry   = desc.getGsEntry();
-    program->m_ShaderModel = desc.getShaderModel();
-    program->m_Defines   = defines;
-    program->m_pReflection = std::make_shared<ProgramReflection>();
-    EFX_LOG_STUB("GraphicsProgram::create stub");
-    return program;
+    return Gpu::CompileGraphicsProgram(desc, defines);
 }
 
 GraphicsProgram::SharedPtr GraphicsProgram::createFromFile(const std::filesystem::path& path, const std::string& vsEntry, const std::string& psEntry, const Program::DefineList& defines)
@@ -1153,52 +1165,43 @@ GraphicsProgram::SharedPtr GraphicsProgram::createFromFile(const std::filesystem
 
 VertexLayout::SharedPtr VertexLayout::create() { return std::make_shared<VertexLayout>(); }
 
-Vao::SharedPtr Vao::create(Topology, const VertexLayout::SharedPtr&, const BufferVec&, const Buffer::SharedPtr&, Falcor::ResourceFormat indexFormat)
+Vao::SharedPtr Vao::create(Topology topology, const VertexLayout::SharedPtr&, const BufferVec& vbos, const Buffer::SharedPtr& ib, Falcor::ResourceFormat indexFormat)
 {
-    return std::make_shared<Vao>();
+    auto vao = std::make_shared<Vao>();
+    Gpu::RegisterVao(vao.get(), topology, vbos, ib, indexFormat);
+    return vao;
 }
 
 RenderContext::RenderContext(Diligent::IDeviceContext* pContext) : m_pContext(pContext) {}
 
-void RenderContext::dispatch(ComputeState*, ComputeVars*, const uint3& groups)
+void RenderContext::dispatch(ComputeState* pState, ComputeVars* pVars, const uint3& groups)
 {
-    (void)groups;
-    EFX_LOG_STUB("RenderContext::dispatch stub");
+    Gpu::Dispatch(m_pContext, pState, pVars, groups);
 }
 
-void RenderContext::dispatchIndirect(ComputeState*, ComputeVars*, const Buffer*, uint64_t)
+void RenderContext::dispatchIndirect(ComputeState* pState, ComputeVars* pVars, const Buffer* pArgBuffer, uint64_t argBufferOffset)
 {
-    EFX_LOG_STUB("RenderContext::dispatchIndirect stub");
+    Gpu::DispatchIndirect(m_pContext, pState, pVars, pArgBuffer, argBufferOffset);
 }
 
-void RenderContext::drawIndirect(GraphicsState*, GraphicsVars*, uint32_t, Buffer*, uint64_t, Buffer*, uint64_t)
+void RenderContext::drawIndirect(GraphicsState* pState, GraphicsVars* pVars, uint32_t numArgs, Buffer* pArgBuffer, uint64_t argBufferOffset, Buffer* pCountBuffer, uint64_t countBufferOffset)
 {
-    EFX_LOG_STUB("RenderContext::drawIndirect stub");
+    Gpu::DrawIndirect(m_pContext, pState, pVars, numArgs, pArgBuffer, argBufferOffset, pCountBuffer, countBufferOffset);
 }
 
-void RenderContext::drawIndexedInstanced(GraphicsState*, GraphicsVars*, uint32_t indexCount, uint32_t instanceCount, uint32_t, int32_t, uint32_t)
+void RenderContext::drawIndexedInstanced(GraphicsState* pState, GraphicsVars* pVars, uint32_t indexCount, uint32_t instanceCount, uint32_t startIndex, int32_t baseVertex, uint32_t startInstance)
 {
-    (void)indexCount;
-    (void)instanceCount;
-    EFX_LOG_STUB("RenderContext::drawIndexedInstanced stub");
+    Gpu::DrawIndexedInstanced(m_pContext, pState, pVars, indexCount, instanceCount, startIndex, baseVertex, startInstance);
 }
 
-void RenderContext::drawInstanced(GraphicsState*, GraphicsVars*, uint32_t vertexCount, uint32_t instanceCount, uint32_t, uint32_t)
+void RenderContext::drawInstanced(GraphicsState* pState, GraphicsVars* pVars, uint32_t vertexCount, uint32_t instanceCount, uint32_t startVertex, uint32_t startInstance)
 {
-    (void)vertexCount;
-    (void)instanceCount;
-    EFX_LOG_STUB("RenderContext::drawInstanced stub");
+    Gpu::DrawInstanced(m_pContext, pState, pVars, vertexCount, instanceCount, startVertex, startInstance);
 }
 
-void RenderContext::clearFbo(Fbo*, const float4& color, float depth, uint8_t stencil, FboAttachmentType attachments)
+void RenderContext::clearFbo(Fbo* pFbo, const float4& color, float depth, uint8_t stencil, FboAttachmentType attachments)
 {
-    if (!m_pContext)
-        return;
-    (void)color;
-    (void)depth;
-    (void)stencil;
-    (void)attachments;
-    EFX_LOG_STUB("RenderContext::clearFbo stub");
+    Gpu::ClearFbo(m_pContext, pFbo, color, depth, stencil, attachments);
 }
 
 void RenderContext::clearTexture(Texture* tx)
@@ -1207,11 +1210,9 @@ void RenderContext::clearTexture(Texture* tx)
     EFX_LOG_STUB("RenderContext::clearTexture stub");
 }
 
-void RenderContext::blit(Diligent::ITextureView* pSrc, Diligent::ITextureView* pDst, const glm::vec4&, const glm::vec4&, Sampler::Filter, BlendState::SharedPtr)
+void RenderContext::blit(Diligent::ITextureView* pSrc, Diligent::ITextureView* pDst, const glm::vec4& srcRect, const glm::vec4& dstRect, Sampler::Filter filter, BlendState::SharedPtr blend)
 {
-    (void)pSrc;
-    (void)pDst;
-    EFX_LOG_STUB("RenderContext::blit stub");
+    Gpu::Blit(m_pContext, pSrc, pDst, srcRect, dstRect, filter, blend);
 }
 
 void RenderContext::updateTextureData(Texture*, const void*)

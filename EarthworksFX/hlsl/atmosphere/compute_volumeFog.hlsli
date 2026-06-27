@@ -37,14 +37,44 @@ Texture2D terrainShadow : register(t8);
 Texture2D fogDensities[32] : register(t32);
 
 
-struct cfdTextures
-{
-    Texture3D T[12];
-    float4 offset[12];
-    float4 scale[12];
-};
-ParameterBlock<cfdTextures> gCfd;
+Texture3D gCfd_T_0;
+Texture3D gCfd_T_1;
+Texture3D gCfd_T_2;
+Texture3D gCfd_T_3;
+Texture3D gCfd_T_4;
+Texture3D gCfd_T_5;
+Texture3D gCfd_T_6;
+Texture3D gCfd_T_7;
+Texture3D gCfd_T_8;
+Texture3D gCfd_T_9;
+Texture3D gCfd_T_10;
+Texture3D gCfd_T_11;
 
+float4 gCfd_offset_0;
+float4 gCfd_offset_1;
+float4 gCfd_offset_2;
+float4 gCfd_offset_3;
+float4 gCfd_offset_4;
+float4 gCfd_offset_5;
+float4 gCfd_offset_6;
+float4 gCfd_offset_7;
+float4 gCfd_offset_8;
+float4 gCfd_offset_9;
+float4 gCfd_offset_10;
+float4 gCfd_offset_11;
+
+float4 gCfd_scale_0;
+float4 gCfd_scale_1;
+float4 gCfd_scale_2;
+float4 gCfd_scale_3;
+float4 gCfd_scale_4;
+float4 gCfd_scale_5;
+float4 gCfd_scale_6;
+float4 gCfd_scale_7;
+float4 gCfd_scale_8;
+float4 gCfd_scale_9;
+float4 gCfd_scale_10;
+float4 gCfd_scale_11;
 
 
 // I rthink remove FogCloudCommonParams
@@ -241,28 +271,28 @@ float4 sample_cfd(float3 smokePos, float3 eye_step)
     float3 SmokeUV, uvB;
 
     smokePos += eye_step * 0.5; // Check thsi is correct, the 0.4 below sugegsts that step is already half step
-    SmokeUV = (smokePos - gCfd.offset[10].xyz) * gCfd.scale[10].xyz;
-    uvB = (smokePos - gCfd.offset[11].xyz) * gCfd.scale[10].xyz;
+    SmokeUV = (smokePos - gCfd_offset_10.xyz) * gCfd_scale_10.xyz;
+    uvB = (smokePos - gCfd_offset_11.xyz) * gCfd_scale_10.xyz;
     bool found = false;
-    cfd = sample_one(gCfd.T[10], gCfd.T[11], SmokeUV, uvB, eye_step * gCfd.scale[10].xyz, found, gCfd.offset[10].w);
+    cfd = sample_one(gCfd_T_10, gCfd_T_11, SmokeUV, uvB, eye_step * gCfd_scale_10.xyz, found, gCfd_offset_10.w);
     if (!found)
     {
-        SmokeUV = (smokePos - gCfd.offset[8].xyz) * gCfd.scale[8].xyz;
-        uvB = (smokePos - gCfd.offset[9].xyz) * gCfd.scale[8].xyz;
-        cfd = sample_one(gCfd.T[8], gCfd.T[9], SmokeUV, uvB, eye_step * gCfd.scale[8].xyz, found, gCfd.offset[8].w);
+        SmokeUV = (smokePos - gCfd_offset_8.xyz) * gCfd_scale_8.xyz;
+        uvB = (smokePos - gCfd_offset_9.xyz) * gCfd_scale_8.xyz;
+        cfd = sample_one(gCfd_T_8, gCfd_T_9, SmokeUV, uvB, eye_step * gCfd_scale_8.xyz, found, gCfd_offset_8.w);
     }
     if (!found)
     {
-        SmokeUV = (smokePos - gCfd.offset[6].xyz) * gCfd.scale[6].xyz;
-        uvB = (smokePos - gCfd.offset[7].xyz) * gCfd.scale[6].xyz;
-        cfd = sample_one(gCfd.T[6], gCfd.T[7], SmokeUV, uvB, eye_step * gCfd.scale[6].xyz, found, gCfd.offset[6].w);
+        SmokeUV = (smokePos - gCfd_offset_6.xyz) * gCfd_scale_6.xyz;
+        uvB = (smokePos - gCfd_offset_7.xyz) * gCfd_scale_6.xyz;
+        cfd = sample_one(gCfd_T_6, gCfd_T_7, SmokeUV, uvB, eye_step * gCfd_scale_6.xyz, found, gCfd_offset_6.w);
         //cfd.y = 0.5f;
     }
     if (!found)
     {
-        SmokeUV = (smokePos - gCfd.offset[4].xyz) * gCfd.scale[4].xyz;
-        uvB = (smokePos - gCfd.offset[5].xyz) * gCfd.scale[4].xyz;
-        cfd = sample_one(gCfd.T[4], gCfd.T[5], SmokeUV, uvB, eye_step * gCfd.scale[4].xyz, found, gCfd.offset[4].w);
+        SmokeUV = (smokePos - gCfd_offset_4.xyz) * gCfd_scale_4.xyz;
+        uvB = (smokePos - gCfd_offset_5.xyz) * gCfd_scale_4.xyz;
+        cfd = sample_one(gCfd_T_4, gCfd_T_5, SmokeUV, uvB, eye_step * gCfd_scale_4.xyz, found, gCfd_offset_4.w);
         //cfd.y = 1;
         //cfd.y = gCfd.offset[4].w;
 

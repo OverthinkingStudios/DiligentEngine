@@ -84,6 +84,7 @@ void atmosphereAndFog::onLoad(RenderContext* _renderContext, FILE* _logfile)
     compute_Atmosphere.load("Samples/Earthworks_4/hlsl/atmosphere/compute_volumeFogAtmosphericScatter.hlsl");
     compute_Atmosphere.Vars()->setTexture("SunInAtmosphere", sunlightTexture);
     compute_Atmosphere.Vars()->setTexture("hazePhaseFunction", phaseFunction);
+    compute_Atmosphere.Vars()->setTexture("envMap", Texture::createCube(1, Falcor::ResourceFormat::RGBA8Unorm, Falcor::Resource::BindFlags::ShaderResource));
     compute_Atmosphere.Vars()->setTexture("gInscatter", mainFar.inscatter);
     compute_Atmosphere.Vars()->setTexture("gInscatter_cloudBase", mainFar.inscatter_cloudbase);
     compute_Atmosphere.Vars()->setTexture("gInscatter_sky", mainFar.inscatter_sky);
@@ -223,14 +224,10 @@ void atmosphereAndFog::setTerrainShadow(Texture::SharedPtr shadow)
 
 void atmosphereAndFog::setSMOKE(Texture::SharedPtr textures[6][3])
 {
-    auto& block = compute_Atmosphere.Vars()->getParameterBlock("gCfd");
-    ShaderVar& var = block->findMember("T");        // FIXME pre get
+    for (uint lod = 0; lod < 6; lod++)
     {
-        for (uint lod=0; lod<6; lod++)
-        {
-            var[lod * 2 + 0] = textures[lod][0];
-            var[lod * 2 + 1] = textures[lod][1];
-        }
+        compute_Atmosphere.Vars()->setTexture(("gCfd_T_" + std::to_string(lod * 2 + 0)).c_str(), textures[lod][0]);
+        compute_Atmosphere.Vars()->setTexture(("gCfd_T_" + std::to_string(lod * 2 + 1)).c_str(), textures[lod][1]);
     }
 }
 
@@ -254,27 +251,13 @@ void atmosphereAndFog::setSmokeTime(float4 lodOffsets[6][2], float4 lodScales[6]
     compute_Atmosphere.Vars()["FogAtmosphericParams"]["cfdScale_5"] = lodScales[5];
     */
 
-    auto& block = compute_Atmosphere.Vars()->getParameterBlock("gCfd");
-    ShaderVar& off= block->findMember("offset"); 
-    ShaderVar& scl = block->findMember("scale"); 
+    for (uint lod = 0; lod < 6; lod++)
     {
-        for (uint lod = 0; lod < 6; lod++)
-        {
-            off[lod * 2 + 0] = lodOffsets[lod][0];
-            off[lod * 2 + 1] = lodOffsets[lod][1];
-
-            scl[lod * 2 + 0] = lodScales[lod];
-            scl[lod * 2 + 1] = lodScales[lod];
-        }
+        const int i0 = static_cast<int>(lod * 2);
+        const int i1 = i0 + 1;
+        compute_Atmosphere.Vars()[("gCfd_offset_" + std::to_string(i0)).c_str()] = lodOffsets[lod][0];
+        compute_Atmosphere.Vars()[("gCfd_offset_" + std::to_string(i1)).c_str()] = lodOffsets[lod][1];
+        compute_Atmosphere.Vars()[("gCfd_scale_" + std::to_string(i0)).c_str()]   = lodScales[lod];
+        compute_Atmosphere.Vars()[("gCfd_scale_" + std::to_string(i1)).c_str()]   = lodScales[lod];
     }
-
-    // not sduire why the top lot is broken
-    /*
-    compute_Atmosphere.Vars()["FogAtmosphericParams"]["cfdScale_0"] = float4(1.f / 40000.f, 1.f / 10000.f, 1.f / 40000.f, 0);
-    compute_Atmosphere.Vars()["FogAtmosphericParams"]["cfdScale_1"] = float4(1.f / 20000.f, 1.f / 10000.f, 1.f / 20000.f, 0);
-    compute_Atmosphere.Vars()["FogAtmosphericParams"]["cfdScale_2"] = float4(1.f / 10000.f, 1.f / 10000.f, 1.f / 10000.f, 0);
-    compute_Atmosphere.Vars()["FogAtmosphericParams"]["cfdScale_3"] = float4(1.f / 5000.f, 1.f / 5000.f, 1.f / 5000.f, 0);
-    compute_Atmosphere.Vars()["FogAtmosphericParams"]["cfdScale_4"] = float4(1.f / 2500.f, 1.f / 2500.f, 1.f / 2500.f, 0);
-    compute_Atmosphere.Vars()["FogAtmosphericParams"]["cfdScale_5"] = float4(1.f / 1250.f, 1.f / 1250.f, 1.f / 1250.f, 0);
-    */
 }

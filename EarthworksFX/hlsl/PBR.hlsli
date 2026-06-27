@@ -1,6 +1,5 @@
 
 
-#include "material.hlsli"
 #include "render_Common.hlsli"
 
 static const float M_PIf = 3.14159265359f;
@@ -129,7 +128,7 @@ inline float schlick_gloss( float f0, float V, float gloss )
 	return lerp( f0, lerp(f0, 1, gloss), pow5(V) );			// feels to me like lerp should be faster for this
 }
 
-
+#include "material.hlsli"
 
 float2 rand_2_0004(in float2 uv)
 {

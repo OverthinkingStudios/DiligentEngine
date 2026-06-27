@@ -34,6 +34,7 @@
 #include "Buffer.h"
 #include "GraphicsTypes.h"
 #include "BlendState.h"
+#include "EngineFactory.h"
 
 #if defined(_WIN32) || defined(PLATFORM_WIN32)
 #    include "WinHPreface.h"
@@ -78,6 +79,11 @@ inline T saturate(const T& x)
 
 namespace Falcor
 {
+
+namespace Gpu
+{
+class Internal;
+}
 
 namespace rmcv
 {
@@ -327,8 +333,10 @@ public:
     Falcor::SharedPtr<RasterizerState>   getRasterizerState() const { return m_pRasterizerState; }
     Falcor::SharedPtr<Fbo>               getFbo() const { return m_pFbo; }
     Falcor::SharedPtr<GraphicsProgram>   getProgram() const { return m_pProgram; }
+    Falcor::SharedPtr<Vao>               getVao() const { return m_pVao; }
 
 private:
+    friend class Gpu::Internal;
     Falcor::SharedPtr<BlendState>        m_pBlendState;
     Falcor::SharedPtr<DepthStencilState> m_pDepthStencilState;
     Falcor::SharedPtr<RasterizerState>   m_pRasterizerState;
@@ -376,12 +384,21 @@ public:
     operator Falcor::SharedPtr<Texture>() const;
     operator Falcor::SharedPtr<Buffer>() const;
 
-    struct Node;
+    struct Node
+    {
+        std::string                                            Name;
+        std::unordered_map<std::string, std::shared_ptr<Node>> Children;
+        SharedPtr<Texture>                                     TextureValue;
+        SharedPtr<Buffer>                                      BufferValue;
+        std::vector<uint8_t>                                   ScalarData;
+    };
+
     std::shared_ptr<Node> m_pNode;
     explicit ShaderVar(std::shared_ptr<Node> node);
 
     friend class ComputeVars;
     friend class GraphicsVars;
+    friend class Gpu::Internal;
 
 private:
     ShaderVar& assignScalar(const void* data, size_t size);
@@ -397,6 +414,9 @@ public:
     ShaderVar operator[](const char* name) { return (*this->get())[name]; }
     ShaderVar operator[](const char* name) const { return (*this->get())[name]; }
 };
+
+struct ComputeVarsData;
+struct GraphicsVarsData;
 
 class ComputeVars
 {
@@ -422,11 +442,13 @@ public:
     ShaderVar findMember(const char* name) const;
 
 private:
-    std::shared_ptr<struct ComputeVarsData> m_pData;
-    std::shared_ptr<ShaderVar::Node>        m_pBlockRoot;
+    std::shared_ptr<ComputeVarsData> m_pData;
+    std::shared_ptr<ShaderVar::Node> m_pBlockRoot;
 
     ShaderVar getRootVar();
     ShaderVar getRootVar() const;
+
+    friend class Gpu::Internal;
 };
 
 class GraphicsVars
@@ -453,11 +475,13 @@ public:
     ShaderVar findMember(const char* name) const;
 
 private:
-    std::shared_ptr<struct GraphicsVarsData> m_pData;
-    std::shared_ptr<ShaderVar::Node>         m_pBlockRoot;
+    std::shared_ptr<GraphicsVarsData> m_pData;
+    std::shared_ptr<ShaderVar::Node>  m_pBlockRoot;
 
     ShaderVar getRootVar();
     ShaderVar getRootVar() const;
+
+    friend class Gpu::Internal;
 };
 
 
@@ -487,6 +511,7 @@ public:
     static SharedPtr create2D(uint32_t width, uint32_t height, TEXTURE_FORMAT format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
     static SharedPtr create2D(uint32_t width, uint32_t height, Falcor::ResourceFormat format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
     static SharedPtr create3D(uint32_t width, uint32_t height, uint32_t depth, Falcor::ResourceFormat format, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
+    static SharedPtr createCube(uint32_t size, Falcor::ResourceFormat format, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
     static SharedPtr createFromFile(const char* path, bool srgb, bool generateMips, Resource::BindFlags bind_flags = Resource::BindFlags::ShaderResource);
     static SharedPtr createFromFile(const std::filesystem::path& path, bool srgb, bool generateMips, Resource::BindFlags bind_flags = Resource::BindFlags::ShaderResource);
 
@@ -589,6 +614,23 @@ private:
     MapType                                  m_LastMapType = MapType::Read;
 };
 
+struct ComputeVarsData
+{
+    std::unordered_map<std::string, SharedPtr<Texture>> Textures;
+    std::unordered_map<std::string, SharedPtr<Sampler>> Samplers;
+    std::unordered_map<std::string, SharedPtr<Buffer>>  Buffers;
+    std::vector<uint8_t>                                Blob;
+    std::shared_ptr<ShaderVar::Node>                    Root = std::make_shared<ShaderVar::Node>();
+};
+
+struct GraphicsVarsData
+{
+    std::unordered_map<std::string, SharedPtr<Texture>> Textures;
+    std::unordered_map<std::string, SharedPtr<Sampler>> Samplers;
+    std::unordered_map<std::string, SharedPtr<Buffer>>  Buffers;
+    std::shared_ptr<ShaderVar::Node>                    Root = std::make_shared<ShaderVar::Node>();
+};
+
 class Fbo
 {
 public:
@@ -613,6 +655,7 @@ public:
 
     static SharedPtr create2D(uint32_t width, uint32_t height, const Desc& desc);
     static SharedPtr create2D(uint32_t width, uint32_t height, const Desc& desc, uint32_t arraySize, uint32_t sampleCount);
+    static SharedPtr createFromSwapChain(Diligent::ISwapChain* pSwapChain);
 
     Texture::SharedPtr getColorTexture(uint32_t slot) const;
     Texture::SharedPtr getDepthStencilTexture() const;
@@ -621,12 +664,18 @@ public:
             
     float getWidth() const { return m_Width; }
     float getHeight() const { return m_Height; }
+    bool  isSwapChainProxy() const { return m_IsSwapChainProxy; }
+    Diligent::ISwapChain* getSwapChain() const { return m_pSwapChain; }
 
 private:
+    friend class Gpu::Internal;
+
     uint32_t m_Width = 0;
     uint32_t m_Height = 0;
     std::array<Texture::SharedPtr, 8> m_ColorTextures{};
     Texture::SharedPtr                m_DepthTexture;
+    Diligent::ISwapChain*           m_pSwapChain = nullptr;
+    bool                              m_IsSwapChainProxy = false;
 };
 
 class Sampler
@@ -703,6 +752,8 @@ public:
         Desc& setRenderTargetWriteMask(uint32_t rt, bool red, bool green, bool blue, bool alpha);
         Desc& setAlphaToCoverage(bool enabled);
 
+        const Diligent::BlendStateDesc& GetDiligentDesc() const { return m_Desc; }
+
     private:
         friend class BlendState;
         Diligent::BlendStateDesc m_Desc{};
@@ -741,6 +792,8 @@ public:
         Desc& setStencilEnabled(bool enabled);
         Desc& setDepthFunc(Func func);
 
+        const Diligent::DepthStencilStateDesc& GetDiligentDesc() const { return m_Desc; }
+
     private:
         friend class DepthStencilState;
         Diligent::DepthStencilStateDesc m_Desc{};
@@ -777,6 +830,8 @@ public:
     public:
         Desc& setCullMode(CullMode mode);
         Desc& setFillMode(FillMode mode);
+
+        const Diligent::RasterizerStateDesc& GetDiligentDesc() const { return m_Desc; }
 
     private:
         friend class RasterizerState;
@@ -818,6 +873,8 @@ public:
     static const std::vector<std::string>& getGlobalCompilationStats() { static const std::vector<std::string> s_Empty; return s_Empty; }
 
 private:
+    friend class Gpu::Internal;
+
     std::shared_ptr<ProgramReflection> m_pReflection;
     std::filesystem::path              m_Path;
     std::string                        m_Entry;
@@ -860,6 +917,8 @@ public:
     static const std::vector<std::string>& getGlobalCompilationStats() { static const std::vector<std::string> s_Empty; return s_Empty; }
 
 private:
+    friend class Gpu::Internal;
+
     std::shared_ptr<ProgramReflection> m_pReflection;
     std::filesystem::path              m_Path;
     std::string                        m_VsEntry;
@@ -1109,10 +1168,13 @@ public:
 extern DeviceInterface*     gpDevice;
 extern FrameworkInterface*  gpFramework;
 
-void SetFalcorDevice(Diligent::IRenderDevice* pDevice, Diligent::IDeviceContext* pContext, Diligent::ISwapChain* pSwapChain);
+void SetFalcorDevice(Diligent::IRenderDevice* pDevice, Diligent::IDeviceContext* pContext, Diligent::ISwapChain* pSwapChain,
+                     Diligent::IEngineFactory* pFactory = nullptr);
 void SetFalcorFramework(FrameworkInterface* pFramework);
 
 void addDataDirectory(const std::filesystem::path& path, bool prepend);
+
+extern std::vector<std::filesystem::path> g_DataDirectories;
 
 std::filesystem::path RemapShaderPath(const std::filesystem::path& falcorPath);
 

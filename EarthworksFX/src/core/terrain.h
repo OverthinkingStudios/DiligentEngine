@@ -80,6 +80,7 @@
 //#include "cfd.h"
 #include <future> // Required for std::async and std::future
 #include <thread> // Required for std::this_thread::sleep_for
+#include <memory>
 
 using namespace Falcor;
 
@@ -91,6 +92,7 @@ using namespace Falcor;
 // MOVE TO TEMP SHADWO CLASS TO BE REPLACED WITH GPU DATA
 struct _shadowEdges
 {
+    ~_shadowEdges();
     float height[4096][4096];
     float Nx[4095][4095];   // temp
     unsigned char edge[4096][4096];
@@ -104,7 +106,12 @@ struct _shadowEdges
     float3 sunAng;
     bool shadowReady = false;
     bool requestNewShadow = false;
+    void launchSolveThread();
+   
+private:
     void solveThread();
+    std::unique_ptr<std::thread> threadShadows;
+    bool threadRunning = false;
 };
 
 

@@ -1,11 +1,8 @@
 #include "EarthworksFXSample.hpp"
 
-#include "ots/CrashGuard.hpp"
 #include "imgui.h"
 
-#include <cstdio>
 #include <filesystem>
-#include <iostream>
 
 namespace Diligent
 {
@@ -30,18 +27,6 @@ public:
 private:
     Falcor::FrameworkInterface* m_Prev = nullptr;
 };
-
-Falcor::Fbo::SharedPtr CreateSwapChainTargetFbo(ISwapChain* pSwapChain)
-{
-    if (!pSwapChain)
-        return nullptr;
-
-    const auto& scDesc = pSwapChain->GetDesc();
-    Falcor::Fbo::Desc desc;
-    desc.setColorTarget(0, scDesc.ColorBufferFormat);
-    desc.setDepthStencilTarget(scDesc.DepthBufferFormat);
-    return Falcor::Fbo::create2D(scDesc.Width, scDesc.Height, desc);
-}
 
 } // namespace
 
@@ -76,8 +61,9 @@ EarthworksFXAppSettings EarthworksFXSample::GetAppSettings(bool IsInitialization
     EarthworksFXAppSettings Settings;
     if (IsInitialization)
     {
-        Settings.DeviceType  = RENDER_DEVICE_TYPE_VULKAN;
-        Settings.VSync       = true;
+        Settings.DeviceType   = RENDER_DEVICE_TYPE_VULKAN;
+        Settings.VSync        = false;
+        Settings.ShowUI       = true;
         Settings.WindowWidth  = 2560;
         Settings.WindowHeight = 1440;
     }
@@ -88,7 +74,7 @@ void EarthworksFXSample::OnGraphicsInitialized()
 {
     m_FalcorWrapper = std::make_unique<Falcor::EarthworksWrapper>();
 
-    Falcor::SetFalcorDevice(m_pDevice, m_pImmediateContext, m_pSwapChain);
+    Falcor::SetFalcorDevice(m_pDevice, m_pImmediateContext, m_pSwapChain, m_pEngineFactory);
     Falcor::SetFalcorFramework(&m_Framework);
     Falcor::addDataDirectory(std::filesystem::current_path(), true);
     Falcor::addDataDirectory(std::filesystem::current_path() / "terrains", false);
@@ -101,7 +87,7 @@ void EarthworksFXSample::OnGraphicsInitialized()
 
     const auto& scDesc = m_pSwapChain->GetDesc();
     m_Earthworks.onResizeSwapChain(scDesc.Width, scDesc.Height);
-    m_TargetFbo = CreateSwapChainTargetFbo(m_pSwapChain);
+    m_TargetFbo = Falcor::Fbo::createFromSwapChain(m_pSwapChain);
 
     m_Initialized = true;
 }
@@ -115,7 +101,7 @@ void EarthworksFXSample::RenderSample()
     m_Framework.SetAverageFrameTimeMs(m_fSmoothFPS > 0.f ? 1000.0 / static_cast<double>(m_fSmoothFPS) : 16.0);
 
     if (!m_TargetFbo)
-        m_TargetFbo = CreateSwapChainTargetFbo(m_pSwapChain);
+        m_TargetFbo = Falcor::Fbo::createFromSwapChain(m_pSwapChain);
 
     m_Earthworks.onFrameRender(&m_RenderContext, m_TargetFbo);
 }
@@ -144,7 +130,7 @@ void EarthworksFXSample::OnWindowResized(Uint32 Width, Uint32 Height)
 
     ScopedFalcorFramework scope{&m_Framework};
     m_Earthworks.onResizeSwapChain(Width, Height);
-    m_TargetFbo = CreateSwapChainTargetFbo(m_pSwapChain);
+    m_TargetFbo = Falcor::Fbo::createFromSwapChain(m_pSwapChain);
 }
 
 void EarthworksFXSample::UpdateUI()
@@ -152,11 +138,9 @@ void EarthworksFXSample::UpdateUI()
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("EarthworksFX", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
-        ImGui::Text("Falcor terrain port (1:1 algorithm, Diligent host).");
         ImGui::Text("FPS: %.1f", m_fSmoothFPS);
         ImGui::Text("Terrain: terrains/switserland_Steg/ (pwd-relative)");
         ImGui::Text("API: Vulkan");
-        ImGui::Text("See EarthworksFX/MIGRATION.md for remaining wiring.");
     }
     ImGui::End();
 }
@@ -190,8 +174,6 @@ void EarthworksFXSample::SyncInput()
 
     ScopedFalcorFramework scope{&m_Framework};
     m_Earthworks.onMouseEvent(event);
-
-    // TODO: map keyboard events (D toggles editor GUI, Q hides GUI in original Earthworks_4).
 }
 
 Falcor::FrameRate EarthworksFXSample::SampleFramework::getFrameRate() const

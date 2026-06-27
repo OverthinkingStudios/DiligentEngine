@@ -20,12 +20,7 @@ Texture2D       gAlbedo : register(t0);
 Texture2D       gDappledLight : register(t3);
 Texture2D       highResShadow : register(t4);
 
-struct ribbonTextures
-{
-    Texture2D<float4> T[4096];
-};
-ParameterBlock<ribbonTextures>
-textures;
+Texture2D<float4> textures_T[4096];
 
 
 cbuffer gConstantBuffer
@@ -538,7 +533,7 @@ PSIn vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
     // now light it
     {
         const sprite_material MAT = materials[output.material_IDX];
-        float3 albedo = textures.T[MAT.albedoTexture].SampleLevel(gSmpLinearClamp, float2(0.5, 0.5), 8).rgb;
+        float3 albedo = textures_T[MAT.albedoTexture].SampleLevel(gSmpLinearClamp, float2(0.5, 0.5), 8).rgb;
 
         float dappled = pow(1 - output.Shadow, 2);
         float3 N = output.normal;
@@ -736,7 +731,7 @@ PS_OUTPUT_Bake psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     float alpha = 1;
     if (MAT.albedoTexture >= 0)
     {
-        alpha = textures.T[MAT.albedoTexture].Sample(gSmpLinear, vOut.uv.xy).a;
+        alpha = textures_T[MAT.albedoTexture].Sample(gSmpLinear, vOut.uv.xy).a;
         alpha = pow(alpha, MAT.alphaPow);
     }
     //alpha *= vOut.colour.a;
@@ -748,7 +743,7 @@ PS_OUTPUT_Bake psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     float3 color = 0.5;
     if (MAT.albedoTexture >= 0)
     {
-        color = textures.T[MAT.albedoTexture].Sample(gSmpLinear, vOut.uv.xy).rgb;
+        color = textures_T[MAT.albedoTexture].Sample(gSmpLinear, vOut.uv.xy).rgb;
     }
 
     int frontback = (int) !isFrontFace;
@@ -766,7 +761,7 @@ PS_OUTPUT_Bake psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     float3 N = vOut.normal;
     if (MAT.normalTexture >= 0)
     {
-        float3 n = (textures.T[MAT.normalTexture].Sample(gSmpLinear, vOut.uv.xy).rgb * 2) - 1;
+        float3 n = (textures_T[MAT.normalTexture].Sample(gSmpLinear, vOut.uv.xy).rgb * 2) - 1;
         N = (n.r * vOut.tangent) + (n.g * vOut.binormal) + (n.b * vOut.normal);
     }
     N *= (isFrontFace * 2 - 1);
@@ -787,7 +782,7 @@ PS_OUTPUT_Bake psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     {
         if (MAT.translucencyTexture >= 0)
         {
-            trans *= dot(float3(0.3, 0.4, 0.3), textures.T[MAT.translucencyTexture].Sample(gSmpLinear, vOut.uv.xy).rgb);
+            trans *= dot(float3(0.3, 0.4, 0.3), textures_T[MAT.translucencyTexture].Sample(gSmpLinear, vOut.uv.xy).rgb);
         }
     }
     output.extra = float4(0, 0, 0, 1-trans);
@@ -803,7 +798,7 @@ float4 psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     const plant PLANT = plant_buffer[vOut.plant_IDX];
     const int frontback = (int)!isFrontFace;
     //const float flipNormal = (isFrontFace * 2 - 1);
-    float alpha = textures.T[MAT.albedoTexture].Sample(gSmpLinear, vOut.uv).a;
+    float alpha = textures_T[MAT.albedoTexture].Sample(gSmpLinear, vOut.uv).a;
     alpha = pow(alpha, MAT.alphaPow);
 
     float3 N = vOut.normal;
@@ -811,7 +806,7 @@ float4 psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     if (MAT.normalTexture >= 0)
     {
 
-        float3 normalTex = ((textures.T[MAT.normalTexture].Sample(gSmpLinear, vOut.uv).rgb) * 2.0) - 1.0;
+        float3 normalTex = ((textures_T[MAT.normalTexture].Sample(gSmpLinear, vOut.uv).rgb) * 2.0) - 1.0;
         N = normalize(-(normalTex.r * vOut.tangent) + (normalTex.g * vOut.binormal) + (normalTex.b * vOut.normal * flipNormal));
     }
 
@@ -859,7 +854,7 @@ float4 psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     const plant PLANT = plant_buffer[vOut.plant_IDX];
     const int frontback = (int)!isFrontFace;
     const float flipNormal = (isFrontFace * 2 - 1);
-    float alpha = textures.T[MAT.albedoTexture].Sample(gSmpLinear, vOut.uv).a;
+    float alpha = textures_T[MAT.albedoTexture].Sample(gSmpLinear, vOut.uv).a;
     alpha = pow(alpha, MAT.alphaPow);
     clip(alpha - 0.5);
 
@@ -945,7 +940,7 @@ if (vOut.material_IDX >= 0)
     
     if (MAT.albedoTexture >= 0)
     {
-        surface.albedo = textures.T[MAT.albedoTexture].Sample(gSmpLinear, vOut.uv);
+        surface.albedo = textures_T[MAT.albedoTexture].Sample(gSmpLinear, vOut.uv);
     }
     else
     {
@@ -1001,7 +996,7 @@ if (vOut.material_IDX >= 0)
     
     if (MAT.normalTexture >= 0)
     {
-        float3 normalTex = ((textures.T[MAT.normalTexture].Sample(gSmpLinear, vOut.uv).rgb) * 2.0) - 1.0;
+        float3 normalTex = ((textures_T[MAT.normalTexture].Sample(gSmpLinear, vOut.uv).rgb) * 2.0) - 1.0;
         
         normalTex.b = 1 - (normalTex.r * normalTex.r + normalTex.g * normalTex.g);
         surface.normal = normalize((normalTex.r * vOut.tangent) + (normalTex.g * vOut.binormal) + (normalTex.b * vOut.normal * flipNormal));
@@ -1053,7 +1048,7 @@ if (vOut.material_IDX >= 0)
     surface.translucency = gray* pow(surface.albedo.rgb / gray, 2) *vOut.TranslucencyScale* MAT.translucency;
     if (MAT.translucencyTexture >= 0)
     {
-        surface.translucency = textures.T[MAT.translucencyTexture].Sample(gSmpLinear, vOut.uv).rgb * vOut.TranslucencyScale * MAT.translucency;
+        surface.translucency = textures_T[MAT.translucencyTexture].Sample(gSmpLinear, vOut.uv).rgb * vOut.TranslucencyScale * MAT.translucency;
     }
 
     float3 color = pbr_Vegetation(surface, vOut.diffuseLight.rgb * dappled, 1.0);

@@ -38,10 +38,6 @@ FILE* logFile;
 
 #define TOOLTIP(x)  if (ImGui::IsItemHovered()) {ImGui::SetTooltip(x);}
 
-
-
-
-
 void Earthworks_4::onGuiMenubar(Gui* _gui)
 {
     auto& style = ImGui::GetStyle();
@@ -361,9 +357,7 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
         terrain.shadowEdges.requestNewShadow = true;
 
         terrain.terrainShadowTexture = Texture::create2D(4096, 4096, Falcor::ResourceFormat::RG32Float, 1, 1, terrain.shadowEdges.shadowH, Falcor::Resource::BindFlags::UnorderedAccess | Falcor::Resource::BindFlags::ShaderResource);
-
-        std::thread thread_shadows(&_shadowEdges::solveThread, &terrain.shadowEdges);
-        thread_shadows.detach();
+        terrain.shadowEdges.launchSolveThread();
 
         atmosphere.setTerrainShadow(terrain.terrainShadowTexture);
     }

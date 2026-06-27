@@ -1,22 +1,29 @@
 
 #define CALLEDFROMHLSL
-#include "materials.hlsli"
-
 
 SamplerState gSmpPoint : register(s0);
 SamplerState gSmpLinear : register(s1);
 SamplerState gSmpAniso : register(s2);
 SamplerState gSmpLinearClamp : register(s3);
 
+Texture2D<float4> gmyTextures_T[4096];
+
+#include "materials.hlsli"
+
+struct cubicDouble
+{
+    float4 data[2][4];			//[middle, outside][p0, p1, p2, p3]
+};
+
+struct bezierLayer
+{
+	uint A;						// flags, material, index [3][13][16]			combine with rootindex in constant buffer
+	uint B;						// w0, w1 [16][16]
+};
+
 StructuredBuffer<TF_material> materials;
 StructuredBuffer<cubicDouble> splineData;
 StructuredBuffer<bezierLayer> indexData;
-
-struct myTextures
-{
-    Texture2D<float4> T[4096];
-};
-ParameterBlock<myTextures> gmyTextures;
 
 cbuffer gConstantBuffer : register(b0)
 {
@@ -33,21 +40,6 @@ struct splineVSOut
 	uint4 flags : TEXCOORD1;
 	float4 colour : COLOR;
 };
-
-
-struct cubicDouble
-{
-	float4 data[2][4];			//[middle, outside][p0, p1, p2, p3]
-};
-
-
-struct bezierLayer
-{
-	uint A;						// flags, material, index [3][13][16]			combine with rootindex in constant buffer
-	uint B;						// w0, w1 [16][16]
-};
-
-
 
 
 // Cateljau

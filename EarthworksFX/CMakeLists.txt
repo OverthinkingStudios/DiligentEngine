@@ -51,6 +51,7 @@ endif()
 
 add_library(EarthworksFX STATIC
     src/compat/Falcor.cpp
+    src/compat/FalcorGpu.cpp
     interface/Falcor.h
     ${EFX_CORE_SOURCES}
     ${EFX_HLSL}
@@ -144,7 +145,7 @@ endif()
 set_source_files_properties(${EFX_HLSL} PROPERTIES VS_TOOL_OVERRIDE "None")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/hlsl" PREFIX "hlsl" FILES ${EFX_HLSL})
 source_group("src/core" FILES ${EFX_CORE_SOURCES})
-source_group("src/compat" FILES src/compat/Falcor.cpp interface/Falcor.h)
+source_group("src/compat" FILES src/compat/Falcor.cpp src/compat/FalcorGpu.cpp interface/Falcor.h)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src/app" PREFIX "src/app" FILES
     src/app/EarthworksFXApplicationBase.cpp
     src/app/EarthworksFXWindowBase.cpp)

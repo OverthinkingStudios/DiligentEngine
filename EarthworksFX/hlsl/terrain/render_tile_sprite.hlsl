@@ -13,11 +13,7 @@ SamplerState gSampler;
 //TextureCube gEnv : register(t1);
 //Texture2D gPreviousFrame : register(t2);
 
-struct ribbonTextures
-{
-    Texture2D<float4> T[4096];
-};
-ParameterBlock<ribbonTextures>  textures;
+Texture2D<float4> textures_T[4096];
 
 
 
@@ -171,7 +167,7 @@ float4 psMain(GSOut vOut) : SV_TARGET
     // it may be faster to pack billboard materials into its own buffer and have tighter reads here
     const sprite_material MAT = materials[ plant_buffer[vOut.index].billboardMaterialIndex ];
 
-    float4 albedo = textures.T[MAT.albedoTexture].Sample(gSmpLinearClamp, vOut.uv.xy);
+    float4 albedo = textures_T[MAT.albedoTexture].Sample(gSmpLinearClamp, vOut.uv.xy);
     
     float alpha = pow(albedo.a, MAT.alphaPow);
     //if (alpha < 0.5) return float4(1, 0, 0, 1);
@@ -182,7 +178,7 @@ float4 psMain(GSOut vOut) : SV_TARGET
     float3 N = vOut.normal;
     if (MAT.normalTexture >= 0)
     {
-        float3 normalTex = ((textures.T[MAT.normalTexture].Sample(gSmpLinearClamp, vOut.uv.xy).rgb) * 2.0) - 1.0;
+        float3 normalTex = ((textures_T[MAT.normalTexture].Sample(gSmpLinearClamp, vOut.uv.xy).rgb) * 2.0) - 1.0;
         N = (normalTex.r * vOut.tangent) + (normalTex.g * vOut.binormal) + (normalTex.b * vOut.normal);
     }
     
@@ -208,7 +204,7 @@ float4 psMain(GSOut vOut) : SV_TARGET
     {
         if (MAT.translucencyTexture >= 0)
         {
-            float t = textures.T[MAT.translucencyTexture].Sample(gSampler, vOut.uv.xy).r;
+            float t = textures_T[MAT.translucencyTexture].Sample(gSampler, vOut.uv.xy).r;
             //trans *= t;
         }
     }

@@ -36,7 +36,7 @@ Buffer<uint> plantDensity;
 
 
 
-RWTexture2D gHeight : register(u0);
+RWTexture2D<float> gHeight : register(u0);
 RWTexture2D<float3> gAlbedo : register(u1);
 
 Texture2D<float> gLowresHgt : register(t0);
@@ -59,12 +59,7 @@ RWStructuredBuffer<instance_PLANT> quad_instance;
 RWStructuredBuffer<GC_feedback> feedback;
 
 
-struct myTextures
-{
-    Texture2D<float4> T[256];
-};
-ParameterBlock<myTextures>
-gmyTextures;
+Texture2D<float4> gmyTextures_T[256];
 
 
 
@@ -157,7 +152,7 @@ void main(int2 crd : SV_DispatchThreadId)
 
 
                 // texture
-                float txWeight = 4 * gmyTextures.T[12 + i].SampleLevel(linearSampler, UV2, 0).r;
+                float txWeight = 4 * gmyTextures_T[12 + i].SampleLevel(linearSampler, UV2, 0).r;
                 weights[i] *= lerp(1, txWeight, ect[i][4].r);
                 
                 // also scale by the weighs, and offset around 0.5
@@ -193,8 +188,8 @@ void main(int2 crd : SV_DispatchThreadId)
             float2 UV = frac(World / 2);
             float MIP = log2(pixelSize / 0.001f); // There is a BUG in here I assume with the 0.005
 
-            col_new += weights[i] * gmyTextures.T[i].SampleLevel(linearSampler, UV, MIP).rgb;
-            float hgtTex = gmyTextures.T[i].SampleLevel(linearSampler, UV, MIP).g;
+            col_new += weights[i] * gmyTextures_T[i].SampleLevel(linearSampler, UV, MIP).rgb;
+            float hgtTex = gmyTextures_T[i].SampleLevel(linearSampler, UV, MIP).g;
             hgt_2 += weights[i] * (hgtTex - 0.5) * texScales[i].g * 0.4;
         }
 

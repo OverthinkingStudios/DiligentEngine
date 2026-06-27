@@ -86,12 +86,7 @@ Texture2D gAlbedo : register(t0);
 TextureCube gEnv : register(t1);
 Texture2D gPreviousFrame : register(t2);
 
-struct ribbonTextures
-{
-    Texture2D<float4> T[4096];
-};
-ParameterBlock<ribbonTextures>
-textures;
+Texture2D<float4> textures_T[4096];
 
 
 struct RV
@@ -480,22 +475,22 @@ PS_OUTPUT_Bake psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     sprite_material MAT = materials[vOut.flags.x];
 
 
-    float alpha = textures.T[MAT.albedoTexture].Sample(gSampler, vOut.uv.xy).a;
+    float alpha = textures_T[MAT.albedoTexture].Sample(gSampler, vOut.uv.xy).a;
     if (MAT.alphaTexture >= 0)
     {
-        alpha = textures.T[MAT.alphaTexture].Sample(gSampler, vOut.uv.xy).r;
+        alpha = textures_T[MAT.alphaTexture].Sample(gSampler, vOut.uv.xy).r;
         //
     }
     clip(alpha - 0.5);
 
-    float3 color = textures.T[MAT.albedoTexture].Sample(gSampler, vOut.uv.xy).rgb * vOut.colour.x * pow(vOut.lighting.w, 2);
+    float3 color = textures_T[MAT.albedoTexture].Sample(gSampler, vOut.uv.xy).rgb * vOut.colour.x * pow(vOut.lighting.w, 2);
 
     output.albedo = float4(pow(color, 1.0 / 2.2), 1);   // previous alpha, doesnt work form bake
     
     float3 N = vOut.normal;
     if (MAT.normalTexture >= 0)
     {
-        float3 n = (textures.T[MAT.normalTexture].Sample(gSampler, vOut.uv.xy).rgb * 2) - 1;
+        float3 n = (textures_T[MAT.normalTexture].Sample(gSampler, vOut.uv.xy).rgb * 2) - 1;
         N = (-n.r * vOut.tangent) + (n.g * vOut.binormal) + (n.b * vOut.normal);
     }
     N *= (isFrontFace * 2 - 1);
@@ -525,7 +520,7 @@ NAdjusted.b = 1 - NAdjusted.b;
     {
         if (MAT.translucencyTexture >= 0)
         {
-            trans *= dot(float3(0.3, 0.4, 0.3), textures.T[MAT.translucencyTexture].Sample(gSampler, vOut.uv.xy).rgb);
+            trans *= dot(float3(0.3, 0.4, 0.3), textures_T[MAT.translucencyTexture].Sample(gSampler, vOut.uv.xy).rgb);
         }
     }
     trans = saturate(pow(trans, 1.0 / 2.2));
@@ -598,12 +593,12 @@ float4 psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
 
         float alpha = 1;
 
-    float4 albedo = textures.T[MAT.albedoTexture].Sample(gSampler, vOut.uv.xy);
+    float4 albedo = textures_T[MAT.albedoTexture].Sample(gSampler, vOut.uv.xy);
     alpha = albedo.a;
     
     if (MAT.alphaTexture >= 0)
     {
-        alpha = textures.T[MAT.alphaTexture].Sample(gSampler, vOut.uv.xy).r;
+        alpha = textures_T[MAT.alphaTexture].Sample(gSampler, vOut.uv.xy).r;
     }
     alpha = pow(alpha, MAT.alphaPow);
 //    if (alpha < 0.5)
@@ -614,7 +609,7 @@ float4 psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     float3 N = vOut.normal;
     if (MAT.normalTexture >= 0)
     {
-        float3 normalTex = ((textures.T[MAT.normalTexture].Sample(gSampler, vOut.uv.xy).rgb) * 2.0) - 1.0;
+        float3 normalTex = ((textures_T[MAT.normalTexture].Sample(gSampler, vOut.uv.xy).rgb) * 2.0) - 1.0;
         N = (-normalTex.r * vOut.tangent) + (normalTex.g * vOut.binormal) + (normalTex.b * vOut.normal);
     }
     N *= (isFrontFace * 2 - 1);
@@ -651,7 +646,7 @@ float4 psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     {
         if (MAT.translucencyTexture >= 0)
         {
-            trans *= pow(textures.T[MAT.translucencyTexture].Sample(gSampler, vOut.uv.xy).r, 1);
+            trans *= pow(textures_T[MAT.translucencyTexture].Sample(gSampler, vOut.uv.xy).r, 1);
         }
     }
     color += trans * albedo.rgb * 7  * vOut.colour.x;
