@@ -5,7 +5,7 @@
 namespace Diligent
 {
 
-void EarthworksFXWindowBase::DrawImGuiControls()
+void EarthworksFXWindowBase::DrawImGuiControls(bool ShowFirstPersonCamera)
 {
     ImGui::Checkbox("VSync", &m_bVSync);
 
@@ -13,7 +13,8 @@ void EarthworksFXWindowBase::DrawImGuiControls()
     if (ImGui::Button(m_bBorderlessFullscreen ? "Windowed" : "Fullscreen"))
         ToggleFullscreenWindow();
 
-    ImGui::Checkbox("First-person camera (WASD + RMB look)", &m_bFirstPersonCamera);
+    if (ShowFirstPersonCamera)
+        ImGui::Checkbox("First-person camera (WASD + RMB look)", &m_bFirstPersonCamera);
 }
 
 void EarthworksFXWindowBase::SetInitialSize(int Width, int Height)

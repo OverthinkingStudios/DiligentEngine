@@ -16,8 +16,17 @@ void EarthworksFXSample::UpdateUI()
     DrawDebugUI();
 }
 
+void EarthworksFXSample::OnConfigureSettings(EarthworksFXAppSettings& s) {
+    
+}
+
 void EarthworksFXSample::DrawDebugUI()
 {
+    // Everything here reads the terrain scene; skip it entirely when the app
+    // runs without one (EarthworksFXAppSettings::CreateScene == false).
+    if (!HasEarthworksScene())
+        return;
+
     ImGui::SetNextWindowPos(ImVec2(10, 140), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("EarthworksFX Debug"))
     {

@@ -15,6 +15,8 @@ public:
 protected:
     void UpdateUI() override final;
 
+     void OnConfigureSettings(EarthworksFXAppSettings& s) override final;
+
 private:
     /// App-specific ImGui (debug grid toggle + camera readout). Bring-up aid
     /// kept out of Earthworks_4 so re-porting that file stays clean.

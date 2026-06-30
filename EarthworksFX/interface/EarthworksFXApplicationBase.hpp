@@ -27,11 +27,19 @@ class ImGuiImplDiligent;
 struct EarthworksFXAppSettings
 {
     RENDER_DEVICE_TYPE DeviceType   = RENDER_DEVICE_TYPE_VULKAN;
-    int                WindowWidth  = 2560;
-    int                WindowHeight = 1440;
-    bool               VSync              = false;
-    bool               ShowUI             = true;
-    bool               FirstPersonCamera  = true;
+    int WindowWidth = 1280;
+    int WindowHeight = 768;
+    bool VSync = true;
+    bool ShowUI = true;
+    bool FirstPersonCamera = true;
+
+    /// When false, the base builds the full rendering environment (device, swap
+    /// chain, ImGui, Falcor device/framework and the Earthworks shader data
+    /// directories) but does NOT instantiate the Earthworks terrain scene. The
+    /// application is then expected to override OnUpdate()/OnRender() and drive
+    /// rendering itself, while still having the Earthworks shaders and rendering
+    /// environment available. Used by tools/editors that don't show terrain.
+    bool CreateScene = true;
 };
 
 /// Desktop host for EarthworksFX games, editors, demos and tools (Win32/Linux).
@@ -110,8 +118,9 @@ protected:
     // Every hook has a working default; override only what an app actually needs
     // to change. The base supplies a complete, runnable Earthworks app on its own.
 
-    /// Called immediately after overthinking::Env::init() in the constructor;
-    /// logging and environment are ready, but graphics are not.
+    /// Called once after construction (from ProcessCommandLine), before the
+    /// window or any graphics exist; logging and environment are ready. This is
+    /// the earliest hook that reaches a derived override.
     virtual void Initialize() {}
 
     /// Tweak the default window/device settings (resolution, vsync, device type).
@@ -164,8 +173,23 @@ protected:
     /// call from any UpdateUI() override.
     void DrawCommonUI();
 
-    /// The Earthworks scene owned by the base. Valid from OnGraphicsReady() onwards.
-    Earthworks_4& GetEarthworks() { return *m_Earthworks; }
+    /// The Earthworks terrain scene owned by the base. Only valid when scene
+    /// creation is enabled (the default); guard with HasEarthworksScene() in apps
+    /// that run with EarthworksFXAppSettings::CreateScene == false.
+    /// 
+    /// On the long run, this will likely become a Scene thing and I'm not sure if the ApplicationBase even owns it. but atm it has this nasty self-sufficient behaviour, 
+    /// we should stick to it until we can clean up
+    Earthworks_4& GetEarthworks() { VERIFY_EXPR(m_Earthworks); return *m_Earthworks; }
+    bool HasEarthworksScene() const { return m_Earthworks != nullptr; }
+
+    /// Falcor render context bound to the immediate device context. Valid from
+    /// OnGraphicsReady() onwards, with or without a terrain scene.
+    Falcor::RenderContext& GetRenderContext() { return m_RenderContext; }
+
+    /// Swap-chain target FBO. Manual-rendering apps recreate it on resize, e.g.
+    /// SetTargetFbo(Falcor::Fbo::createFromSwapChain(m_pSwapChain)).
+    const Falcor::Fbo::SharedPtr& GetTargetFbo() const { return m_TargetFbo; }
+    void SetTargetFbo(const Falcor::Fbo::SharedPtr& Fbo) { m_TargetFbo = Fbo; }
 
     RefCntAutoPtr<IEngineFactory> m_pEngineFactory;
     RefCntAutoPtr<IRenderDevice> m_pDevice;
@@ -202,6 +226,7 @@ private:
 
     void InitializeDiligentEngine(const NativeWindow* pWindow);
     void InitializeGraphicsResources();
+    void InitializeEnvironment();
     void InitializeScene();
     void UpdateAppSettings(bool IsInitialization);
 
@@ -233,6 +258,7 @@ private:
     std::string m_AppTitle;
     int m_ValidationLevel = -1;
     bool m_bFullScreenMode = false;
+    bool m_CreateScene = true;
 
     // --- Earthworks rendering environment owned by the base -----------------
     std::unique_ptr<Falcor::EarthworksWrapper> m_FalcorWrapper;
@@ -241,7 +267,7 @@ private:
     Falcor::RenderContext                      m_RenderContext{nullptr};
     Framework                                  m_Framework;
     Falcor::Fbo::SharedPtr                     m_TargetFbo;
-    bool                                       m_Initialized = false;
+    bool                                       m_Initialized = false; // Earthworks scene ready
 };
 
 } // namespace Diligent

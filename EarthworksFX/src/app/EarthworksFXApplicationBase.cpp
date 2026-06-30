@@ -73,7 +73,6 @@ EarthworksFXApplicationBase::EarthworksFXApplicationBase(const std::string& Titl
     : m_AppTitle{Title}
 {
     overthinking::Env::init(Title, AppDataFolder, Stage);
-    Initialize();
     UpdateAppSettings(true);
 }
 
@@ -123,11 +122,11 @@ EarthworksFXAppSettings EarthworksFXApplicationBase::GetAppSettings(bool IsIniti
     if (IsInitialization)
     {
         Settings.DeviceType        = RENDER_DEVICE_TYPE_VULKAN;
-        Settings.VSync             = false;
+        Settings.VSync             = true;
         Settings.ShowUI            = true;
         Settings.FirstPersonCamera = true;
-        Settings.WindowWidth       = 2560;
-        Settings.WindowHeight      = 1440;
+        Settings.WindowWidth       = 1280;
+        Settings.WindowHeight = 768;
     }
     OnConfigureSettings(Settings);
     return Settings;
@@ -139,7 +138,8 @@ void EarthworksFXApplicationBase::UpdateAppSettings(bool IsInitialization)
 
     if (IsInitialization)
     {
-        m_DeviceType = Settings.DeviceType;
+        m_DeviceType  = Settings.DeviceType;
+        m_CreateScene = Settings.CreateScene;
         m_Window.SetInitialSize(Settings.WindowWidth, Settings.WindowHeight);
     }
 
@@ -150,10 +150,11 @@ void EarthworksFXApplicationBase::UpdateAppSettings(bool IsInitialization)
 
 AppBase::CommandLineStatus EarthworksFXApplicationBase::ProcessCommandLine(int argc, const char* const* argv)
 {
-    // Re-apply settings now that the derived object is fully constructed, so an
-    // OnConfigureSettings() override actually takes effect (a virtual call from
-    // the constructor would only ever reach the base). Command-line flags below
-    // then override these.
+    // First chance to call into the fully-constructed derived object (a virtual
+    // call from the constructor would only ever reach the base). Run the one-time
+    // Initialize() hook, then (re-)apply settings so an OnConfigureSettings()
+    // override actually takes effect. Command-line flags below then override these.
+    Initialize();
     UpdateAppSettings(true);
 
     if (argc == 0)
@@ -420,10 +421,13 @@ void EarthworksFXApplicationBase::CreateImGui()
         LOG_ERROR_AND_THROW("Failed to create ImGui implementation");
 }
 
-void EarthworksFXApplicationBase::InitializeScene()
+void EarthworksFXApplicationBase::InitializeEnvironment()
 {
+    // The full Earthworks rendering environment minus the terrain scene: Falcor
+    // device + framework, shader/data search paths, render context and the swap
+    // chain target FBO. Always created, so manual-rendering apps still get the
+    // Earthworks shaders and rendering behaviour.
     m_FalcorWrapper = std::make_unique<Falcor::EarthworksWrapper>();
-    m_Earthworks    = std::make_unique<Earthworks_4>();
 
     Falcor::SetFalcorDevice(m_pDevice, m_pImmediateContext, m_pSwapChain, m_pEngineFactory);
     Falcor::SetFalcorFramework(&m_Framework);
@@ -432,13 +436,18 @@ void EarthworksFXApplicationBase::InitializeScene()
     Falcor::addDataDirectory(std::filesystem::current_path() / "EarthworksFX", true);
 
     m_RenderContext = Falcor::RenderContext{m_pImmediateContext};
+    m_TargetFbo     = Falcor::Fbo::createFromSwapChain(m_pSwapChain);
+}
 
+void EarthworksFXApplicationBase::InitializeScene()
+{
     ScopedFalcorFramework scope{&m_Framework};
+
+    m_Earthworks = std::make_unique<Earthworks_4>();
     m_Earthworks->onLoad(&m_RenderContext);
 
     const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
     m_Earthworks->onResizeSwapChain(SCDesc.Width, SCDesc.Height);
-    m_TargetFbo = Falcor::Fbo::createFromSwapChain(m_pSwapChain);
 
     if (const auto& cam = m_Earthworks->getCamera())
     {
@@ -454,7 +463,10 @@ void EarthworksFXApplicationBase::InitializeScene()
 void EarthworksFXApplicationBase::InitializeGraphicsResources()
 {
     ImGui::StyleColorsDiligent();
-    InitializeScene();
+
+    InitializeEnvironment();
+    if (m_CreateScene)
+        InitializeScene();
 
     const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
     OnWindowResized(SCDesc.Width, SCDesc.Height);
@@ -535,6 +547,10 @@ void EarthworksFXApplicationBase::Update(double CurrTime, double ElapsedTime)
         m_LastFPSTime       = CurrTime;
     }
 
+    // Keep the Falcor framework's frame time current for both scene and manual
+    // rendering (Earthworks shaders read it via gpFramework).
+    m_Framework.SetAverageFrameTimeMs(m_fSmoothFPS > 0.f ? 1000.0 / static_cast<double>(m_fSmoothFPS) : 16.0);
+
     if (m_pImGui)
     {
         const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
@@ -562,7 +578,7 @@ void EarthworksFXApplicationBase::DrawCommonUI()
         const float FrameMs = m_fSmoothFPS > 0.f ? 1000.0f / m_fSmoothFPS : 0.f;
         ImGui::Text("%.1f ms  (%.1f fps)", FrameMs, m_fSmoothFPS);
         ImGui::Separator();
-        m_Window.DrawImGuiControls();
+        m_Window.DrawImGuiControls(m_CreateScene);
     }
     ImGui::End();
 }
@@ -578,7 +594,6 @@ void EarthworksFXApplicationBase::OnRender()
         return;
 
     ScopedFalcorFramework scope{&m_Framework};
-    m_Framework.SetAverageFrameTimeMs(m_fSmoothFPS > 0.f ? 1000.0 / static_cast<double>(m_fSmoothFPS) : 16.0);
 
     if (!m_TargetFbo)
         m_TargetFbo = Falcor::Fbo::createFromSwapChain(m_pSwapChain);

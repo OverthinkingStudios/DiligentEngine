@@ -39,7 +39,9 @@ public:
     /// Reusable by any EarthworksFX application/tool; call it from inside an
     /// existing ImGui window during the UI pass. Implemented in the .cpp so the
     /// ImGui include does not leak into this widely-included header.
-    void DrawImGuiControls();
+    /// The first-person camera toggle is only drawn when ShowFirstPersonCamera is
+    /// true (i.e. when a terrain scene exists to fly around).
+    void DrawImGuiControls(bool ShowFirstPersonCamera);
 
 #if PLATFORM_WIN32
     void Attach(HWND hWnd);
@@ -69,7 +71,7 @@ public:
 
 private:
     int  m_InitialWidth  = 1280;
-    int  m_InitialHeight = 1024;
+    int  m_InitialHeight = 768;
     bool m_bVSync              = true;
     bool m_bShowUI             = true;
     bool m_bFirstPersonCamera  = true;
