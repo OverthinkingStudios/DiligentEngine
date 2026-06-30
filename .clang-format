@@ -4,3 +4,5 @@ BasedOnStyle: Google
 # our overrides:
 AlignConsecutiveDeclarations: None
 ColumnLimit: 120
+IndentWidth: 4
+AccessModifierOffset: 0
