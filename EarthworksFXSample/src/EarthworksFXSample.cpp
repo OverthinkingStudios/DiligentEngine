@@ -64,6 +64,7 @@ EarthworksFXAppSettings EarthworksFXSample::GetAppSettings(bool IsInitialization
         Settings.DeviceType   = RENDER_DEVICE_TYPE_VULKAN;
         Settings.VSync        = false;
         Settings.ShowUI       = true;
+        Settings.FirstPersonCamera = true;
         Settings.WindowWidth  = 2560;
         Settings.WindowHeight = 1440;
     }
@@ -88,6 +89,14 @@ void EarthworksFXSample::OnGraphicsInitialized()
     const auto& scDesc = m_pSwapChain->GetDesc();
     m_Earthworks.onResizeSwapChain(scDesc.Width, scDesc.Height);
     m_TargetFbo = Falcor::Fbo::createFromSwapChain(m_pSwapChain);
+
+    if (const auto& cam = m_Earthworks.getCamera())
+    {
+        GetFirstPersonCamera().SetPos(cam->getPosition());
+        GetFirstPersonCamera().SetLookAt(cam->getTarget());
+        GetFirstPersonCamera().SetMoveSpeed(50.f);
+        GetFirstPersonCamera().Update(m_InputController, 0.f);
+    }
 
     m_Initialized = true;
 }
@@ -114,7 +123,10 @@ void EarthworksFXSample::UpdateSample(double CurrTime, double ElapsedTime, bool 
     if (!m_Initialized)
         return;
 
-    SyncInput();
+    if (UseFirstPersonCamera())
+        SyncFirstPersonCameraToEarthworks();
+    else
+        SyncInput();
 
     if (DoUpdateUI)
     {
@@ -152,9 +164,22 @@ void EarthworksFXSample::DrawDebugUI()
             const auto t = cam->getTarget();
             ImGui::Text("cam pos: %.1f  %.1f  %.1f", p.x, p.y, p.z);
             ImGui::Text("cam tgt: %.1f  %.1f  %.1f", t.x, t.y, t.z);
+            if (UseFirstPersonCamera())
+                ImGui::Text("move speed: %.1f m/s (mouse wheel)", GetFirstPersonCamera().GetMoveSpeed());
         }
     }
     ImGui::End();
+}
+
+void EarthworksFXSample::SyncFirstPersonCameraToEarthworks()
+{
+    const auto& cam = m_Earthworks.getCamera();
+    if (!cam)
+        return;
+
+    const auto& fpc = GetFirstPersonCamera();
+    cam->setPosition(fpc.GetPos());
+    cam->setTarget(fpc.GetPos() + fpc.GetWorldAhead() * 100.f);
 }
 
 void EarthworksFXSample::SyncInput()

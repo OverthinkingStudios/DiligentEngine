@@ -39,6 +39,7 @@ private:
     };
 
     void SyncInput();
+    void SyncFirstPersonCameraToEarthworks();
 
     /// App-specific ImGui (debug grid toggle + camera readout). Bring-up aid
     /// kept out of Earthworks_4 so re-porting that file stays clean.

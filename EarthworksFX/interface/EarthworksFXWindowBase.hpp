@@ -32,6 +32,9 @@ public:
     void SetShowUI(bool Show) { m_bShowUI = Show; }
     bool GetShowUI() const { return m_bShowUI; }
 
+    void SetFirstPersonCameraEnabled(bool Enable) { m_bFirstPersonCamera = Enable; }
+    bool GetFirstPersonCameraEnabled() const { return m_bFirstPersonCamera; }
+
     /// Generic ImGui widgets for this window's own state (VSync, fullscreen).
     /// Reusable by any EarthworksFX application/tool; call it from inside an
     /// existing ImGui window during the UI pass. Implemented in the .cpp so the
@@ -67,8 +70,9 @@ public:
 private:
     int  m_InitialWidth  = 1280;
     int  m_InitialHeight = 1024;
-    bool m_bVSync        = true;
-    bool m_bShowUI       = true;
+    bool m_bVSync              = true;
+    bool m_bShowUI             = true;
+    bool m_bFirstPersonCamera  = true;
 
 #if PLATFORM_WIN32
     HWND m_hWnd                  = nullptr;

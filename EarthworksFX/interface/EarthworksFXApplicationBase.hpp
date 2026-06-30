@@ -13,6 +13,7 @@
 #include "DeviceContext.h"
 #include "SwapChain.h"
 #include "InputController.hpp"
+#include "FirstPersonCamera.hpp"
 #include "EarthworksFXWindowBase.hpp"
 
 namespace Diligent
@@ -25,8 +26,9 @@ struct EarthworksFXAppSettings
     RENDER_DEVICE_TYPE DeviceType   = RENDER_DEVICE_TYPE_VULKAN;
     int                WindowWidth  = 1280;
     int                WindowHeight = 1024;
-    bool               VSync        = true;
-    bool               ShowUI       = true;
+    bool               VSync              = true;
+    bool               ShowUI             = true;
+    bool               FirstPersonCamera  = true;
 };
 
 /// Desktop application host for EarthworksFX games and tools (Win32/Linux).
@@ -59,6 +61,13 @@ public:
 
     EarthworksFXWindowBase& GetWindow() { return m_Window; }
     const EarthworksFXWindowBase& GetWindow() const { return m_Window; }
+
+    FirstPersonCamera& GetFirstPersonCamera() { return m_FirstPersonCamera; }
+    const FirstPersonCamera& GetFirstPersonCamera() const { return m_FirstPersonCamera; }
+
+    /// When true, the shared first-person controller drives camera input each frame.
+    /// Override to force on/off regardless of the window toggle.
+    virtual bool UseFirstPersonCamera() const { return m_Window.GetFirstPersonCameraEnabled(); }
 
 #if PLATFORM_WIN32
     bool OnWindowCreated(HWND hWnd, LONG WindowWidth, LONG WindowHeight) override final;
@@ -142,6 +151,10 @@ protected:
     Uint32 m_NumFramesRendered   = 0;
 
     InputController m_InputController;
+    FirstPersonCamera m_FirstPersonCamera;
+
+    void UpdateFirstPersonCamera(float ElapsedTime);
+    void UpdateFirstPersonCameraProjAttribs();
 
 private:
     void InitializeDiligentEngine(const NativeWindow* pWindow);

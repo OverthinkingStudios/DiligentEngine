@@ -31,6 +31,7 @@ file(GLOB EFX_HLSL CONFIGURE_DEPENDS
 set(EFX_APP_SOURCES
     src/app/EarthworksFXApplicationBase.cpp
     src/app/EarthworksFXWindowBase.cpp
+    src/app/FirstPersonCamera.cpp
 )
 
 set(EFX_INPUT_SOURCES "")
@@ -38,6 +39,7 @@ set(EFX_INPUT_SOURCES "")
 set(EFX_APP_INCLUDES
     interface/EarthworksFXApplicationBase.hpp
     interface/EarthworksFXWindowBase.hpp
+    interface/FirstPersonCamera.hpp
     interface/InputController.hpp
 )
 
@@ -155,7 +157,8 @@ source_group("src/compat" FILES
     interface/GlmBasicMath.h)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src/app" PREFIX "src/app" FILES
     src/app/EarthworksFXApplicationBase.cpp
-    src/app/EarthworksFXWindowBase.cpp)
+    src/app/EarthworksFXWindowBase.cpp
+    src/app/FirstPersonCamera.cpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src/input" PREFIX "src/input" FILES ${EFX_INPUT_SOURCES})
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/interface" PREFIX "interface" FILES ${EFX_APP_INCLUDES})
 set_target_properties(EarthworksFX PROPERTIES FOLDER "EarthworksFX")

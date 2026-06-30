@@ -12,6 +12,8 @@ void EarthworksFXWindowBase::DrawImGuiControls()
     ImGui::SameLine();
     if (ImGui::Button(m_bBorderlessFullscreen ? "Windowed" : "Fullscreen"))
         ToggleFullscreenWindow();
+
+    ImGui::Checkbox("First-person camera (WASD + RMB look)", &m_bFirstPersonCamera);
 }
 
 void EarthworksFXWindowBase::SetInitialSize(int Width, int Height)

@@ -85,6 +85,7 @@ void EarthworksFXApplicationBase::UpdateAppSettings(bool IsInitialization)
 
     m_Window.SetVSync(Settings.VSync);
     m_Window.SetShowUI(Settings.ShowUI);
+    m_Window.SetFirstPersonCameraEnabled(Settings.FirstPersonCamera);
 }
 
 AppBase::CommandLineStatus EarthworksFXApplicationBase::ProcessCommandLine(int argc, const char* const* argv)
@@ -137,6 +138,10 @@ AppBase::CommandLineStatus EarthworksFXApplicationBase::ProcessCommandLine(int a
     bool ShowUI = m_Window.GetShowUI();
     ArgsParser.Parse("show_ui", ShowUI);
     m_Window.SetShowUI(ShowUI);
+
+    bool FirstPersonCamera = m_Window.GetFirstPersonCameraEnabled();
+    ArgsParser.Parse("first_person_camera", FirstPersonCamera);
+    m_Window.SetFirstPersonCameraEnabled(FirstPersonCamera);
 
 #if !VULKAN_SUPPORTED
     if (m_DeviceType == RENDER_DEVICE_TYPE_VULKAN)
@@ -356,6 +361,7 @@ void EarthworksFXApplicationBase::InitializeGraphicsResources()
 
     const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
     OnWindowResized(SCDesc.Width, SCDesc.Height);
+    UpdateFirstPersonCameraProjAttribs();
 }
 
 bool EarthworksFXApplicationBase::InitializeGraphics(const NativeWindow* pWindow)
@@ -396,7 +402,27 @@ void EarthworksFXApplicationBase::WindowResize(int width, int height)
         m_pSwapChain->Resize(width, height);
         const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
         OnWindowResized(SCDesc.Width, SCDesc.Height);
+        UpdateFirstPersonCameraProjAttribs();
     }
+}
+
+void EarthworksFXApplicationBase::UpdateFirstPersonCamera(float ElapsedTime)
+{
+    m_FirstPersonCamera.Update(m_InputController, ElapsedTime);
+}
+
+void EarthworksFXApplicationBase::UpdateFirstPersonCameraProjAttribs()
+{
+    if (!m_pSwapChain)
+        return;
+
+    const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
+    if (SCDesc.Width == 0 || SCDesc.Height == 0)
+        return;
+
+    const float AspectRatio = static_cast<float>(SCDesc.Width) / static_cast<float>(SCDesc.Height);
+    const bool  IsGL        = m_DeviceType == RENDER_DEVICE_TYPE_GL || m_DeviceType == RENDER_DEVICE_TYPE_GLES;
+    m_FirstPersonCamera.SetProjAttribs(0.1f, 40000.f, AspectRatio, PI_F / 4.f, SCDesc.PreTransform, IsGL);
 }
 
 void EarthworksFXApplicationBase::Update(double CurrTime, double ElapsedTime)
@@ -419,6 +445,8 @@ void EarthworksFXApplicationBase::Update(double CurrTime, double ElapsedTime)
     if (m_pDevice)
     {
         const bool DoUpdateUI = m_Window.GetShowUI();
+        if (UseFirstPersonCamera())
+            UpdateFirstPersonCamera(static_cast<float>(ElapsedTime));
         UpdateSample(CurrTime, ElapsedTime, DoUpdateUI);
         if (DoUpdateUI)
             UpdateUI();
