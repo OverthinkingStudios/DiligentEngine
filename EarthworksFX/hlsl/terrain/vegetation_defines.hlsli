@@ -4,9 +4,9 @@
 // We have a large linear array of this, that gets filled from compute
 struct block_data
 {
-    uint instance_idx = 0;          // -> plant     20 bits at least
+    uint instance_idx;          // -> plant     20 bits at least
     //uint section_idx = 0;           // DEPRECATED -> plant_section - xpbd sim
-    uint vertex_offset = 0;         // -> ribbonVertex8 data. Stored in verticis for now, multiples of VEG_BLOCK_SIZE
+    uint vertex_offset;         // -> ribbonVertex8 data. Stored in verticis for now, multiples of VEG_BLOCK_SIZE
     //uint plant_idx = 0;             // DEPRECATED can find this via instance but likely faster and keeps us aligned    16 bits enough
 };
 
@@ -67,14 +67,14 @@ struct plant
     float unused_01;
 
     // lighting
-    float Ao_depthScale = 0.3f; //??? unused
-    float sunTilt = -0.2f;
-    float bDepth = 20.0f;
-    float bScale = 0.5f;
+    float Ao_depthScale; //??? unused
+    float sunTilt;
+    float bDepth;
+    float bScale;
 
     // soft shadows
-    float shadowUVScale = 1.f;
-    float shadowSoftness = 0.15f;
+    float shadowUVScale;
+    float shadowSoftness;
     // flutter
     float flutter_stength;
     float flutter_freq;

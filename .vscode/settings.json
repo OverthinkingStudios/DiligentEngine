@@ -1,5 +1,7 @@
 {
-    "cmake.buildDirectory": "${workspaceRoot}/build/${buildType}",
+    "cmake.buildDirectory": "${workspaceFolder}/build/Win64",
+    "cmake.generator": "Visual Studio 17 2022",
+    "cmake.platform": "x64",
     "dotnet.defaultSolution": "disable",
     "git.autoRepositoryDetection": "subFolders",
     "git.detectSubmodules": true,

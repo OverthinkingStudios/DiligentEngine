@@ -1,17 +1,21 @@
 
 #include "compute_volumeFog.hlsli"
 
-RWTexture3D<float3> gInscatter : register(u0);
-RWTexture2D<float3> gInscatter_cloudBase : register(u1);
-RWTexture2D<float3> gInscatter_sky : register(u2);
+// NOTE: backing storage images are RGBA16F (4 components). Vulkan 1.3
+// (VUID-vkCmdDispatch-OpImageWrite-08795) requires OpImageWrite to supply at
+// least as many components as the view format, so these UAVs must be float4
+// and every store is padded to float4.
+RWTexture3D<float4> gInscatter : register(u0);
+RWTexture2D<float4> gInscatter_cloudBase : register(u1);
+RWTexture2D<float4> gInscatter_sky : register(u2);
 
-RWTexture3D<float3> gOutscatter : register(u3);
-RWTexture2D<float3> gOutscatter_cloudBase : register(u4);
-RWTexture2D<float3> gOutscatter_sky : register(u5);
+RWTexture3D<float4> gOutscatter : register(u3);
+RWTexture2D<float4> gOutscatter_cloudBase : register(u4);
+RWTexture2D<float4> gOutscatter_sky : register(u5);
 
 void write(float3 inscatter, float3 outscatter, uint3 coord) {
-	gInscatter[coord] = inscatter;
-	gOutscatter[coord] = outscatter;
+	gInscatter[coord] = float4(inscatter, 0);
+	gOutscatter[coord] = float4(outscatter, 0);
 }
 
 // not quite working but also rework this to return somewthign that I dont have to sale again, i.e. scale by 1/pi from the outset
@@ -121,7 +125,7 @@ float shadow(float3 pos, float step)
 	while (SLICE < numSlices) {
 		coord.z = SLICE++;
 		write(inScatter, outScatter, coord);
-        gInscatter[coord] = float3(0, 0, 1); //        SLICE / numSlices;
+        gInscatter[coord] = float4(0, 0, 1, 0); //        SLICE / numSlices;
     }
 
 	// now step untill we reach the cloudbase and write into single slice ---------------------------------------
@@ -131,8 +135,8 @@ float shadow(float3 pos, float step)
 		acumulateFog(inScatter, outScatter, newIn, newOut);
         cnt--;
     }
-	gInscatter_cloudBase[coord.xy] = inScatter;
-	gOutscatter_cloudBase[coord.xy] = outScatter;
+	gInscatter_cloudBase[coord.xy] = float4(inScatter, 0);
+	gOutscatter_cloudBase[coord.xy] = float4(outScatter, 0);
 
 	// now step from the cloudbase to space and write into last slice -------------------------------------------
     cnt = 150;
@@ -142,8 +146,8 @@ float shadow(float3 pos, float step)
         cnt--;
     }
   
-    gInscatter_sky[coord.xy] = inScatter;
-	gOutscatter_sky[coord.xy] = outScatter;
+    gInscatter_sky[coord.xy] = float4(inScatter, 0);
+	gOutscatter_sky[coord.xy] = float4(outScatter, 0);
 
     /*
     for (int i = 0; i < 128; i++)

@@ -1,7 +1,22 @@
 #include "EarthworksFXWindowBase.hpp"
 
+#include "imgui.h"
+
 namespace Diligent
 {
+
+void EarthworksFXWindowBase::DrawImGuiControls()
+{
+    bool VSync = m_bVSync;
+    if (ImGui::Checkbox("VSync", &VSync))
+        m_bVSync = VSync;
+
+#if PLATFORM_WIN32
+    ImGui::SameLine();
+    if (ImGui::Button(m_bBorderlessFullscreen ? "Windowed" : "Fullscreen"))
+        ToggleFullscreenWindow();
+#endif
+}
 
 void EarthworksFXWindowBase::SetInitialSize(int Width, int Height)
 {

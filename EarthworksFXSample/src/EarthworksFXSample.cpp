@@ -53,7 +53,7 @@ void EarthworksFXSample::ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs&
 
     Attribs.EngineCI.Features.ComputeShaders = DEVICE_FEATURE_STATE_ENABLED;
     Attribs.EngineCI.Features.DepthClamp     = DEVICE_FEATURE_STATE_OPTIONAL;
-    Attribs.SCDesc.ColorBufferFormat         = TEX_FORMAT_R11G11B10_FLOAT;
+    Attribs.SCDesc.ColorBufferFormat = TEX_FORMAT_BGRA8_UNORM_SRGB;
 }
 
 EarthworksFXAppSettings EarthworksFXSample::GetAppSettings(bool IsInitialization)
@@ -135,12 +135,24 @@ void EarthworksFXSample::OnWindowResized(Uint32 Width, Uint32 Height)
 
 void EarthworksFXSample::UpdateUI()
 {
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("EarthworksFX", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    DrawCommonUI();
+    DrawDebugUI();
+}
+
+void EarthworksFXSample::DrawDebugUI()
+{
+    ImGui::SetNextWindowPos(ImVec2(10, 140), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("EarthworksFX Debug"))
     {
-        ImGui::Text("FPS: %.1f", m_fSmoothFPS);
-        ImGui::Text("Terrain: terrains/switserland_Steg/ (pwd-relative)");
-        ImGui::Text("API: Vulkan");
+        ImGui::Checkbox("Debug grid (orientation + movement)", &m_Earthworks.debugGridEnabled());
+
+        if (const auto& cam = m_Earthworks.getCamera())
+        {
+            const auto p = cam->getPosition();
+            const auto t = cam->getTarget();
+            ImGui::Text("cam pos: %.1f  %.1f  %.1f", p.x, p.y, p.z);
+            ImGui::Text("cam tgt: %.1f  %.1f  %.1f", t.x, t.y, t.z);
+        }
     }
     ImGui::End();
 }
@@ -149,31 +161,40 @@ void EarthworksFXSample::SyncInput()
 {
     const MouseState mouse = m_InputController.GetMouseState();
 
+    // The Win32 InputController reports client-space pixels, but the Earthworks
+    // camera code expects Falcor-style normalized [0,1] screen coordinates
+    // (it gates on 'pos.x > 0 && pos.x < 1'), so normalize here.
+    const auto& scDesc = m_pSwapChain->GetDesc();
+    const float width  = scDesc.Width  > 0 ? static_cast<float>(scDesc.Width)  : 1.f;
+    const float height = scDesc.Height > 0 ? static_cast<float>(scDesc.Height) : 1.f;
+
     Falcor::MouseEvent event{};
-    event.pos = Falcor::float2{static_cast<float>(mouse.PosX), static_cast<float>(mouse.PosY)};
+    event.pos = Falcor::float2{static_cast<float>(mouse.PosX) / width,
+                               static_cast<float>(mouse.PosY) / height};
 
+    int buttons = 0;
     if (mouse.ButtonFlags & MouseState::BUTTON_FLAG_LEFT)
-        event.buttons = Falcor::MouseEvent::Buttons::Left;
-
+        buttons |= static_cast<int>(Falcor::MouseEvent::Buttons::Left);
     if (mouse.ButtonFlags & MouseState::BUTTON_FLAG_RIGHT)
-        event.buttons = static_cast<Falcor::MouseEvent::Buttons>(static_cast<int>(event.buttons) | static_cast<int>(Falcor::MouseEvent::Buttons::Right));
+        buttons |= static_cast<int>(Falcor::MouseEvent::Buttons::Right);
+    if (mouse.ButtonFlags & MouseState::BUTTON_FLAG_MIDDLE)
+        buttons |= static_cast<int>(Falcor::MouseEvent::Buttons::Middle);
+    event.buttons = static_cast<Falcor::MouseEvent::Buttons>(buttons);
 
-    if (mouse.ButtonFlags & MouseState::BUTTON_FLAG_WHEEL)
+    ScopedFalcorFramework scope{&m_Framework};
+
+    // The camera rotate/pan/orbit code runs on Move events and reads live button
+    // state via ImGui::IsMouseDown(), so always deliver a Move (this also lets it
+    // track drag deltas frame-to-frame). Deliver Wheel as a separate event.
+    event.type = Falcor::MouseEvent::Type::Move;
+    m_Earthworks.onMouseEvent(event);
+
+    if (mouse.WheelDelta != 0.f)
     {
         event.type       = Falcor::MouseEvent::Type::Wheel;
         event.wheelDelta = Falcor::float2{0.f, mouse.WheelDelta};
+        m_Earthworks.onMouseEvent(event);
     }
-    else if (mouse.ButtonFlags & (MouseState::BUTTON_FLAG_LEFT | MouseState::BUTTON_FLAG_RIGHT))
-    {
-        event.type = Falcor::MouseEvent::Type::ButtonDown;
-    }
-    else
-    {
-        event.type = Falcor::MouseEvent::Type::Move;
-    }
-
-    ScopedFalcorFramework scope{&m_Framework};
-    m_Earthworks.onMouseEvent(event);
 }
 
 Falcor::FrameRate EarthworksFXSample::SampleFramework::getFrameRate() const

@@ -72,7 +72,8 @@ struct VaoGpu
 
 struct GraphicsPipelineCacheEntry
 {
-    RefCntAutoPtr<IPipelineState> PSO;
+    RefCntAutoPtr<IPipelineState>         PSO;
+    RefCntAutoPtr<IShaderResourceBinding> SRB;
 };
 
 std::unordered_map<const GraphicsProgram*, GfxProgramGpu>     g_GfxPrograms;
@@ -81,7 +82,13 @@ std::unordered_map<const Vao*, VaoGpu>                        g_Vaos;
 
 using GfxPipelineCacheKey = Uint64;
 std::unordered_map<GfxPipelineCacheKey, GraphicsPipelineCacheEntry> g_GfxPipelineCache;
-std::unordered_map<const ComputeProgram*, RefCntAutoPtr<IPipelineState>> g_ComputePSOCache;
+
+struct ComputePipelineCacheEntry
+{
+    RefCntAutoPtr<IPipelineState>         PSO;
+    RefCntAutoPtr<IShaderResourceBinding> SRB;
+};
+std::unordered_map<const ComputeProgram*, ComputePipelineCacheEntry> g_ComputePSOCache;
 
 Texture::SharedPtr g_DummyTex2D;
 Texture::SharedPtr g_DummyTex3D;
@@ -106,9 +113,15 @@ void EnsureDummyTextures()
 IDeviceObject* GetDummyTextureObject(SHADER_RESOURCE_TYPE type, const std::string& name)
 {
     EnsureDummyTextures();
-    const bool useCube = (name == "envMap");
+    // A texture/UAV slot that has no resource bound still needs a dummy whose
+    // dimension matches the shader's declared type (TextureCube/Texture3D/
+    // Texture2D); otherwise Vulkan rejects the draw with a viewType mismatch
+    // (VUID-vkCmd...-viewType-07752). The reflection type does not carry the
+    // dimension, so it is inferred from the resource name.
+    const bool useCube = (name == "envMap" || name == "gSky");
     const bool use3D   = useCube ? false
         : (name.find("gCfd_T_") == 0 || name == "gLightVolume" || name == "gInscatter" || name == "gOutscatter"
+           || name == "cube"
            || name.find("Inscatter") != std::string::npos || name.find("Outscatter") != std::string::npos);
 
     Texture::SharedPtr tex = useCube ? g_DummyTexCube : (use3D ? g_DummyTex3D : g_DummyTex2D);
@@ -124,6 +137,14 @@ std::unordered_map<std::string, Buffer::SharedPtr>            g_ConstantBufferCa
 void LogGpuError(const char* msg)
 {
     spdlog::error(msg);
+}
+
+// Fail-fast: during bring-up a failed shader/PSO is never recoverable, so make it
+// loud and fatal instead of silently substituting empty objects.
+[[noreturn]] void FatalGpuError(const std::string& msg)
+{
+    spdlog::critical("EarthworksFX fatal: {}", msg);
+    throw std::runtime_error(msg);
 }
 
 std::filesystem::path ResolveShaderPath(const std::filesystem::path& remapped)
@@ -233,6 +254,39 @@ void CollectCBuffers(IShader* pShader, SHADER_TYPE stage, std::vector<CBufferLay
     }
 }
 
+// --- DXC builtin-name collision workaround --------------------------------
+// The bundled DXC (reported as "shader model 6.10", i.e. an SM6.9+/Shader-
+// Execution-Reordering preview) puts builtins such as the 'dx' namespace in
+// the global scope. The Earthworks fog shaders declare cbuffer members named
+// literally 'dx'/'dy' (eye-ray basis vectors), which now collide:
+//     compute_volumeFog.hlsli:93: error: redefinition of 'dx' as different
+//     kind of symbol
+// Slang (the original toolchain) and the earlier FXC/glslang fallbacks had no
+// such builtin, which is why it only appears now that real DXC is used. Rather
+// than edit the ported shaders + the by-name binds in the ported core
+// (atmosphere.cpp uses Vars()[...]["dx"]), we rename the offending tokens for
+// the compiler via -D macros and undo the rename when matching reflected
+// member names back to the Falcor-side ShaderVar nodes. Both ends live in the
+// compat layer, so they survive a re-port of the shaders/core.
+struct BuiltinNameWorkaround
+{
+    const char* falcorName;   // name used in HLSL source + C++ Vars()[...] binds
+    const char* compilerName; // substitute the compiler sees (collision-free)
+};
+static const BuiltinNameWorkaround g_BuiltinNameWorkarounds[] = {
+    {"dx", "ew_dx"},
+    {"dy", "ew_dy"},
+};
+
+// Reflected (compiler-visible) member name -> Falcor binding name.
+static std::string FalcorMemberName(const std::string& reflectedName)
+{
+    for (const auto& w : g_BuiltinNameWorkarounds)
+        if (reflectedName == w.compilerName)
+            return w.falcorName;
+    return reflectedName;
+}
+
 RefCntAutoPtr<IShader> CreateShaderFromFile(const std::filesystem::path& path,
                                             const char* entry,
                                             SHADER_TYPE type,
@@ -244,16 +298,17 @@ RefCntAutoPtr<IShader> CreateShaderFromFile(const std::filesystem::path& path,
 
     const auto resolved = ResolveShaderPath(path);
     if (!std::filesystem::exists(resolved))
-    {
-        LogGpuError(("EarthworksFX shader not found: " + resolved.string()).c_str());
-        return {};
-    }
+        FatalGpuError("EarthworksFX shader not found: " + resolved.string());
 
-    const std::string shaderPath = resolved.string();
+    // Use forward slashes (generic_string) for the path Diligent embeds in the
+    // generated '#line 1 "<path>"' directive. With native Windows backslashes,
+    // DXC's clang preprocessor reads '\d', '\g', ... as unknown escape sequences
+    // (warnings) and mangles the reported file name.
+    const std::string shaderPath = resolved.generic_string();
     const std::string shaderName = resolved.filename().string() + "_" + entry;
 
     std::string perShaderSearch;
-    const std::string shaderDir = resolved.parent_path().string();
+    const std::string shaderDir = resolved.parent_path().generic_string();
     if (!shaderDir.empty() && !g_ShaderSearchPaths.empty())
         perShaderSearch = shaderDir + ';' + g_ShaderSearchPaths;
     else if (!shaderDir.empty())
@@ -271,6 +326,12 @@ RefCntAutoPtr<IShader> CreateShaderFromFile(const std::filesystem::path& path,
     std::vector<ShaderMacro>                         macros;
     for (const auto& def : defines.get())
         macroStorage.emplace_back(def.first, def.second);
+    // Rename cbuffer members that collide with DXC builtin global names (see
+    // g_BuiltinNameWorkarounds). Applied to every shader; these tokens are not
+    // used for anything else in the Earthworks HLSL, and the rename is undone
+    // for by-name binding in FalcorMemberName()/PackShaderVarNode().
+    for (const auto& w : g_BuiltinNameWorkarounds)
+        macroStorage.emplace_back(w.falcorName, w.compilerName);
     for (const auto& macro : macroStorage)
         macros.push_back(ShaderMacro{macro.first.c_str(), macro.second.c_str()});
     macros.push_back(ShaderMacro{nullptr, nullptr});
@@ -286,6 +347,7 @@ RefCntAutoPtr<IShader> CreateShaderFromFile(const std::filesystem::path& path,
     shaderCI.LoadConstantBufferReflection    = true;
     shaderCI.HLSLVersion                     = ParseShaderModel(shaderModel);
     shaderCI.Macros                          = ShaderMacroArray{macros.data(), static_cast<Uint32>(macros.size() - 1)};
+    shaderCI.ShaderCompiler                  = SHADER_COMPILER_DXC;
 
     RefCntAutoPtr<IShader> pShader;
     try
@@ -294,11 +356,10 @@ RefCntAutoPtr<IShader> CreateShaderFromFile(const std::filesystem::path& path,
     }
     catch (const std::exception& ex)
     {
-        LogGpuError(("Shader compile exception: " + shaderPath + " [" + entry + "]: " + ex.what()).c_str());
-        return {};
+        FatalGpuError("Shader compile failed: " + shaderPath + " [" + entry + "]: " + ex.what());
     }
     if (!pShader)
-        LogGpuError(("Failed to compile shader: " + shaderPath + " [" + entry + "]").c_str());
+        FatalGpuError("Shader compile failed (null result): " + shaderPath + " [" + entry + "]");
     return pShader;
 }
 
@@ -354,7 +415,7 @@ void PackShaderVarNode(const ShaderVar::Node* pNode, std::vector<uint8_t>& blob,
 
     for (size_t m = 0; m < layout.MemberNames.size(); ++m)
     {
-        const auto it = pNode->Children.find(layout.MemberNames[m]);
+        const auto it = pNode->Children.find(FalcorMemberName(layout.MemberNames[m]));
         if (it == pNode->Children.end())
             continue;
         const auto& member = it->second;
@@ -678,9 +739,9 @@ GfxPipelineCacheKey MakeGfxPipelineKey(const GraphicsProgram* pProgram, TEXTURE_
     return key;
 }
 
-IPipelineState* GetOrCreateGraphicsPSO(const GraphicsProgram* pProgram, const GfxProgramGpu& gpu,
-                                       const GraphicsState* pState, Vao::Topology topology,
-                                       TEXTURE_FORMAT rtvFmt, TEXTURE_FORMAT dsvFmt)
+GraphicsPipelineCacheEntry* GetOrCreateGraphicsPSO(const GraphicsProgram* pProgram, const GfxProgramGpu& gpu,
+                                                   const GraphicsState* pState, Vao::Topology topology,
+                                                   TEXTURE_FORMAT rtvFmt, TEXTURE_FORMAT dsvFmt)
 {
     if (!gpu.VS || !gpu.PS)
         return nullptr;
@@ -688,12 +749,19 @@ IPipelineState* GetOrCreateGraphicsPSO(const GraphicsProgram* pProgram, const Gf
     const GfxPipelineCacheKey key = MakeGfxPipelineKey(pProgram, rtvFmt, dsvFmt, pState, topology);
     auto                      it  = g_GfxPipelineCache.find(key);
     if (it != g_GfxPipelineCache.end())
-        return it->second.PSO;
+        return &it->second;
 
     GraphicsPipelineStateCreateInfo psoCI;
     psoCI.PSODesc.Name         = gpu.DebugName.empty() ? "EarthworksFX GfxPSO" : gpu.DebugName.c_str();
     psoCI.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-    psoCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE;
+    // DYNAMIC (not MUTABLE) so a single SRB can be re-bound and re-committed for
+    // every draw within a frame: dynamic variables get a fresh per-commit
+    // descriptor allocation, so draw N+1's bindings can't clobber draw N's still
+    // in-flight descriptors. This lets us cache one SRB per PSO instead of
+    // creating a brand-new SRB per draw (which, with thousands of terrain-tile
+    // draws per frame, exhausted the deferred-release queue -> std::bad_alloc ->
+    // device hung on D3D12).
+    psoCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC;
 
     auto& gp = psoCI.GraphicsPipeline;
     gp.NumRenderTargets  = 1;
@@ -715,27 +783,31 @@ IPipelineState* GetOrCreateGraphicsPSO(const GraphicsProgram* pProgram, const Gf
     RefCntAutoPtr<IPipelineState> pPSO;
     g_pDevice->CreateGraphicsPipelineState(psoCI, &pPSO);
     if (!pPSO)
-    {
-        LogGpuError("Failed to create graphics PSO");
-        return nullptr;
-    }
-    g_GfxPipelineCache[key] = {pPSO};
-    return pPSO;
+        FatalGpuError("Failed to create graphics PSO: " + gpu.DebugName);
+
+    GraphicsPipelineCacheEntry entry;
+    entry.PSO = pPSO;
+    pPSO->CreateShaderResourceBinding(&entry.SRB, true);
+
+    auto res = g_GfxPipelineCache.emplace(key, std::move(entry));
+    return &res.first->second;
 }
 
-IPipelineState* GetOrCreateComputePSO(const ComputeProgram* pProgram, const ComputeProgramGpu& gpu)
+ComputePipelineCacheEntry* GetOrCreateComputePSO(const ComputeProgram* pProgram, const ComputeProgramGpu& gpu)
 {
     if (!gpu.CS)
         return nullptr;
 
     auto it = g_ComputePSOCache.find(pProgram);
     if (it != g_ComputePSOCache.end())
-        return it->second;
+        return &it->second;
 
     ComputePipelineStateCreateInfo psoCI;
     psoCI.PSODesc.Name         = gpu.DebugName.empty() ? "EarthworksFX ComputePSO" : gpu.DebugName.c_str();
     psoCI.PSODesc.PipelineType = PIPELINE_TYPE_COMPUTE;
-    psoCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE;
+    // DYNAMIC so the single cached SRB can be safely re-committed per dispatch
+    // (see GetOrCreateGraphicsPSO for the rationale).
+    psoCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC;
     psoCI.pCS                  = gpu.CS;
 
     RefCntAutoPtr<IPipelineState> pPSO;
@@ -745,16 +817,17 @@ IPipelineState* GetOrCreateComputePSO(const ComputeProgram* pProgram, const Comp
     }
     catch (const std::exception& ex)
     {
-        LogGpuError(("Failed to create compute PSO '" + gpu.DebugName + "': " + ex.what()).c_str());
-        return nullptr;
+        FatalGpuError("Failed to create compute PSO '" + gpu.DebugName + "': " + ex.what());
     }
     if (!pPSO)
-    {
-        LogGpuError(("Failed to create compute PSO '" + gpu.DebugName + "'").c_str());
-        return nullptr;
-    }
-    g_ComputePSOCache[pProgram] = pPSO;
-    return pPSO;
+        FatalGpuError("Failed to create compute PSO '" + gpu.DebugName + "'");
+
+    ComputePipelineCacheEntry entry;
+    entry.PSO = pPSO;
+    pPSO->CreateShaderResourceBinding(&entry.SRB, true);
+
+    auto res = g_ComputePSOCache.emplace(pProgram, std::move(entry));
+    return &res.first->second;
 }
 
 void SetRenderTargetsFromFbo(Fbo* pFbo)
@@ -874,7 +947,8 @@ void Internal::RegisterGraphicsProgram(GraphicsProgram* pProgram, const Graphics
         gpu.GS = CreateShaderFromFile(pProgram->m_Path, pProgram->m_GsEntry.c_str(), SHADER_TYPE_GEOMETRY, defines, pProgram->m_ShaderModel);
 
     if (!gpu.VS || !gpu.PS)
-        return;
+        FatalGpuError("Failed to create graphics program: " + pProgram->m_Path.string() +
+                      " [vs=" + pProgram->m_VsEntry + ", ps=" + pProgram->m_PsEntry + "]");
 
     g_GfxPipelineCache.clear();
 
@@ -906,7 +980,7 @@ void Internal::RegisterComputeProgram(ComputeProgram* pProgram, const std::files
     gpu.CS = CreateShaderFromFile(pProgram->m_Path, csEntry.c_str(), SHADER_TYPE_COMPUTE, defines, "6_5");
     g_ComputePSOCache.erase(pProgram);
     if (!gpu.CS)
-        return;
+        FatalGpuError("Failed to create compute program: " + pProgram->m_Path.string() + " [" + csEntry + "]");
 
     CollectShaderResources(gpu.CS, SHADER_TYPE_COMPUTE, gpu.Resources);
     CollectCBuffers(gpu.CS, SHADER_TYPE_COMPUTE, gpu.CBuffers);
@@ -974,14 +1048,14 @@ void DrawInstanced(IDeviceContext* pCtx, GraphicsState* pState, GraphicsVars* pV
             topology = vaoIt->second.Topology;
     }
 
-    IPipelineState* pPSO = GetOrCreateGraphicsPSO(pProgram, gpu, pState, topology, rtvFmt, dsvFmt);
-    if (!pPSO)
+    GraphicsPipelineCacheEntry* pEntry = GetOrCreateGraphicsPSO(pProgram, gpu, pState, topology, rtvFmt, dsvFmt);
+    if (!pEntry || !pEntry->PSO)
         return;
+    IPipelineState*         pPSO = pEntry->PSO;
+    IShaderResourceBinding* pSRB = pEntry->SRB;
 
     SetRenderTargetsFromFbo(fbo.get());
 
-    RefCntAutoPtr<IShaderResourceBinding> pSRB;
-    pPSO->CreateShaderResourceBinding(&pSRB, true);
     BindGraphicsVars(pPSO, pSRB, pVars, gpu);
 
     pCtx->SetPipelineState(pPSO);
@@ -1059,14 +1133,14 @@ void DrawIndexedInstanced(IDeviceContext* pCtx, GraphicsState* pState, GraphicsV
             topology = vaoIt->second.Topology;
     }
 
-    IPipelineState* pPSO = GetOrCreateGraphicsPSO(pProgram, gpu, pState, topology, rtvFmt, dsvFmt);
-    if (!pPSO)
+    GraphicsPipelineCacheEntry* pEntry = GetOrCreateGraphicsPSO(pProgram, gpu, pState, topology, rtvFmt, dsvFmt);
+    if (!pEntry || !pEntry->PSO)
         return;
+    IPipelineState*         pPSO = pEntry->PSO;
+    IShaderResourceBinding* pSRB = pEntry->SRB;
 
     SetRenderTargetsFromFbo(fbo.get());
 
-    RefCntAutoPtr<IShaderResourceBinding> pSRB;
-    pPSO->CreateShaderResourceBinding(&pSRB, true);
     BindGraphicsVars(pPSO, pSRB, pVars, gpu);
 
     pCtx->SetPipelineState(pPSO);
@@ -1135,14 +1209,14 @@ void DrawIndirect(IDeviceContext* pCtx, GraphicsState* pState, GraphicsVars* pVa
             topology = vaoIt->second.Topology;
     }
 
-    IPipelineState* pPSO = GetOrCreateGraphicsPSO(pProgram, gpu, pState, topology, rtvFmt, dsvFmt);
-    if (!pPSO)
+    GraphicsPipelineCacheEntry* pEntry = GetOrCreateGraphicsPSO(pProgram, gpu, pState, topology, rtvFmt, dsvFmt);
+    if (!pEntry || !pEntry->PSO)
         return;
+    IPipelineState*         pPSO = pEntry->PSO;
+    IShaderResourceBinding* pSRB = pEntry->SRB;
 
     SetRenderTargetsFromFbo(fbo.get());
 
-    RefCntAutoPtr<IShaderResourceBinding> pSRB;
-    pPSO->CreateShaderResourceBinding(&pSRB, true);
     BindGraphicsVars(pPSO, pSRB, pVars, gpu);
 
     pCtx->SetPipelineState(pPSO);
@@ -1172,12 +1246,12 @@ void Dispatch(IDeviceContext* pCtx, ComputeState* pState, ComputeVars* pVars, co
     if (progIt == g_ComputePrograms.end())
         return;
 
-    IPipelineState* pPSO = GetOrCreateComputePSO(pProgram, progIt->second);
-    if (!pPSO)
+    ComputePipelineCacheEntry* pEntry = GetOrCreateComputePSO(pProgram, progIt->second);
+    if (!pEntry || !pEntry->PSO)
         return;
+    IPipelineState*         pPSO = pEntry->PSO;
+    IShaderResourceBinding* pSRB = pEntry->SRB;
 
-    RefCntAutoPtr<IShaderResourceBinding> pSRB;
-    pPSO->CreateShaderResourceBinding(&pSRB, true);
     BindComputeVars(pPSO, pSRB, pVars, progIt->second);
 
     pCtx->SetPipelineState(pPSO);
@@ -1201,12 +1275,12 @@ void DispatchIndirect(IDeviceContext* pCtx, ComputeState* pState, ComputeVars* p
     if (progIt == g_ComputePrograms.end())
         return;
 
-    IPipelineState* pPSO = GetOrCreateComputePSO(pProgram, progIt->second);
-    if (!pPSO)
+    ComputePipelineCacheEntry* pEntry = GetOrCreateComputePSO(pProgram, progIt->second);
+    if (!pEntry || !pEntry->PSO)
         return;
+    IPipelineState*         pPSO = pEntry->PSO;
+    IShaderResourceBinding* pSRB = pEntry->SRB;
 
-    RefCntAutoPtr<IShaderResourceBinding> pSRB;
-    pPSO->CreateShaderResourceBinding(&pSRB, true);
     BindComputeVars(pPSO, pSRB, pVars, progIt->second);
 
     pCtx->SetPipelineState(pPSO);
@@ -1247,8 +1321,185 @@ void ClearFbo(IDeviceContext* pCtx, Fbo* pFbo, const float4& color, float depth,
     }
 }
 
+namespace
+{
+// Scaling blit support. Diligent's CopyTexture is a 1:1 copy and cannot scale,
+// so a blit between differently-sized rects (e.g. full-res HDR -> half-res
+// previous-frame) must be done with a fullscreen draw that samples the source.
+struct BlitConstants
+{
+    float uvScale[2];
+    float uvOffset[2];
+};
+
+struct BlitPipeline
+{
+    RefCntAutoPtr<IPipelineState>         PSO;
+    RefCntAutoPtr<IShaderResourceBinding> SRB;
+    IShaderResourceVariable*              VarSrc = nullptr;
+    IShaderResourceVariable*              VarSmp = nullptr;
+};
+
+static const char* g_BlitShaderSource = R"(
+cbuffer BlitCB
+{
+    float2 uvScale;
+    float2 uvOffset;
+};
+
+Texture2D    g_Src;
+SamplerState g_Smp;
+
+struct VSOut
+{
+    float4 pos : SV_POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+VSOut vsMain(uint id : SV_VertexID)
+{
+    VSOut o;
+    float2 t = float2((id << 1) & 2, id & 2);
+    o.uv  = t * uvScale + uvOffset;
+    o.pos = float4(t * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+    return o;
+}
+
+float4 psMain(VSOut i) : SV_Target
+{
+    return g_Src.Sample(g_Smp, i.uv);
+}
+)";
+
+IBuffer* GetBlitConstantBuffer()
+{
+    static RefCntAutoPtr<IBuffer> s_CB;
+    if (!s_CB && g_pDevice)
+    {
+        BufferDesc cbDesc;
+        cbDesc.Name           = "EarthworksFX Blit CB";
+        cbDesc.Size           = sizeof(BlitConstants);
+        cbDesc.Usage          = USAGE_DYNAMIC;
+        cbDesc.BindFlags      = BIND_UNIFORM_BUFFER;
+        cbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        g_pDevice->CreateBuffer(cbDesc, nullptr, &s_CB);
+    }
+    return s_CB;
+}
+
+ISampler* GetBlitSampler(bool linear)
+{
+    static RefCntAutoPtr<ISampler> s_Linear;
+    static RefCntAutoPtr<ISampler> s_Point;
+    RefCntAutoPtr<ISampler>& slot = linear ? s_Linear : s_Point;
+    if (!slot && g_pDevice)
+    {
+        SamplerDesc sd;
+        sd.MinFilter = linear ? FILTER_TYPE_LINEAR : FILTER_TYPE_POINT;
+        sd.MagFilter = linear ? FILTER_TYPE_LINEAR : FILTER_TYPE_POINT;
+        sd.MipFilter = linear ? FILTER_TYPE_LINEAR : FILTER_TYPE_POINT;
+        sd.AddressU  = TEXTURE_ADDRESS_CLAMP;
+        sd.AddressV  = TEXTURE_ADDRESS_CLAMP;
+        sd.AddressW  = TEXTURE_ADDRESS_CLAMP;
+        g_pDevice->CreateSampler(sd, &slot);
+    }
+    return slot;
+}
+
+void GetBlitShaders(RefCntAutoPtr<IShader>& vs, RefCntAutoPtr<IShader>& ps)
+{
+    static RefCntAutoPtr<IShader> s_VS;
+    static RefCntAutoPtr<IShader> s_PS;
+    if (!s_VS && g_pDevice)
+    {
+        ShaderCreateInfo sci;
+        sci.SourceLanguage                  = SHADER_SOURCE_LANGUAGE_HLSL;
+        sci.Desc.UseCombinedTextureSamplers = false;
+        sci.Source                          = g_BlitShaderSource;
+        sci.ShaderCompiler                  = SHADER_COMPILER_DXC;
+
+        sci.Desc.ShaderType = SHADER_TYPE_VERTEX;
+        sci.Desc.Name       = "EarthworksFX Blit VS";
+        sci.EntryPoint      = "vsMain";
+        g_pDevice->CreateShader(sci, &s_VS);
+
+        sci.Desc.ShaderType = SHADER_TYPE_PIXEL;
+        sci.Desc.Name       = "EarthworksFX Blit PS";
+        sci.EntryPoint      = "psMain";
+        g_pDevice->CreateShader(sci, &s_PS);
+    }
+    vs = s_VS;
+    ps = s_PS;
+}
+
+BlitPipeline* GetOrCreateBlitPipeline(TEXTURE_FORMAT dstFmt, bool blend)
+{
+    static std::unordered_map<Uint64, BlitPipeline> s_Cache;
+    const Uint64 key = (static_cast<Uint64>(dstFmt) << 1) | (blend ? 1u : 0u);
+    auto it = s_Cache.find(key);
+    if (it != s_Cache.end())
+        return &it->second;
+
+    RefCntAutoPtr<IShader> vs, ps;
+    GetBlitShaders(vs, ps);
+    IBuffer* pCB = GetBlitConstantBuffer();
+    if (!vs || !ps || !pCB)
+        return nullptr;
+
+    GraphicsPipelineStateCreateInfo psoCI;
+    psoCI.PSODesc.Name         = "EarthworksFX Blit PSO";
+    psoCI.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+
+    auto& gp                 = psoCI.GraphicsPipeline;
+    gp.NumRenderTargets      = 1;
+    gp.RTVFormats[0]         = dstFmt;
+    gp.DSVFormat             = TEX_FORMAT_UNKNOWN;
+    gp.PrimitiveTopology     = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    gp.RasterizerDesc.CullMode      = CULL_MODE_NONE;
+    gp.DepthStencilDesc.DepthEnable = False;
+
+    if (blend)
+    {
+        auto& rt0          = gp.BlendDesc.RenderTargets[0];
+        rt0.BlendEnable    = True;
+        rt0.SrcBlend       = BLEND_FACTOR_SRC_ALPHA;
+        rt0.DestBlend      = BLEND_FACTOR_INV_SRC_ALPHA;
+        rt0.BlendOp        = BLEND_OPERATION_ADD;
+        rt0.SrcBlendAlpha  = BLEND_FACTOR_ONE;
+        rt0.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
+        rt0.BlendOpAlpha   = BLEND_OPERATION_ADD;
+    }
+
+    ShaderResourceVariableDesc vars[] = {
+        {SHADER_TYPE_PIXEL, "g_Src", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_PIXEL, "g_Smp", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_VERTEX, "BlitCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
+    };
+    psoCI.PSODesc.ResourceLayout.Variables    = vars;
+    psoCI.PSODesc.ResourceLayout.NumVariables = static_cast<Uint32>(sizeof(vars) / sizeof(vars[0]));
+
+    psoCI.pVS = vs;
+    psoCI.pPS = ps;
+
+    BlitPipeline entry;
+    g_pDevice->CreateGraphicsPipelineState(psoCI, &entry.PSO);
+    if (!entry.PSO)
+        FatalGpuError("Failed to create blit PSO");
+
+    if (auto* pVar = entry.PSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "BlitCB"))
+        pVar->Set(pCB);
+
+    entry.PSO->CreateShaderResourceBinding(&entry.SRB, true);
+    entry.VarSrc = entry.SRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Src");
+    entry.VarSmp = entry.SRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Smp");
+
+    auto res = s_Cache.emplace(key, std::move(entry));
+    return &res.first->second;
+}
+} // namespace
+
 void Blit(IDeviceContext* pCtx, ITextureView* pSrc, ITextureView* pDst, const glm::vec4& srcRect,
-          const glm::vec4& dstRect, Sampler::Filter, BlendState::SharedPtr)
+          const glm::vec4& dstRect, Sampler::Filter filter, BlendState::SharedPtr blend)
 {
     if (!pCtx || !pSrc || !pDst)
         return;
@@ -1258,21 +1509,56 @@ void Blit(IDeviceContext* pCtx, ITextureView* pSrc, ITextureView* pDst, const gl
     if (!pSrcTex || !pDstTex)
         return;
 
-    Box srcBox;
-    srcBox.MinX = static_cast<Uint32>(srcRect.x);
-    srcBox.MinY = static_cast<Uint32>(srcRect.y);
-    srcBox.MaxX = static_cast<Uint32>(srcRect.z);
-    srcBox.MaxY = static_cast<Uint32>(srcRect.w);
+    const auto& srcDesc = pSrcTex->GetDesc();
+    const auto& dstDesc = pDstTex->GetDesc();
 
-    CopyTextureAttribs copyAttribs;
-    copyAttribs.pSrcTexture              = pSrcTex;
-    copyAttribs.pSrcBox                  = &srcBox;
-    copyAttribs.pDstTexture              = pDstTex;
-    copyAttribs.DstX                     = static_cast<Uint32>(dstRect.x);
-    copyAttribs.DstY                     = static_cast<Uint32>(dstRect.y);
-    copyAttribs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-    copyAttribs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-    pCtx->CopyTexture(copyAttribs);
+    BlitPipeline* pPipe = GetOrCreateBlitPipeline(dstDesc.Format, blend != nullptr);
+    if (!pPipe || !pPipe->PSO || !pPipe->SRB)
+        return;
+
+    // Source rect -> normalized UV transform (base UV runs 0..1 across the
+    // visible viewport; map it onto the requested source sub-rectangle).
+    const float srcW = static_cast<float>(srcDesc.Width);
+    const float srcH = static_cast<float>(srcDesc.Height);
+    BlitConstants consts;
+    consts.uvScale[0]  = (srcRect.z - srcRect.x) / srcW;
+    consts.uvScale[1]  = (srcRect.w - srcRect.y) / srcH;
+    consts.uvOffset[0] = srcRect.x / srcW;
+    consts.uvOffset[1] = srcRect.y / srcH;
+    if (IBuffer* pCB = GetBlitConstantBuffer())
+    {
+        void* pMapped = nullptr;
+        pCtx->MapBuffer(pCB, MAP_WRITE, MAP_FLAG_DISCARD, pMapped);
+        if (pMapped)
+        {
+            std::memcpy(pMapped, &consts, sizeof(consts));
+            pCtx->UnmapBuffer(pCB, MAP_WRITE);
+        }
+    }
+
+    pCtx->SetRenderTargets(1, &pDst, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    Viewport vp;
+    vp.TopLeftX = dstRect.x;
+    vp.TopLeftY = dstRect.y;
+    vp.Width    = dstRect.z - dstRect.x;
+    vp.Height   = dstRect.w - dstRect.y;
+    vp.MinDepth = 0.f;
+    vp.MaxDepth = 1.f;
+    pCtx->SetViewports(1, &vp, dstDesc.Width, dstDesc.Height);
+
+    if (pPipe->VarSrc)
+        pPipe->VarSrc->Set(pSrc);
+    if (pPipe->VarSmp)
+        pPipe->VarSmp->Set(GetBlitSampler(filter != Sampler::Filter::Point));
+
+    pCtx->SetPipelineState(pPipe->PSO);
+    pCtx->CommitShaderResources(pPipe->SRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    DrawAttribs da;
+    da.NumVertices = 3;
+    da.Flags       = DRAW_FLAG_VERIFY_ALL;
+    pCtx->Draw(da);
 }
 
 } // namespace Gpu

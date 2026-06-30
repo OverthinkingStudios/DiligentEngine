@@ -3,7 +3,7 @@
 SamplerState linearSampler : register(s0);
 
 
-Texture2D<float3>       hdr : register(u0);
+Texture2D<float3>       hdr : register(t1);  // read-only SRV: must be 't', not 'u' (DXC rejects a UAV register here)
 RWTexture2D<float3>     output : register(u1);
 Texture3D<float3>       cube : register(t0);
 

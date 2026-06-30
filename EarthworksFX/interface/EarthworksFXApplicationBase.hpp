@@ -110,7 +110,14 @@ protected:
         (void)Height;
     }
 
+    /// Per-application UI pass. Override in tools/samples to draw custom ImGui
+    /// windows; call DrawCommonUI() from the override to get the shared overlay.
     virtual void UpdateUI() {}
+
+    /// Generic stats/controls window shared by every EarthworksFX app (device,
+    /// frame timing, and the window's own VSync/fullscreen controls). Safe to
+    /// call from any UpdateUI() override.
+    void DrawCommonUI();
 
     virtual bool HandleSampleNativeMessage(const void* pNativeMsgData) {
         (void)pNativeMsgData;
@@ -155,7 +162,7 @@ private:
 
     EarthworksFXWindowBase m_Window;
 
-    RENDER_DEVICE_TYPE m_DeviceType = RENDER_DEVICE_TYPE_VULKAN;
+    RENDER_DEVICE_TYPE m_DeviceType = RENDER_DEVICE_TYPE_D3D12;
     std::vector<RefCntAutoPtr<IDeviceContext>> m_pDeviceContexts;
     Uint32 m_NumImmediateContexts = 0;
     SwapChainDesc m_SwapChainInitDesc;

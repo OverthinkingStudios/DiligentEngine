@@ -56,8 +56,21 @@ public:
 
     void loadColorCube(std::string name);
 
+    // --- DiligentEngine bring-up: let the host app drive the debug grid and
+    // read the camera without owning an ImGui window inside the core renderer.
+    bool&                    debugGridEnabled() { return showDebugGrid; }
+    const Camera::SharedPtr& getCamera() const { return camera; }
+
 private:
     void guiStyle();
+
+    // --- debug orientation / movement grid (DiligentEngine bring-up aid) ---
+    void                        renderDebugGrid(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo);
+    bool                        showDebugGrid = true;
+    GraphicsProgram::SharedPtr  debugGridProgram;
+    GraphicsState::SharedPtr    debugGridState;
+    GraphicsVars::SharedPtr     debugGridVars;
+    Vao::SharedPtr              debugGridVao;
 
     GraphicsState::Viewport     viewport3d;
     float2                      screenSize;

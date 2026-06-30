@@ -338,6 +338,15 @@ void EarthworksFXApplicationBase::CreateImGui()
     }
 #endif
     m_pImGui = m_pImGuiOwner.get();
+
+#if PLATFORM_WIN32
+    spdlog::info("EarthworksFX: ImGui init (impl={}, hwnd={}, ctx={})",
+                 static_cast<const void*>(m_pImGui),
+                 static_cast<const void*>(m_Window.GetHWND()),
+                 static_cast<const void*>(ImGui::GetCurrentContext()));
+#endif
+    if (!m_pImGui)
+        LOG_ERROR_AND_THROW("Failed to create ImGui implementation");
 }
 
 void EarthworksFXApplicationBase::InitializeGraphicsResources()
@@ -417,6 +426,20 @@ void EarthworksFXApplicationBase::Update(double CurrTime, double ElapsedTime)
             UpdateUI();
         m_InputController.ClearState();
     }
+}
+
+void EarthworksFXApplicationBase::DrawCommonUI()
+{
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("EarthworksFX", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::Text("%s  (API %d)", GetRenderDeviceTypeString(m_DeviceType), DILIGENT_API_VERSION);
+        const float FrameMs = m_fSmoothFPS > 0.f ? 1000.0f / m_fSmoothFPS : 0.f;
+        ImGui::Text("%.1f ms  (%.1f fps)", FrameMs, m_fSmoothFPS);
+        ImGui::Separator();
+        m_Window.DrawImGuiControls();
+    }
+    ImGui::End();
 }
 
 void EarthworksFXApplicationBase::Render()

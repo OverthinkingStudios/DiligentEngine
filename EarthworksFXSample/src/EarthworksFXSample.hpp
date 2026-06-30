@@ -40,6 +40,10 @@ private:
 
     void SyncInput();
 
+    /// App-specific ImGui (debug grid toggle + camera readout). Bring-up aid
+    /// kept out of Earthworks_4 so re-porting that file stays clean.
+    void DrawDebugUI();
+
     std::unique_ptr<Falcor::EarthworksWrapper> m_FalcorWrapper;
     Earthworks_4              m_Earthworks;
     Falcor::Gui               m_Gui;

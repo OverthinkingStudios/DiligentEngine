@@ -637,6 +637,11 @@ float vfbm( in float2 p ){
 //--------------------------------------------------------------------------------------
 #define NUM_OCTAVES 5
 
+// 'noise()' was a legacy Shader-Model-1-only HLSL intrinsic (Perlin noise) that
+// the original Slang toolchain still accepted, but DXC/SM6 removed it. Map it to
+// the gradient-noise implementation above so the fbm() helpers compile unchanged.
+#define noise gnoise
+
 float fbm(float x) {
 	float v = 0.0;
 	float a = 0.5;

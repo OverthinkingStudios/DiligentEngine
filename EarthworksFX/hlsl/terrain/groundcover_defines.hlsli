@@ -357,18 +357,21 @@ struct GC_feedback			// to log and read back to debug and test the process
 
 struct sprite_material
 {
-    int alphaTexture = -1; // a
-    int albedoTexture = -1; // rgb
-    int normalTexture = -1;
-    int pbrTexture = -1;            // this is the one not in use - keep it for now
+    // NOTE: HLSL/DXC (unlike the original Slang toolchain) does not allow
+    // default member initializers on struct members. Defaults removed; this
+    // struct is filled from the CPU side, so the values are supplied there.
+    int alphaTexture; // a
+    int albedoTexture; // rgb
+    int normalTexture;
+    int pbrTexture;            // this is the one not in use - keep it for now
 
     //???
-    int translucencyTexture = -1;
-    float translucency = 1.f;
-    float alphaPow = 1.f;
+    int translucencyTexture;
+    float translucency;
+    float alphaPow;
 
-    float3 albedoScale[2] = { { 0.5f, 0.5f, 0.5f }, { 0.6f, 0.5f, 0.6f } }; // front and back
-    float roughness[2] = { 0.02f, 0.3f };
+    float3 albedoScale[2]; // front and back
+    float roughness[2];
     
 };
 

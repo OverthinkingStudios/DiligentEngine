@@ -29,10 +29,10 @@ cbuffer gConstantBuffer
     float3 eyePos;
     float padd;
 
-    int firstPlant = 0;
-    int lastPlant = 10000; // just big
-    int firstLod = 0;
-    int lastLod = 100;
+    int firstPlant;
+    int lastPlant; // just big
+    int firstLod;
+    int lastLod;
 
     float lodBias;
     float halfAngle_to_Pixels;

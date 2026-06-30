@@ -1,6 +1,8 @@
 #include "Falcor.h"
 #include "FalcorGpuInternal.hpp"
 
+#include "GraphicsAccessories.hpp"
+
 #include "imgui.h"
 
 #include <algorithm>
@@ -34,7 +36,26 @@ void EFX_LOG_STUB(const char* msg) {
 }
 
 TEXTURE_FORMAT ToDiligentFormat(Falcor::ResourceFormat fmt) {
-    return (TEXTURE_FORMAT)fmt;
+    const TEXTURE_FORMAT d = (TEXTURE_FORMAT)fmt;
+    switch (d)
+    {
+        // 3-component 96-bit formats are valid on D3D12 (DXGI) but are NOT
+        // supported as sampled/optimal-tiling images on Vulkan (e.g.
+        // VK_FORMAT_R32G32B32_SFLOAT -> VK_ERROR_FORMAT_NOT_SUPPORTED), which
+        // is why this only tripped Vulkan validation. Promote to the
+        // 4-component equivalent. When init data is supplied it is repacked
+        // from the tight 3-component layout to the 4-component layout in
+        // BuildTextureInitData(); shaders that sample float3 just read .rgb and
+        // ignore the added alpha channel.
+      case Diligent::TEX_FORMAT_RGB32_FLOAT:
+        return Diligent::TEX_FORMAT_RGBA32_FLOAT;
+      case Diligent::TEX_FORMAT_RGB32_UINT:
+        return Diligent::TEX_FORMAT_RGBA32_UINT;
+      case Diligent::TEX_FORMAT_RGB32_SINT:
+        return Diligent::TEX_FORMAT_RGBA32_SINT;
+        default:                     
+            return d;
+    }
 }
 
 Falcor::ResourceFormat FromDiligentFormat(TEXTURE_FORMAT fmt) {
@@ -485,6 +506,63 @@ ShaderVar GraphicsVars::findMember(const char* name) const
 
 // --- Resources ---------------------------------------------------------------
 
+namespace
+{
+// Builds single-subresource (mip 0, slice 0) init data for a texture being
+// created with CreateTexture(). When the requested format was promoted by
+// ToDiligentFormat() (e.g. RGB32 -> RGBA32), the tightly-packed source texels
+// are repacked into the wider destination layout in 'repackStorage'; otherwise
+// the source pointer is used directly. Returns false when there is nothing to
+// upload (null data or unknown/zero pixel size).
+bool BuildTextureInitData(Falcor::ResourceFormat       srcFormat,
+                          Diligent::TEXTURE_FORMAT      dstFormat,
+                          uint32_t                      width,
+                          uint32_t                      height,
+                          uint32_t                      depth,
+                          const void*                   pData,
+                          std::vector<uint8_t>&         repackStorage,
+                          Diligent::TextureSubResData&  subres)
+{
+    if (!pData)
+        return false;
+
+    const Diligent::TEXTURE_FORMAT srcDiligent = static_cast<Diligent::TEXTURE_FORMAT>(srcFormat);
+
+    const auto&    dstAttribs   = Diligent::GetTextureFormatAttribs(dstFormat);
+    const uint32_t dstPixelSize = uint32_t(dstAttribs.ComponentSize) * uint32_t(dstAttribs.NumComponents);
+    if (dstPixelSize == 0)
+        return false; // compressed / unknown layout - not handled here
+
+    const void* uploadPtr = pData;
+
+    if (srcDiligent != dstFormat)
+    {
+        // Format was promoted: repack each texel from the tight source layout
+        // into the wider destination layout, zero-filling the extra channel.
+        const auto&    srcAttribs   = Diligent::GetTextureFormatAttribs(srcDiligent);
+        const uint32_t srcPixelSize = uint32_t(srcAttribs.ComponentSize) * uint32_t(srcAttribs.NumComponents);
+        if (srcPixelSize == 0)
+            return false;
+
+        const uint32_t copyBytes  = std::min(srcPixelSize, dstPixelSize);
+        const size_t   texelCount = size_t(width) * size_t(height) * size_t(std::max<uint32_t>(depth, 1u));
+
+        repackStorage.assign(texelCount * dstPixelSize, uint8_t{0});
+        const uint8_t* src = static_cast<const uint8_t*>(pData);
+        uint8_t*       dst = repackStorage.data();
+        for (size_t i = 0; i < texelCount; ++i)
+            std::memcpy(dst + i * dstPixelSize, src + i * srcPixelSize, copyBytes);
+
+        uploadPtr = repackStorage.data();
+    }
+
+    subres.pData       = uploadPtr;
+    subres.Stride      = uint64_t(width) * dstPixelSize;
+    subres.DepthStride = uint64_t(width) * uint64_t(height) * dstPixelSize;
+    return true;
+}
+} // namespace
+
 Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, TEXTURE_FORMAT format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags)
 {
     return create2D(width, height, static_cast<ResourceFormat>(format), arraySize, mipLevels, pData, bindFlags);
@@ -494,11 +572,10 @@ Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, Falcor::Re
 {
     (void)arraySize;
     (void)mipLevels;
-    (void)pData;
     auto tex     = std::make_shared<Texture>();
     tex->m_Width = width;
     tex->m_Height = height;
-    tex->m_Format = static_cast<TEXTURE_FORMAT>(format);
+    tex->m_Format = ToDiligentFormat(format);
     tex->m_MipCount = 1;
     if (!g_pDevice)
     {
@@ -510,23 +587,37 @@ Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, Falcor::Re
     desc.Type      = Diligent::RESOURCE_DIM_TEX_2D;
     desc.Width     = width;
     desc.Height    = height;
-    desc.Format    = static_cast<Diligent::TEXTURE_FORMAT>(format);
+    desc.Format    = ToDiligentFormat(format);
     desc.BindFlags = static_cast<Diligent::BIND_FLAGS>(bindFlags);
     desc.MipLevels = 1;
-    g_pDevice->CreateTexture(desc, nullptr, &tex->m_pTexture);
+
+    std::vector<uint8_t>         initStorage;
+    Diligent::TextureSubResData  subres;
+    Diligent::TextureData        initData;
+    Diligent::TextureData*       pInitData = nullptr;
+    if (BuildTextureInitData(format, desc.Format, width, height, 1, pData, initStorage, subres))
+    {
+        initData.pSubResources   = &subres;
+        initData.NumSubresources = 1;
+        initData.pContext        = g_pContext;
+        pInitData                = &initData;
+    }
+    g_pDevice->CreateTexture(desc, pInitData, &tex->m_pTexture);
     if (tex->m_pTexture)
     {
         if (bindFlags & Resource::BindFlags::ShaderResource)
             CreateTextureView(tex->m_pTexture, Diligent::TEXTURE_VIEW_SHADER_RESOURCE, tex->m_SRV);
         if (bindFlags & Resource::BindFlags::RenderTarget)
             CreateTextureView(tex->m_pTexture, Diligent::TEXTURE_VIEW_RENDER_TARGET, tex->m_RTV);
+        if (desc.BindFlags & Diligent::BIND_DEPTH_STENCIL)
+            CreateTextureView(tex->m_pTexture, Diligent::TEXTURE_VIEW_DEPTH_STENCIL, tex->m_DSV);
         if (bindFlags & Resource::BindFlags::UnorderedAccess)
             CreateTextureView(tex->m_pTexture, Diligent::TEXTURE_VIEW_UNORDERED_ACCESS, tex->m_UAV);
     }
     return tex;
 }
 
-Texture::SharedPtr Texture::create3D(uint32_t width, uint32_t height, uint32_t depth, Falcor::ResourceFormat format, uint32_t, const void*, uint32_t bindFlags)
+Texture::SharedPtr Texture::create3D(uint32_t width, uint32_t height, uint32_t depth, Falcor::ResourceFormat format, uint32_t, const void* pData, uint32_t bindFlags)
 {
     auto tex     = std::make_shared<Texture>();
     tex->m_Width = width;
@@ -544,7 +635,19 @@ Texture::SharedPtr Texture::create3D(uint32_t width, uint32_t height, uint32_t d
     desc.Format    = ToDiligentFormat(format);
     desc.BindFlags = static_cast<Diligent::BIND_FLAGS>(bindFlags);
     desc.MipLevels = 1;
-    g_pDevice->CreateTexture(desc, nullptr, &tex->m_pTexture);
+
+    std::vector<uint8_t>         initStorage;
+    Diligent::TextureSubResData  subres;
+    Diligent::TextureData        initData;
+    Diligent::TextureData*       pInitData = nullptr;
+    if (BuildTextureInitData(format, desc.Format, width, height, depth, pData, initStorage, subres))
+    {
+        initData.pSubResources   = &subres;
+        initData.NumSubresources = 1;
+        initData.pContext        = g_pContext;
+        pInitData                = &initData;
+    }
+    g_pDevice->CreateTexture(desc, pInitData, &tex->m_pTexture);
     if (tex->m_pTexture && (bindFlags & Resource::BindFlags::ShaderResource))
         CreateTextureView(tex->m_pTexture, Diligent::TEXTURE_VIEW_SHADER_RESOURCE, tex->m_SRV);
     if (tex->m_pTexture && (bindFlags & Resource::BindFlags::UnorderedAccess))
@@ -594,6 +697,7 @@ uint32_t Texture::getHeight() const { return m_Height; }
 
 Diligent::ITextureView* Texture::getSRV(uint32_t, uint32_t, uint32_t, uint32_t) const { return m_SRV; }
 Diligent::ITextureView* Texture::getRTV() const { return m_RTV; }
+Diligent::ITextureView* Texture::getDSV() const { return m_DSV; }
 Diligent::ITextureView* Texture::getUAV(uint32_t) const { return m_UAV; }
 
 void Texture::generateMips(RenderContext* pContext)
@@ -750,6 +854,28 @@ void Buffer::uploadShadowRange(size_t offset, size_t size)
         return;
     if (offset + size > m_CpuShadow.size())
         return;
+
+    // USAGE_DYNAMIC buffers live in an upload heap (GENERIC_READ) and CANNOT be
+    // updated with UpdateBuffer: on D3D12 that turns into a CopyBufferRegion into
+    // the dynamic page (src==dst / invalid COPY_DEST state -> device removed).
+    // They must be refreshed via Map(WRITE, DISCARD). DISCARD invalidates the old
+    // contents, so we re-upload the whole buffer from the full CPU shadow copy
+    // (which always holds the complete intended contents). Vulkan tolerated the
+    // illegal UpdateBuffer, which is why this only crashed on D3D12.
+    if (m_pBuffer->GetDesc().Usage == Diligent::USAGE_DYNAMIC)
+    {
+        void* pMapped = nullptr;
+        g_pContext->MapBuffer(m_pBuffer, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, pMapped);
+        if (pMapped)
+        {
+            const size_t bufSize  = static_cast<size_t>(m_pBuffer->GetDesc().Size);
+            const size_t copySize = m_CpuShadow.size() < bufSize ? m_CpuShadow.size() : bufSize;
+            std::memcpy(pMapped, m_CpuShadow.data(), copySize);
+            g_pContext->UnmapBuffer(m_pBuffer, Diligent::MAP_WRITE);
+        }
+        return;
+    }
+
     g_pContext->UpdateBuffer(m_pBuffer, offset, static_cast<Diligent::Uint64>(size), m_CpuShadow.data() + offset, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 }
 
@@ -863,8 +989,13 @@ Fbo::SharedPtr Fbo::create2D(uint32_t width, uint32_t height, const Desc& desc)
     }
     if (desc.GetDepthFormat() != TEX_FORMAT_UNKNOWN)
     {
+        // BIND_SHADER_RESOURCE in addition to BIND_DEPTH_STENCIL so depth FBOs
+        // (e.g. shadow maps) can be sampled in shaders. Diligent automatically
+        // creates the texture with a typeless resource format and selects the
+        // depth-readable SRV format (R32_FLOAT / R24_UNORM_X8 / ...).
         fbo->m_DepthTexture = Texture::create2D(
-            width, height, desc.GetDepthFormat(), 1, 1, nullptr, Diligent::BIND_DEPTH_STENCIL);
+            width, height, desc.GetDepthFormat(), 1, 1, nullptr,
+            Diligent::BIND_DEPTH_STENCIL | Diligent::BIND_SHADER_RESOURCE);
     }
     return fbo;
 }
@@ -912,7 +1043,7 @@ Diligent::ITextureView* Fbo::getDepthStencilView() const
 {
     if (m_IsSwapChainProxy && m_pSwapChain)
         return m_pSwapChain->GetDepthBufferDSV();
-    return m_DepthTexture ? m_DepthTexture->getRTV() : nullptr;
+    return m_DepthTexture ? m_DepthTexture->getDSV() : nullptr;
 }
 
 Sampler::Desc& Sampler::Desc::setAddressingMode(AddressMode u, AddressMode v, AddressMode w)
@@ -949,8 +1080,29 @@ Sampler::Desc& Sampler::Desc::setMaxAnisotropy(uint32_t aniso)
 
 Sampler::Desc& Sampler::Desc::setComparisonMode(ComparisonMode mode)
 {
-    (void)mode;
-    spdlog::error("Sampler::Desc::setComparisonMode is not implemented");
+    switch (mode)
+    {
+    case ComparisonMode::LessEqual: m_Desc.ComparisonFunc = Diligent::COMPARISON_FUNC_LESS_EQUAL; break;
+    default: m_Desc.ComparisonFunc = Diligent::COMPARISON_FUNC_LESS_EQUAL; break;
+    }
+    // A comparison sampler (HLSL SamplerComparisonState / SampleCmp) requires the
+    // filter type itself to be a COMPARISON filter, otherwise D3D12 ignores the
+    // comparison func and the shadow lookup returns garbage. Promote whatever
+    // filter was previously selected to its comparison variant. Note this relies
+    // on setComparisonMode() being called after setFilterMode().
+    auto toComparison = [](Diligent::FILTER_TYPE f) {
+        switch (f)
+        {
+        case Diligent::FILTER_TYPE_POINT:
+        case Diligent::FILTER_TYPE_COMPARISON_POINT:
+            return Diligent::FILTER_TYPE_COMPARISON_POINT;
+        default:
+            return Diligent::FILTER_TYPE_COMPARISON_LINEAR;
+        }
+    };
+    m_Desc.MinFilter = toComparison(m_Desc.MinFilter);
+    m_Desc.MagFilter = toComparison(m_Desc.MagFilter);
+    m_Desc.MipFilter = toComparison(m_Desc.MipFilter);
     return *this;
 }
 

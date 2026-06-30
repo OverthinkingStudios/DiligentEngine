@@ -20,11 +20,11 @@ cbuffer gConstants
 };
 
 
-groupshared uint vCount = 0;
-groupshared uint R = 0;
-groupshared uint G = 0;
-groupshared uint B = 0;
-groupshared uint3 vSum = 0;
+groupshared uint vCount;
+groupshared uint R;
+groupshared uint G;
+groupshared uint B;
+groupshared uint3 vSum;
 
 
 #if defined(_TO_TEXTURE)

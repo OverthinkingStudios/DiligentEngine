@@ -46,6 +46,20 @@
 // ImGui 1.92+ renamed ImFont::FontSize to LegacySize; keep Falcor-era member access working.
 #define FontSize LegacySize
 
+// ImGui 1.92+ removed BeginChildFrame/EndChildFrame; keep Falcor-era calls working.
+namespace ImGui
+{
+inline bool BeginChildFrame(ImGuiID id, const ImVec2& size, ImGuiWindowFlags extra_flags = 0)
+{
+    return BeginChild(id, size, ImGuiChildFlags_FrameStyle, extra_flags);
+}
+
+inline void EndChildFrame()
+{
+    EndChild();
+}
+} // namespace ImGui
+
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
@@ -529,6 +543,7 @@ public:
     // TODO: return real Diligent views once resource binding is wired.
     Diligent::ITextureView* getSRV(uint32_t, uint32_t, uint32_t, uint32_t) const;
     Diligent::ITextureView* getRTV() const;
+    Diligent::ITextureView* getDSV() const;
     Diligent::ITextureView* getUAV(uint32_t mip = 0) const;
 
     void generateMips(RenderContext* pContext = nullptr);
@@ -543,6 +558,7 @@ private:
     Diligent::RefCntAutoPtr<Diligent::ITexture> m_pTexture;
     Diligent::RefCntAutoPtr<Diligent::ITextureView> m_SRV;
     Diligent::RefCntAutoPtr<Diligent::ITextureView> m_RTV;
+    Diligent::RefCntAutoPtr<Diligent::ITextureView> m_DSV;
     Diligent::RefCntAutoPtr<Diligent::ITextureView> m_UAV;
     uint32_t m_Width = 0;
     uint32_t m_Height = 0;

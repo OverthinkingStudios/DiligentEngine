@@ -50,6 +50,12 @@ Texture3D gCfd_T_9;
 Texture3D gCfd_T_10;
 Texture3D gCfd_T_11;
 
+// These were loose global variables. DXC places loose globals into the
+// implicit '$Globals' constant buffer, and Diligent's D3D12 backend fails to
+// build an implicit resource signature for it ("Resources[0].Name must not be
+// empty"); Vulkan/SPIR-V tolerated it. Wrap them in an explicit named cbuffer
+// so no '$Globals' is generated. b0-b3 are used by the cbuffers above.
+cbuffer gCfdParams : register(b4) {
 float4 gCfd_offset_0;
 float4 gCfd_offset_1;
 float4 gCfd_offset_2;
@@ -75,6 +81,7 @@ float4 gCfd_scale_8;
 float4 gCfd_scale_9;
 float4 gCfd_scale_10;
 float4 gCfd_scale_11;
+}
 
 
 // I rthink remove FogCloudCommonParams

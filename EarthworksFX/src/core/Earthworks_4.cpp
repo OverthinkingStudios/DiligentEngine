@@ -346,6 +346,32 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
     blendDesc.setRtParams(0, BlendState::BlendOp::Subtract, BlendState::BlendOp::Add, BlendState::BlendFunc::SrcAlpha, BlendState::BlendFunc::OneMinusSrcAlpha, BlendState::BlendFunc::SrcAlpha, BlendState::BlendFunc::OneMinusSrcAlpha);
     overlayBlendstate = BlendState::create(blendDesc);
 
+    // --- debug orientation / movement grid ------------------------------------
+    debugGridProgram = GraphicsProgram::createFromFile("Samples/Earthworks_4/hlsl/debugGrid.hlsl", "vsMain", "psMain");
+    if (debugGridProgram)
+    {
+        debugGridState = GraphicsState::create();
+        debugGridState->setProgram(debugGridProgram);
+
+        DepthStencilState::Desc gridDsDesc;
+        gridDsDesc.setDepthEnabled(false);
+        gridDsDesc.setDepthWriteMask(false);
+        debugGridState->setDepthStencilState(DepthStencilState::create(gridDsDesc));
+
+        RasterizerState::Desc gridRsDesc;
+        gridRsDesc.setCullMode(RasterizerState::CullMode::None);
+        debugGridState->setRasterizerState(RasterizerState::create(gridRsDesc));
+
+        debugGridVars = GraphicsVars::create(debugGridProgram->getActiveVersion()->getReflector());
+
+        // Line list with no index buffer -> the compat layer takes the non-indexed
+        // Draw() path and the vertex shader builds the geometry from SV_VertexID.
+        VertexLayout::SharedPtr gridLayout = VertexLayout::create();
+        Vao::BufferVec          gridEmptyVbo;
+        debugGridVao = Vao::create(Vao::Topology::LineList, gridLayout, gridEmptyVbo, nullptr, ResourceFormat::R16Uint);
+        debugGridState->setVao(debugGridVao);
+    }
+
 
 
     {
@@ -489,6 +515,8 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
 
         onRenderOverlay(_renderContext, pTargetFbo);
 
+        renderDebugGrid(_renderContext, pTargetFbo);
+
         glm::vec4 srcRect = glm::vec4(0, 0, screenSize.x, screenSize.y);
         glm::vec4 dstRect = glm::vec4(0, 0, screenSize.x * 0.5f, screenSize.y * 0.5f);
         _renderContext->blit(hdrFbo->getColorTexture(0)->getSRV(0, 1, 0, 1), hdrPreviousFrame->getRTV(), srcRect, dstRect, Sampler::Filter::Linear);
@@ -498,6 +526,42 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
             Sleep(20);       // aim for 15fps in this mode
         }
     }
+}
+
+
+
+void Earthworks_4::renderDebugGrid(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo)
+{
+    if (!showDebugGrid || !debugGridProgram || !debugGridState || !debugGridVars || !camera)
+        return;
+
+    // Single source of truth for the line counts; must match the ranges in debugGrid.hlsl.
+    const int kLatLines    = 17;   // latitudes  -80..+80 in 10 deg steps
+    const int kLonLines    = 24;   // longitudes every 15 deg
+    const int kSeg         = 96;   // segments per circle
+    const int kGroundLines = 41;   // ground grid lines per axis
+
+    debugGridState->setFbo(pTargetFbo);
+    debugGridState->setViewport(0, viewport3d, true);
+
+    // Mirror the terrain/skydome convention exactly (see render_triangles.hlsl).
+    const float4x4 viewproj = camera->getViewProjMatrix().getTranspose();
+    debugGridVars["gConstantBuffer"]["viewproj"]      = viewproj;
+    debugGridVars["gConstantBuffer"]["eye"]           = camera->getPosition();
+    debugGridVars["gConstantBuffer"]["globeRadius"]   = 3000.0f;
+    debugGridVars["gConstantBuffer"]["groundSpacing"] = 100.0f;
+    debugGridVars["gConstantBuffer"]["groundHeight"]  = 0.0f;
+    debugGridVars["gConstantBuffer"]["latLines"]      = kLatLines;
+    debugGridVars["gConstantBuffer"]["lonLines"]      = kLonLines;
+    debugGridVars["gConstantBuffer"]["segments"]      = kSeg;
+    debugGridVars["gConstantBuffer"]["groundLines"]   = kGroundLines;
+
+    const uint32_t latVerts    = kLatLines * kSeg * 2;
+    const uint32_t lonVerts    = kLonLines * kSeg * 2;
+    const uint32_t groundVerts = kGroundLines * 2 * 2; // X-lines + Z-lines
+    const uint32_t totalVerts  = latVerts + lonVerts + groundVerts;
+
+    _renderContext->drawInstanced(debugGridState.get(), debugGridVars.get(), totalVerts, 1, 0, 0);
 }
 
 
@@ -557,6 +621,10 @@ bool Earthworks_4::onKeyEvent(const KeyboardEvent& _keyEvent)
         if (_keyEvent.key == Input::Key::V)
         {
             refresh.minimal = !refresh.minimal;
+        }
+        if (_keyEvent.key == Input::Key::G)
+        {
+            showDebugGrid = !showDebugGrid;
         }
     }
 

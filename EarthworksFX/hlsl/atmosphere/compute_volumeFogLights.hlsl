@@ -1,7 +1,9 @@
 //#include "../ksShaders/ksCommon.hlsli"	  // this is for lights - replace soon
 #include "CSVolumeFogCommon.hlsli"
 
-RWTexture3D<float3> gResult : register(u0);
+// Backing storage image is RGBA16F (4 components); Vulkan 1.3 requires
+// OpImageWrite to supply >= the view's component count, so write float4.
+RWTexture3D<float4> gResult : register(u0);
 
 
 
@@ -74,6 +76,6 @@ void main(uint3 coord : SV_DispatchThreadId) {
 		// Or better still DO NOT DO SUNLIGTH HERE
 
 		coord.z = i;
-		gResult[coord] = LightSum;
+		gResult[coord] = float4(LightSum, 0);
 	}
 }

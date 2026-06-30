@@ -23,7 +23,7 @@ cbuffer gConstants
 #define _PIXSIZE constants.x
 
 
-groupshared uint vCount = 0;
+groupshared uint vCount;
 
 
 

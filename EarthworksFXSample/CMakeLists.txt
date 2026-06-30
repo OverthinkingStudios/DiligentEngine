@@ -12,7 +12,12 @@ set(SAMPLE_INCLUDES src/EarthworksFXSample.hpp)
 add_target_platform_app(EarthworksFXSample "${SAMPLE_SOURCES}" "${SAMPLE_INCLUDES}" "")
 
 if(PLATFORM_WIN32)
-    copy_required_dlls(EarthworksFXSample)
+    # DXC_REQUIRED copies dxcompiler.dll + dxil.dll (D3D12) and spv_dxcompiler.dll
+    # (Vulkan) next to the exe. The Earthworks shaders are SM6 and the compat
+    # layer requests SHADER_COMPILER_DXC; without these dlls Diligent silently
+    # falls back to FXC (SM 5.1 cap) on D3D12 and glslang on Vulkan (which
+    # rejects the HLSL constant-buffer layout, e.g. FogAtmosphericParams).
+    copy_required_dlls(EarthworksFXSample DXC_REQUIRED YES)
 endif()
 
 target_include_directories(EarthworksFXSample PRIVATE src)

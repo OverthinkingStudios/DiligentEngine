@@ -32,6 +32,12 @@ public:
     void SetShowUI(bool Show) { m_bShowUI = Show; }
     bool GetShowUI() const { return m_bShowUI; }
 
+    /// Generic ImGui widgets for this window's own state (VSync, fullscreen).
+    /// Reusable by any EarthworksFX application/tool; call it from inside an
+    /// existing ImGui window during the UI pass. Implemented in the .cpp so the
+    /// ImGui include does not leak into this widely-included header.
+    void DrawImGuiControls();
+
 #if PLATFORM_WIN32
     void Attach(HWND hWnd);
     HWND GetHWND() const { return m_hWnd; }
