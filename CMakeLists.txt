@@ -74,6 +74,7 @@ if(DILIGENT_BUILD_EARTHWORKSFX AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Earthwork
 endif()
 
 add_subdirectory(EarthworksEditor)
+add_subdirectory(TextureSplitTool)
 
 if(TARGET EarthworksFXSample)
     set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT EarthworksFXSample)
