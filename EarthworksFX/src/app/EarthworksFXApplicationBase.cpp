@@ -1,6 +1,7 @@
 #include "EarthworksFXApplicationBase.hpp"
 
 #include <algorithm>
+#include <filesystem>
 
 #include "Errors.hpp"
 #include "CommandLineParser.hpp"
@@ -41,6 +42,31 @@
 namespace Diligent
 {
 
+namespace
+{
+
+/// Scopes Falcor's global framework pointer for the duration of an Earthworks
+/// call, restoring the previous value afterwards.
+class ScopedFalcorFramework
+{
+public:
+    explicit ScopedFalcorFramework(Falcor::FrameworkInterface* pFramework)
+    {
+        m_Prev = Falcor::gpFramework;
+        Falcor::SetFalcorFramework(pFramework);
+    }
+
+    ~ScopedFalcorFramework()
+    {
+        Falcor::SetFalcorFramework(m_Prev);
+    }
+
+private:
+    Falcor::FrameworkInterface* m_Prev = nullptr;
+};
+
+} // namespace
+
 EarthworksFXApplicationBase::EarthworksFXApplicationBase(const std::string& Title,
                                                            const std::string& AppDataFolder,
                                                            overthinking::Env::Stage Stage)
@@ -53,6 +79,17 @@ EarthworksFXApplicationBase::EarthworksFXApplicationBase(const std::string& Titl
 
 EarthworksFXApplicationBase::~EarthworksFXApplicationBase()
 {
+    // Tear the Earthworks scene down (and its GPU resources) while the device is
+    // still alive, before the swap chain / device are released below.
+    if (m_Initialized)
+    {
+        ScopedFalcorFramework scope{&m_Framework};
+        m_Earthworks->onShutdown();
+    }
+    m_TargetFbo.reset();
+    m_Earthworks.reset();
+    m_FalcorWrapper.reset();
+
     m_pImGuiOwner.reset();
     m_pImGui = nullptr;
 
@@ -71,6 +108,29 @@ void EarthworksFXApplicationBase::ModifyEngineInitInfo(const ModifyEngineInitInf
 {
     Attribs.EngineCI.Features = DeviceFeatures{DEVICE_FEATURE_STATE_OPTIONAL};
     Attribs.EngineCI.Features.TransferQueueTimestampQueries = DEVICE_FEATURE_STATE_DISABLED;
+
+    // Features the Earthworks renderer relies on.
+    Attribs.EngineCI.Features.ComputeShaders = DEVICE_FEATURE_STATE_ENABLED;
+    Attribs.EngineCI.Features.DepthClamp     = DEVICE_FEATURE_STATE_OPTIONAL;
+    Attribs.SCDesc.ColorBufferFormat         = TEX_FORMAT_BGRA8_UNORM_SRGB;
+
+    OnModifyEngineInitInfo(Attribs);
+}
+
+EarthworksFXAppSettings EarthworksFXApplicationBase::GetAppSettings(bool IsInitialization)
+{
+    EarthworksFXAppSettings Settings;
+    if (IsInitialization)
+    {
+        Settings.DeviceType        = RENDER_DEVICE_TYPE_VULKAN;
+        Settings.VSync             = false;
+        Settings.ShowUI            = true;
+        Settings.FirstPersonCamera = true;
+        Settings.WindowWidth       = 2560;
+        Settings.WindowHeight      = 1440;
+    }
+    OnConfigureSettings(Settings);
+    return Settings;
 }
 
 void EarthworksFXApplicationBase::UpdateAppSettings(bool IsInitialization)
@@ -90,6 +150,12 @@ void EarthworksFXApplicationBase::UpdateAppSettings(bool IsInitialization)
 
 AppBase::CommandLineStatus EarthworksFXApplicationBase::ProcessCommandLine(int argc, const char* const* argv)
 {
+    // Re-apply settings now that the derived object is fully constructed, so an
+    // OnConfigureSettings() override actually takes effect (a virtual call from
+    // the constructor would only ever reach the base). Command-line flags below
+    // then override these.
+    UpdateAppSettings(true);
+
     if (argc == 0)
         return CommandLineStatus::OK;
 
@@ -354,14 +420,47 @@ void EarthworksFXApplicationBase::CreateImGui()
         LOG_ERROR_AND_THROW("Failed to create ImGui implementation");
 }
 
+void EarthworksFXApplicationBase::InitializeScene()
+{
+    m_FalcorWrapper = std::make_unique<Falcor::EarthworksWrapper>();
+    m_Earthworks    = std::make_unique<Earthworks_4>();
+
+    Falcor::SetFalcorDevice(m_pDevice, m_pImmediateContext, m_pSwapChain, m_pEngineFactory);
+    Falcor::SetFalcorFramework(&m_Framework);
+    Falcor::addDataDirectory(std::filesystem::current_path(), true);
+    Falcor::addDataDirectory(std::filesystem::current_path() / "terrains", false);
+    Falcor::addDataDirectory(std::filesystem::current_path() / "EarthworksFX", true);
+
+    m_RenderContext = Falcor::RenderContext{m_pImmediateContext};
+
+    ScopedFalcorFramework scope{&m_Framework};
+    m_Earthworks->onLoad(&m_RenderContext);
+
+    const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
+    m_Earthworks->onResizeSwapChain(SCDesc.Width, SCDesc.Height);
+    m_TargetFbo = Falcor::Fbo::createFromSwapChain(m_pSwapChain);
+
+    if (const auto& cam = m_Earthworks->getCamera())
+    {
+        m_FirstPersonCamera.SetPos(cam->getPosition());
+        m_FirstPersonCamera.SetLookAt(cam->getTarget());
+        m_FirstPersonCamera.SetMoveSpeed(50.f);
+        m_FirstPersonCamera.Update(m_InputController, 0.f);
+    }
+
+    m_Initialized = true;
+}
+
 void EarthworksFXApplicationBase::InitializeGraphicsResources()
 {
     ImGui::StyleColorsDiligent();
-    OnGraphicsInitialized();
+    InitializeScene();
 
     const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
     OnWindowResized(SCDesc.Width, SCDesc.Height);
     UpdateFirstPersonCameraProjAttribs();
+
+    OnGraphicsReady();
 }
 
 bool EarthworksFXApplicationBase::InitializeGraphics(const NativeWindow* pWindow)
@@ -447,7 +546,7 @@ void EarthworksFXApplicationBase::Update(double CurrTime, double ElapsedTime)
         const bool DoUpdateUI = m_Window.GetShowUI();
         if (UseFirstPersonCamera())
             UpdateFirstPersonCamera(static_cast<float>(ElapsedTime));
-        UpdateSample(CurrTime, ElapsedTime, DoUpdateUI);
+        OnUpdate(CurrTime, ElapsedTime, DoUpdateUI);
         if (DoUpdateUI)
             UpdateUI();
         m_InputController.ClearState();
@@ -468,6 +567,116 @@ void EarthworksFXApplicationBase::DrawCommonUI()
     ImGui::End();
 }
 
+void EarthworksFXApplicationBase::UpdateUI()
+{
+    DrawCommonUI();
+}
+
+void EarthworksFXApplicationBase::OnRender()
+{
+    if (!m_Initialized)
+        return;
+
+    ScopedFalcorFramework scope{&m_Framework};
+    m_Framework.SetAverageFrameTimeMs(m_fSmoothFPS > 0.f ? 1000.0 / static_cast<double>(m_fSmoothFPS) : 16.0);
+
+    if (!m_TargetFbo)
+        m_TargetFbo = Falcor::Fbo::createFromSwapChain(m_pSwapChain);
+
+    m_Earthworks->onFrameRender(&m_RenderContext, m_TargetFbo);
+}
+
+void EarthworksFXApplicationBase::OnUpdate(double CurrTime, double ElapsedTime, bool DoUpdateUI)
+{
+    (void)CurrTime;
+    (void)ElapsedTime;
+
+    if (!m_Initialized)
+        return;
+
+    if (UseFirstPersonCamera())
+        SyncFirstPersonCameraToEarthworks();
+    else
+        SyncInput();
+
+    if (DoUpdateUI)
+    {
+        ScopedFalcorFramework scope{&m_Framework};
+        m_Earthworks->onGuiRender(&m_Gui);
+    }
+}
+
+void EarthworksFXApplicationBase::OnWindowResized(Uint32 Width, Uint32 Height)
+{
+    if (!m_Initialized)
+        return;
+
+    ScopedFalcorFramework scope{&m_Framework};
+    m_Earthworks->onResizeSwapChain(Width, Height);
+    m_TargetFbo = Falcor::Fbo::createFromSwapChain(m_pSwapChain);
+}
+
+void EarthworksFXApplicationBase::SyncFirstPersonCameraToEarthworks()
+{
+    const auto& cam = m_Earthworks->getCamera();
+    if (!cam)
+        return;
+
+    const auto& fpc = m_FirstPersonCamera;
+    cam->setPosition(fpc.GetPos());
+    cam->setTarget(fpc.GetPos() + fpc.GetWorldAhead() * 100.f);
+}
+
+void EarthworksFXApplicationBase::SyncInput()
+{
+    const MouseState mouse = m_InputController.GetMouseState();
+
+    // The Win32 InputController reports client-space pixels, but the Earthworks
+    // camera code expects Falcor-style normalized [0,1] screen coordinates
+    // (it gates on 'pos.x > 0 && pos.x < 1'), so normalize here.
+    const SwapChainDesc& scDesc = m_pSwapChain->GetDesc();
+    const float width  = scDesc.Width  > 0 ? static_cast<float>(scDesc.Width)  : 1.f;
+    const float height = scDesc.Height > 0 ? static_cast<float>(scDesc.Height) : 1.f;
+
+    Falcor::MouseEvent event{};
+    event.pos = Falcor::float2{static_cast<float>(mouse.PosX) / width,
+                               static_cast<float>(mouse.PosY) / height};
+
+    int buttons = 0;
+    if (mouse.ButtonFlags & MouseState::BUTTON_FLAG_LEFT)
+        buttons |= static_cast<int>(Falcor::MouseEvent::Buttons::Left);
+    if (mouse.ButtonFlags & MouseState::BUTTON_FLAG_RIGHT)
+        buttons |= static_cast<int>(Falcor::MouseEvent::Buttons::Right);
+    if (mouse.ButtonFlags & MouseState::BUTTON_FLAG_MIDDLE)
+        buttons |= static_cast<int>(Falcor::MouseEvent::Buttons::Middle);
+    event.buttons = static_cast<Falcor::MouseEvent::Buttons>(buttons);
+
+    ScopedFalcorFramework scope{&m_Framework};
+
+    // The camera rotate/pan/orbit code runs on Move events and reads live button
+    // state via ImGui::IsMouseDown(), so always deliver a Move (this also lets it
+    // track drag deltas frame-to-frame). Deliver Wheel as a separate event.
+    event.type = Falcor::MouseEvent::Type::Move;
+    m_Earthworks->onMouseEvent(event);
+
+    if (mouse.WheelDelta != 0.f)
+    {
+        event.type       = Falcor::MouseEvent::Type::Wheel;
+        event.wheelDelta = Falcor::float2{0.f, mouse.WheelDelta};
+        m_Earthworks->onMouseEvent(event);
+    }
+}
+
+Falcor::FrameRate EarthworksFXApplicationBase::Framework::getFrameRate() const
+{
+    return Falcor::FrameRate{};
+}
+
+Falcor::WindowInterface* EarthworksFXApplicationBase::Framework::getWindow()
+{
+    return &m_Window;
+}
+
 void EarthworksFXApplicationBase::Render()
 {
     if (m_NumImmediateContexts == 0 || !m_pSwapChain)
@@ -479,7 +688,7 @@ void EarthworksFXApplicationBase::Render()
     ITextureView* pDSV = m_pSwapChain->GetDepthBufferDSV();
     pCtx->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-    RenderSample();
+    OnRender();
 
     pCtx->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     if (m_pImGui)

@@ -178,3 +178,23 @@ add_custom_target(EarthworksFX_DeployHLSL
     COMMENT "Deploying EarthworksFX HLSL to ACSMP_GAMEROOT/hlsl"
     VERBATIM)
 set_target_properties(EarthworksFX_DeployHLSL PROPERTIES FOLDER "EarthworksFX")
+
+# Wire an executable up as an EarthworksFX app. Links the library and applies the
+# per-exe Win32 bits that can't live on the static library itself (post-build dll
+# copy, debugger working dir), so each app's CMakeLists stays a couple of lines.
+function(earthworksfx_setup_app TARGET_NAME)
+    target_link_libraries(${TARGET_NAME} PRIVATE EarthworksFX::EarthworksFX)
+    set_common_target_properties(${TARGET_NAME})
+    set_target_properties(${TARGET_NAME} PROPERTIES FOLDER "EarthworksFX")
+
+    if(PLATFORM_WIN32)
+        # SM6 Earthworks shaders need DXC; without these dlls next to the exe,
+        # Diligent silently falls back to FXC (D3D12) / glslang (Vulkan).
+        copy_required_dlls(${TARGET_NAME} DXC_REQUIRED YES)
+    endif()
+
+    if(DEFINED ENV{ACSMP_GAMEROOT} AND NOT "$ENV{ACSMP_GAMEROOT}" STREQUAL "")
+        set_target_properties(${TARGET_NAME} PROPERTIES
+            VS_DEBUGGER_WORKING_DIRECTORY "$ENV{ACSMP_GAMEROOT}")
+    endif()
+endfunction()
