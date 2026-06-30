@@ -521,7 +521,7 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
         glm::vec4 dstRect = glm::vec4(0, 0, screenSize.x * 0.5f, screenSize.y * 0.5f);
         _renderContext->blit(hdrFbo->getColorTexture(0)->getSRV(0, 1, 0, 1), hdrPreviousFrame->getRTV(), srcRect, dstRect, Sampler::Filter::Linear);
 
-        if (refresh.minimal)
+        if (false && refresh.minimal)
         {
             Sleep(20);       // aim for 15fps in this mode
         }

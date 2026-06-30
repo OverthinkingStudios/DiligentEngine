@@ -47,18 +47,18 @@
 #define FontSize LegacySize
 
 // ImGui 1.92+ removed BeginChildFrame/EndChildFrame; keep Falcor-era calls working.
-namespace ImGui
-{
-inline bool BeginChildFrame(ImGuiID id, const ImVec2& size, ImGuiWindowFlags extra_flags = 0)
-{
-    return BeginChild(id, size, ImGuiChildFlags_FrameStyle, extra_flags);
-}
+//namespace ImGui
+//{
+//inline bool BeginChildFrame(ImGuiID id, const ImVec2& size, ImGuiWindowFlags extra_flags = 0)
+//{
+//    return BeginChild(id, size, ImGuiChildFlags_FrameStyle, extra_flags);
+//}
 
-inline void EndChildFrame()
-{
-    EndChild();
-}
-} // namespace ImGui
+//inline void EndChildFrame()
+//{
+//    EndChild();
+//}
+//} // namespace ImGui
 
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>

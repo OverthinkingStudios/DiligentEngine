@@ -7,15 +7,11 @@ namespace Diligent
 
 void EarthworksFXWindowBase::DrawImGuiControls()
 {
-    bool VSync = m_bVSync;
-    if (ImGui::Checkbox("VSync", &VSync))
-        m_bVSync = VSync;
+    ImGui::Checkbox("VSync", &m_bVSync);
 
-#if PLATFORM_WIN32
     ImGui::SameLine();
     if (ImGui::Button(m_bBorderlessFullscreen ? "Windowed" : "Fullscreen"))
         ToggleFullscreenWindow();
-#endif
 }
 
 void EarthworksFXWindowBase::SetInitialSize(int Width, int Height)
@@ -44,9 +40,9 @@ Win32NativeWindow EarthworksFXWindowBase::GetNativeWindow() const
 
 void EarthworksFXWindowBase::ToggleFullscreenWindow()
 {
-    if (!m_hWnd)
-        return;
+  if (!m_hWnd) return;
 
+#if PLATFORM_WIN32
     m_bBorderlessFullscreen = !m_bBorderlessFullscreen;
 
     if (m_bBorderlessFullscreen)
@@ -86,6 +82,7 @@ void EarthworksFXWindowBase::ToggleFullscreenWindow()
 
         ShowWindow(m_hWnd, SW_NORMAL);
     }
+#endif
 }
 
 void EarthworksFXWindowBase::ExitBorderlessFullscreenIfActive()

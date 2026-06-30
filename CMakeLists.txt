@@ -11,31 +11,6 @@ set(CMAKE_XCODE_SCHEME_MALLOC_GUARD_EDGES YES)
 
 project(DiligentEngine)
 
-# --- Shared Dear ImGui (additions-only fork change) -------------------------
-# DiligentTools, DiligentFX and the EarthworksFX/Earthworks code must all be
-# built against ONE copy of Dear ImGui, otherwise each translation unit set
-# links a different GImGui context: the backend (ImGuiImplDiligent/Win32) ends
-# up rendering/forwarding input to a context that the Earthworks UI code never
-# writes to, so the UI is invisible and ImGui::IsMouseDown() (used by the
-# terrain camera) always reads false. Point DILIGENT_DEAR_IMGUI_PATH at the
-# OTSCommon copy so the engine compiles the same headers/sources the rest of
-# the code includes. Must be set BEFORE add_subdirectory(DiligentTools), where
-# the default (DiligentTools/ThirdParty/imgui) is established.
-# EXPERIMENT: force OTSCommon to build its own imgui/implot libs so we can
-# observe whether a second compiled imgui copy (in addition to Diligent-Imgui's)
-# changes the input behavior. Set BEFORE add_subdirectory(EarthworksFX).
-set(OTSCOMMON_WITH_IMGUI ON CACHE BOOL "Build imgui/implot-dependent UI helpers" FORCE)
-
-set(EARTHWORKS_IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Earthworks/extern/OTSCommon/extern/imgui")
-if(EXISTS "${EARTHWORKS_IMGUI_DIR}/imgui.h")
-    set(DILIGENT_DEAR_IMGUI_PATH "${EARTHWORKS_IMGUI_DIR}"
-        CACHE PATH "Shared Dear ImGui source directory (OTSCommon)" FORCE)
-    message(STATUS "EarthworksFX: using shared Dear ImGui at ${DILIGENT_DEAR_IMGUI_PATH}")
-else()
-    message(WARNING "EarthworksFX: OTSCommon Dear ImGui not found at ${EARTHWORKS_IMGUI_DIR}; "
-                    "falling back to DiligentTools' bundled imgui (UI may be invisible due to a split ImGui context).")
-endif()
-
 option(DILIGENT_BUILD_TOOLS "Build DiligentTools module" ON)
 option(DILIGENT_BUILD_FX "Build DiligentFX module" ON)
 option(DILIGENT_BUILD_SAMPLES "Build DiligentSamples module" ON)
