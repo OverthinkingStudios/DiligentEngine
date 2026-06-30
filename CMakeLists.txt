@@ -75,6 +75,7 @@ endif()
 
 add_subdirectory(EarthworksEditor)
 add_subdirectory(TextureSplitTool)
+add_subdirectory(TerrainGenerator)
 
 if(TARGET EarthworksFXSample)
     set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT EarthworksFXSample)
