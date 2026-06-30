@@ -401,8 +401,6 @@ void EarthworksFXApplicationBase::WindowResize(int width, int height)
 
 void EarthworksFXApplicationBase::Update(double CurrTime, double ElapsedTime)
 {
-    UpdateAppSettings(false);
-
     ++m_NumFramesRendered;
     static const double FPSInterval = 0.5;
     if (CurrTime - m_LastFPSTime > FPSInterval)
