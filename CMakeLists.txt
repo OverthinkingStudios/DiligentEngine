@@ -21,6 +21,11 @@ project(DiligentEngine)
 # OTSCommon copy so the engine compiles the same headers/sources the rest of
 # the code includes. Must be set BEFORE add_subdirectory(DiligentTools), where
 # the default (DiligentTools/ThirdParty/imgui) is established.
+# EXPERIMENT: force OTSCommon to build its own imgui/implot libs so we can
+# observe whether a second compiled imgui copy (in addition to Diligent-Imgui's)
+# changes the input behavior. Set BEFORE add_subdirectory(EarthworksFX).
+set(OTSCOMMON_WITH_IMGUI ON CACHE BOOL "Build imgui/implot-dependent UI helpers" FORCE)
+
 set(EARTHWORKS_IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Earthworks/extern/OTSCommon/extern/imgui")
 if(EXISTS "${EARTHWORKS_IMGUI_DIR}/imgui.h")
     set(DILIGENT_DEAR_IMGUI_PATH "${EARTHWORKS_IMGUI_DIR}"
