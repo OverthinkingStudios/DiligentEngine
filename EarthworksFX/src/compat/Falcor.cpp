@@ -907,8 +907,29 @@ void* Buffer::map(MapType type)
     if (m_pBuffer && g_pContext)
     {
         void* pData = nullptr;
-        const auto mapType = type == MapType::Read ? Diligent::MAP_READ : Diligent::MAP_WRITE;
-        g_pContext->MapBuffer(m_pBuffer, mapType, Diligent::MAP_FLAG_NONE, pData);
+        if (type == MapType::Read)
+        {
+            // Diligent's D3D12/Vulkan backends do NOT auto-synchronize CPU readback:
+            // MapBuffer(MAP_READ) returns immediately with whatever currently sits in
+            // the staging buffer and logs a warning on every call. The Earthworks
+            // readback pattern is copyResource(staging, gpuBuffer) followed straight
+            // away by map(Read) (terrain tile-center + GC_feedback readback in
+            // terrainManager::update / onFrameRender). Without an explicit wait the CPU
+            // reads stale/zero data - corrupting tile bounding-sphere heights, split/
+            // merge and mouse-pick decisions - and floods the log. WaitForIdle()
+            // guarantees the preceding copy has completed (this is the sync method the
+            // Diligent docs mandate for readback, and it matches Falcor's original
+            // blocking map semantics; it also implicitly flushes). MAP_FLAG_DO_NOT_WAIT
+            // then tells Diligent we've synchronized ourselves, silencing the warning.
+            //
+            // NOTE: WaitForIdle() is a full GPU stall. That is acceptable for these
+            // once-per-frame readbacks during bring-up; a fence + N-frame-latency ring
+            // of staging buffers would remove the stall later if it shows up in profiling.
+            g_pContext->WaitForIdle();
+            g_pContext->MapBuffer(m_pBuffer, Diligent::MAP_READ, Diligent::MAP_FLAG_DO_NOT_WAIT, pData);
+            return pData;
+        }
+        g_pContext->MapBuffer(m_pBuffer, Diligent::MAP_WRITE, Diligent::MAP_FLAG_NONE, pData);
         return pData;
     }
     ensureCpuShadow(m_Size);
@@ -1381,7 +1402,12 @@ void RenderContext::clearRtv(Diligent::ITextureView* pRtv, const float4& color)
     }
 }
 
-void RenderContext::copyResource(Texture* pSrc, Texture* pDst)
+// NOTE: matches Falcor's CopyContext::copyResource(pDst, pSrc) semantics - the
+// destination is the FIRST argument. Getting this backwards is fatal on D3D12:
+// a readback (USAGE_STAGING / CPU_ACCESS_READ) buffer lives on a READBACK heap
+// that must stay in COPY_DEST forever, so using it as a copy source transitions
+// it illegally and removes the device (subsequent map() then returns nullptr).
+void RenderContext::copyResource(Texture* pDst, Texture* pSrc)
 {
     if (!m_pContext || !pSrc || !pDst)
         return;
@@ -1396,7 +1422,7 @@ void RenderContext::copyResource(Texture* pSrc, Texture* pDst)
     }
 }
 
-void RenderContext::copyResource(Buffer* pSrc, Buffer* pDst)
+void RenderContext::copyResource(Buffer* pDst, Buffer* pSrc)
 {
     if (!m_pContext || !pSrc || !pDst)
         return;

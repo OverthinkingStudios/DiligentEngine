@@ -65,10 +65,15 @@ private:
     void guiStyle();
 
     // --- debug orientation / movement grid (DiligentEngine bring-up aid) ---
-    void                        renderDebugGrid(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo);
+    // The globe is drawn INTO the HDR FBO with depth-testing so terrain occludes it
+    // (revealing the terrain silhouette); the ground grid is drawn ON TOP afterwards.
+    void                        renderDebugGlobe(RenderContext* _renderContext, const Fbo::SharedPtr& pHdrFbo);
+    void                        renderDebugGroundGrid(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo);
+    void                        setDebugGridConstants(int drawMode);
     bool                        showDebugGrid = true;
     GraphicsProgram::SharedPtr  debugGridProgram;
-    GraphicsState::SharedPtr    debugGridState;
+    GraphicsState::SharedPtr    debugGridState;        // depth disabled (ground grid, on top)
+    GraphicsState::SharedPtr    debugGlobeState;       // depth-tested (globe, occluded by terrain)
     GraphicsVars::SharedPtr     debugGridVars;
     Vao::SharedPtr              debugGridVao;
 

@@ -607,6 +607,9 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         if (m.vegetationEarlyOut)
             ImGui::TextColored(ImVec4(1.f, 0.5f, 0.2f, 1.f),
                                "vegetation mode: terrain tiles NOT drawn\n(renderer returns after skydome + plants)");
+        if (m.updateEarlyOut)
+            ImGui::TextColored(ImVec4(1.f, 0.5f, 0.2f, 1.f),
+                               "this mode skips tile streaming\n(terrain.update() early-returns; no split/LOD)\nuse ecotope / terrafector / roads to stream terrain");
 
         int curMode = m.terrainMode >= 0 ? m.terrainMode : 0;
         const char* modeNames[] = {"vegetation", "ecotope", "terrafector", "roads",
@@ -633,8 +636,30 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
 
         ImGui::SeparatorText("Post / overlay");
         ImGui::Checkbox("tonemapper", &t.tonemapper);
+        {
+            const char* views[] = { "normal (ACES+LUT)", "raw HDR", "solid test colour" };
+            ImGui::SetNextItemWidth(200);
+            ImGui::Combo("tonemap view", &t.tonemapperView, views, IM_ARRAYSIZE(views));
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The HDR FBO only reaches the screen through the tonemapper.\n"
+                                  "'raw HDR' shows whether anything rendered into it;\n"
+                                  "'solid test colour' shows whether the pass writes the swapchain at all.");
+        }
         ImGui::Checkbox("overlay (thumbnail blit)", &t.overlay);
-        ImGui::Checkbox("debug grid", &t.debugGrid);
+
+        ImGui::SeparatorText("Debug aids");
+        ImGui::Checkbox("globe (occluded by terrain)", &t.debugGlobe);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Camera-centred lat/lon globe drawn into the HDR buffer with\ndepth testing: terrain occludes it, so the terrain silhouette\nis visible even when the terrain shades black.");
+        ImGui::Checkbox("ground grid (area boundary + 1km)", &t.debugGroundGrid);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("World-anchored grid on the ground plane (y=0) covering the\nfull 40x40 km terrain area: bright outer boundary, 1 km grid,\nhighlighted world X/Z axes. Drawn on top of everything.");
 
         ImGui::SeparatorText("ImGui");
         ImGui::Checkbox("Earthworks editor GUI", &t.earthworksGui);
@@ -663,12 +688,24 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         ImGui::Text("splines      %u", m.splineDraws);
         ImGui::Text("tonemapper   %u", m.tonemapperDraws);
         ImGui::Text("overlay      %u", m.overlayDraws);
+        ImGui::Text("debugGlobe   %u", m.debugGlobeDraws);
         ImGui::Text("debugGrid    %u", m.debugGridDraws);
 
         ImGui::SeparatorText("Scene counts");
         ImGui::Text("tiles used / free : %u / %u", m.tilesUsed, m.tilesFree);
         ImGui::Text("ribbons loaded    : %u", m.ribbonsLoaded);
         ImGui::Text("splines static/dyn: %u / %u", m.staticSplines, m.dynamicSplines);
+
+        ImGui::SeparatorText("Tile split");
+        ImGui::TextColored(m.cameraMainInUse ? ImVec4(0.5f, 1.f, 0.5f, 1.f) : ImVec4(1.f, 0.4f, 0.2f, 1.f),
+                           "main camera in use: %s", m.cameraMainInUse ? "yes" : "NO");
+        ImGui::TextColored(m.splitAnyInFrust ? ImVec4(0.5f, 1.f, 0.5f, 1.f) : ImVec4(1.f, 0.4f, 0.2f, 1.f),
+                           "any tile in frustum: %s", m.splitAnyInFrust ? "yes" : "NO");
+        ImGui::Text("max lod_Pix       : %.1f  (split needs > 150)", m.splitMaxLodPix);
+        ImGui::Text("split candidates  : %u", m.splitCandidates);
+        ImGui::Text("splits performed  : %u", m.splitsPerformed);
+        ImGui::Text("blocked (no data) : %u", m.splitBlockedData);
+        ImGui::Text("blocked (<8 free) : %s", m.splitBlockedFree ? "yes" : "no");
     }
     ImGui::End();
 }

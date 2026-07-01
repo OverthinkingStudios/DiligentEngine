@@ -2250,7 +2250,7 @@ void terrainManager::onGuiRender(Gui* _gui, int _header, float2 _screen, fogAtmo
 
     onGuiRender_Main(_gui, _header, _screen - float2(300, _header));    // FIXME reight panel currently hardcodedat 300 pixels BAD
 
-    if (debug)
+    if (ew::gDebug.toggles.debugEarthworksInfoGui && debug)
     {
         Gui::Window debuginfo(_gui, "##debuginfo", { 200, 200 }, { 100, 100 });
         {
@@ -2490,7 +2490,7 @@ void jp2Dir::cache0(std::string _path)
 //std::thread t1(imageDirectory.cacheHash(), hash);
 void jp2Dir::cacheHash(uint32_t hash)
 {
-    LOG_LINE(1, "jp2Dir::cacheHash");
+    //LOG_LINE(1, "jp2Dir::cacheHash");
     if (hash == 0) return;  // because that is all pre loaded
 
     std::map<uint32_t, uint>::iterator file_it = fileHashmap.find(hash);
@@ -3751,7 +3751,8 @@ bool terrainManager::testForSplit(quadtree_tile* _tile)
             float m_halfAngle_to_Pixels = cameraViews[i].resolution * fovscale / 4.0f;
             float lod_Pix = _tile->size / distance * m_halfAngle_to_Pixels;
 
-
+            if (lod_Pix > ew::gDebug.live.splitMaxLodPix) ew::gDebug.live.splitMaxLodPix = lod_Pix;
+            if (inFrust) ew::gDebug.live.splitAnyInFrust = true;
 
             if (lod_Pix > 150 && inFrust)
             {
@@ -3766,6 +3767,7 @@ bool terrainManager::testForSplit(quadtree_tile* _tile)
 
     if (_tile->main_ShouldSplit && !_tile->child[0]) {
         _tile->forSplit = true;
+        ew::gDebug.live.splitCandidates++;
         return true;
     }
 
@@ -3954,6 +3956,7 @@ bool terrainManager::update(RenderContext* _renderContext)
         (terrainMode == _terrainMode::terrainBuilder) ||
         (terrainMode == _terrainMode::textureTool))
     {
+        ew::gDebug.live.updateEarlyOut = true;
         fullResetDoNotRender = false;
         return false;
     }
@@ -4154,7 +4157,7 @@ bool terrainManager::hashAndCache(quadtree_tile* pTile)
 {
     if (hashCount == 2)
     {
-        LOG_LINE(1, "elevationCache.set 1");
+        //LOG_LINE(1, "elevationCache.set 1");
         textureCacheElement map;
         map.texture = Texture::create2D(1024, 1024, Falcor::ResourceFormat::R16Unorm, 1, 1, jphData.data(), Resource::BindFlags::ShaderResource);;
         elevationCache.set(cacheHash, map);
@@ -4171,7 +4174,7 @@ bool terrainManager::hashAndCache(quadtree_tile* pTile)
     if (pTile->elevationHash > 0)
     {
         textureCacheElement map;
-        LOG_LINE(1, "elevationCache.get");
+        //LOG_LINE(1, "elevationCache.get");
         if (!elevationCache.get(pTile->elevationHash, map))
         {
             if (hashCount == 0)
@@ -4214,7 +4217,7 @@ void terrainManager::hashAndCacheImages_Thread(quadtree_tile* pTile)
     ojph::codestream codestream;
     ojph::mem_infile j2c_file;
     //j2c_file.open(imageTileHashmap[pTile->imageHash].filename.c_str());
-    LOG_LINE(1, "imageDirectory 1");
+    //LOG_LINE(1, "imageDirectory 1");
     std::map<uint32_t, uint2>::iterator itH = imageDirectory.tileHash.find(pTile->imageHash);
     if (itH == imageDirectory.tileHash.end()) {
         spdlog::error("FAILED tileHash.find");
@@ -4288,7 +4291,7 @@ bool terrainManager::hashAndCacheImages(quadtree_tile* pTile)
 
     if (hashCountImage == 2)
     {
-        LOG_LINE(1, "imageCache.set 1");
+        //LOG_LINE(1, "imageCache.set 1");
         textureCacheElement map;
         map.texture = Texture::create2D(1024, 1024, Falcor::ResourceFormat::RGBA8UnormSrgb, 1, 1, jphImageData.data(), Resource::BindFlags::ShaderResource);;
         //map.texture = Texture::create2D(1024, 1024, Falcor::ResourceFormat::RGBA8UnormSrgb, 1, 1, nullptr, Resource::BindFlags::ShaderResource);;
@@ -4317,7 +4320,7 @@ bool terrainManager::hashAndCacheImages(quadtree_tile* pTile)
         //if (pTile->imageHash > 0)
     {
         textureCacheElement map;
-        LOG_LINE(1, "imageCache.get");
+        //LOG_LINE(1, "imageCache.get");
         if (!imageCache.get(pTile->imageHash, map))     // so we dont have teh image on GPU
         {
             if (hashCountImage == 0)
@@ -4357,8 +4360,10 @@ void terrainManager::setChild(quadtree_tile* pTile, int y, int x)
 
 void terrainManager::splitOne(RenderContext* _renderContext)
 {
+    ew::gDebug.live.cameraMainInUse = cameraViews[CameraType_Main_Center].bUse;
+
     /* Bloody hell, pick the best one to do*/
-    if (m_free.size() < 8) return;
+    if (m_free.size() < 8) { ew::gDebug.live.splitBlockedFree = true; return; }
 
 
     // FIXME PICK A BETTER ONE HERE
@@ -4378,10 +4383,15 @@ void terrainManager::splitOne(RenderContext* _renderContext)
                 dataReady &= hashAndCacheImages(tile);
             }
 
+            if (!dataReady)
+                ew::gDebug.live.splitBlockedData++;
+
             if (dataReady)
             {
 
                 FALCOR_PROFILE("split");
+
+                ew::gDebug.live.splitsPerformed++;
 
                 setChild(tile, 0, 0);
                 setChild(tile, 0, 1);
@@ -5506,19 +5516,25 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         }
     }
 
-    if (debug)
+    
+    if (ew::gDebug.toggles.debugEarthworksShader && debug)
     {
         glm::vec4 srcRect = glm::vec4(0, 0, tile_numPixels, tile_numPixels);
         glm::vec4 dstRect;
 
+        // _fbo may be the swap-chain proxy (pTargetFbo) whose m_ColorTextures are all
+        // empty; getColorTexture(0) would be null. getRenderTargetView(0) resolves the
+        // back-buffer RTV for the proxy and the color-0 RTV for a normal FBO.
+        auto* dstRtv = _fbo->getRenderTargetView(0);
+
         for (int i = 0; i < 8; i++)
         {
             dstRect = glm::vec4(250 + i * 150, 60, 250 + i * 150 + 128, 60 + 128);
-            _renderContext->blit(split.tileFbo->getColorTexture(i)->getSRV(0, 1, 0, 1), _fbo->getColorTexture(0)->getRTV(), srcRect, dstRect, Sampler::Filter::Linear);
+            _renderContext->blit(split.tileFbo->getColorTexture(i)->getSRV(0, 1, 0, 1), dstRtv, srcRect, dstRect, Sampler::Filter::Linear);
         }
 
         dstRect = glm::vec4(250 + 8 * 150, 60, 250 + 8 * 150 + tile_numPixels * 2, 60 + tile_numPixels * 2);
-        _renderContext->blit(split.debug_texture->getSRV(0, 1, 0, 1), _fbo->getColorTexture(0)->getRTV(), srcRect, dstRect, Sampler::Filter::Point);
+        _renderContext->blit(split.debug_texture->getSRV(0, 1, 0, 1), dstRtv, srcRect, dstRect, Sampler::Filter::Point);
 
 
         //dstRect = vec4(512, 612, 1024, 1124);
@@ -5735,7 +5751,7 @@ void terrainManager::bake_Setup(float _size, uint _lod, uint _y, uint _x, Render
                 }
                 codestream.close();
 
-                LOG_LINE(1, "elevationCache.set 2");
+                //LOG_LINE(1, "elevationCache.set 2");
                 map.texture = Texture::create2D(1024, 1024, Falcor::ResourceFormat::R16Unorm, 1, 1, data.data(), Resource::BindFlags::ShaderResource);
                 elevationCache.set(hashParent, map);
             }

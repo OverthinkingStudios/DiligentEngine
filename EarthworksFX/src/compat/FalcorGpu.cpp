@@ -739,6 +739,40 @@ GfxPipelineCacheKey MakeGfxPipelineKey(const GraphicsProgram* pProgram, TEXTURE_
     return key;
 }
 
+// By default Diligent allocates a DYNAMIC-offset Vulkan descriptor
+// (VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC) for every structured/storage buffer, so that a
+// USAGE_DYNAMIC buffer could be bound with a per-frame offset. The per-set limit for those
+// (maxDescriptorSetStorageBuffersDynamic) is tiny - typically 8 (AMD) to 16 (NVIDIA). Several
+// terrain shaders blow straight past it: compute_tileBuildLookup.hlsl binds 60 RWStructuredBuffers
+// (18x3 per-view lookup tables + 6 work buffers) and the terrain render shaders read the same 18
+// lookup tables as StructuredBuffer SRVs. PipelineLayoutVk::Create then fails with
+// "number of dynamic storage buffers (60) exceeds device limit (16)".
+//
+// The dynamic-ness is NOT controlled by the STATIC/MUTABLE/DYNAMIC variable type - it is
+// controlled by SHADER_VARIABLE_FLAG_NO_DYNAMIC_BUFFERS (which maps to
+// PIPELINE_RESOURCE_FLAG_NO_DYNAMIC_BUFFERS in the implicit signature). Setting that flag makes
+// the buffer use the regular VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, whose per-set limit is in the
+// hundreds of thousands. We keep the variable type DYNAMIC (unchanged from the default) so the
+// cached-SRB-re-committed-per-draw pattern still gets a fresh per-commit descriptor allocation.
+//
+// The flag's only contract is that a USAGE_DYNAMIC buffer must never be bound here. That holds:
+// all of these structured SRVs/UAVs are persistent GPU-default pools (tile / lookup / feedback /
+// draw-arg buffers written by compute); the only USAGE_DYNAMIC resources are constant buffers,
+// which are SHADER_RESOURCE_TYPE_CONSTANT_BUFFER and therefore skipped below.
+static std::vector<ShaderResourceVariableDesc>
+MakeStorageBuffersNonDynamic(const std::vector<ShaderResourceInfo>& resources)
+{
+    std::vector<ShaderResourceVariableDesc> vars;
+    vars.reserve(resources.size());
+    for (const auto& r : resources)
+    {
+        if (r.Type == SHADER_RESOURCE_TYPE_BUFFER_SRV || r.Type == SHADER_RESOURCE_TYPE_BUFFER_UAV)
+            vars.push_back({r.Stages, r.Name.c_str(), SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC,
+                            SHADER_VARIABLE_FLAG_NO_DYNAMIC_BUFFERS});
+    }
+    return vars;
+}
+
 GraphicsPipelineCacheEntry* GetOrCreateGraphicsPSO(const GraphicsProgram* pProgram, const GfxProgramGpu& gpu,
                                                    const GraphicsState* pState, Vao::Topology topology,
                                                    TEXTURE_FORMAT rtvFmt, TEXTURE_FORMAT dsvFmt)
@@ -762,6 +796,15 @@ GraphicsPipelineCacheEntry* GetOrCreateGraphicsPSO(const GraphicsProgram* pProgr
     // draws per frame, exhausted the deferred-release queue -> std::bad_alloc ->
     // device hung on D3D12).
     psoCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC;
+    // ...but flag structured buffers NO_DYNAMIC_BUFFERS so they use non-dynamic Vulkan
+    // descriptors, dodging the tiny maxDescriptorSetStorageBuffersDynamic limit
+    // (see MakeStorageBuffersNonDynamic).
+    const auto nonDynBufferVars = MakeStorageBuffersNonDynamic(gpu.Resources);
+    if (!nonDynBufferVars.empty())
+    {
+        psoCI.PSODesc.ResourceLayout.Variables    = nonDynBufferVars.data();
+        psoCI.PSODesc.ResourceLayout.NumVariables = static_cast<Uint32>(nonDynBufferVars.size());
+    }
 
     auto& gp = psoCI.GraphicsPipeline;
     gp.NumRenderTargets  = 1;
@@ -808,6 +851,16 @@ ComputePipelineCacheEntry* GetOrCreateComputePSO(const ComputeProgram* pProgram,
     // DYNAMIC so the single cached SRB can be safely re-committed per dispatch
     // (see GetOrCreateGraphicsPSO for the rationale).
     psoCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC;
+    // ...but flag structured buffers NO_DYNAMIC_BUFFERS so they use non-dynamic Vulkan
+    // descriptors. This is what makes compute_tileBuildLookup.hlsl (60 RWStructuredBuffers)
+    // creatable at all - otherwise it exceeds maxDescriptorSetStorageBuffersDynamic (16)
+    // (see MakeStorageBuffersNonDynamic).
+    const auto nonDynBufferVars = MakeStorageBuffersNonDynamic(gpu.Resources);
+    if (!nonDynBufferVars.empty())
+    {
+        psoCI.PSODesc.ResourceLayout.Variables    = nonDynBufferVars.data();
+        psoCI.PSODesc.ResourceLayout.NumVariables = static_cast<Uint32>(nonDynBufferVars.size());
+    }
     psoCI.pCS                  = gpu.CS;
 
     RefCntAutoPtr<IPipelineState> pPSO;
@@ -817,14 +870,23 @@ ComputePipelineCacheEntry* GetOrCreateComputePSO(const ComputeProgram* pProgram,
     }
     catch (const std::exception& ex)
     {
-        FatalGpuError("Failed to create compute PSO '" + gpu.DebugName + "': " + ex.what());
+        spdlog::error("EarthworksFX: failed to create compute PSO '{}': {}", gpu.DebugName, ex.what());
     }
+
+    // NOTE: intentionally non-fatal during bring-up. A compute shader that only
+    // gets dispatched in certain terrain modes can fail PSO creation when the
+    // mode is first entered; making this fatal hard-crashes the app on mode
+    // switch and prevents any further diagnosis. Instead we log the offending
+    // shader name, cache an empty entry (so we complain exactly once), and let
+    // Dispatch()/DispatchIndirect() skip it (they already guard on !PSO). The
+    // pass simply does not run - which the metrics panel will reflect.
     if (!pPSO)
-        FatalGpuError("Failed to create compute PSO '" + gpu.DebugName + "'");
+        spdlog::error("EarthworksFX: compute PSO '{}' unavailable - its dispatches are skipped this run", gpu.DebugName);
 
     ComputePipelineCacheEntry entry;
     entry.PSO = pPSO;
-    pPSO->CreateShaderResourceBinding(&entry.SRB, true);
+    if (pPSO)
+        pPSO->CreateShaderResourceBinding(&entry.SRB, true);
 
     auto res = g_ComputePSOCache.emplace(pProgram, std::move(entry));
     return &res.first->second;
@@ -1222,16 +1284,29 @@ void DrawIndirect(IDeviceContext* pCtx, GraphicsState* pState, GraphicsVars* pVa
     pCtx->SetPipelineState(pPSO);
     pCtx->CommitShaderResources(pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-    DrawIndexedIndirectAttribs drawAttrs;
-    drawAttrs.pAttribsBuffer = pArgBuffer->GetDiligentBuffer();
-    drawAttrs.DrawArgsOffset = argBufferOffset;
-    drawAttrs.DrawCount      = numArgs;
+    // Earthworks' indirect draws are NON-indexed. The argument buffer holds
+    // t_DrawArguments records {vertexCountPerInstance, instanceCount,
+    // startVertexLocation, startInstanceLocation} - the 16-byte
+    // D3D12_DRAW_ARGUMENTS layout (see groundcover_defines.hlsli and the
+    // _startArg*16 stride in pixelShader::renderIndirect) - and the vertex
+    // shaders synthesize all geometry from SV_VertexID (render_Tiles.hlsl,
+    // the render_tile_sprite.hlsl point->quad GS, vegetation, ...). This must
+    // map to DrawIndirect; DrawIndexedIndirect reads a 20-byte indexed layout
+    // and requires a bound index buffer, so it misreads the args and draws
+    // nothing (terrain/sprites/vegetation silently disappear).
+    DrawIndirectAttribs drawAttrs;
+    drawAttrs.pAttribsBuffer                   = pArgBuffer->GetDiligentBuffer();
+    drawAttrs.DrawArgsOffset                   = argBufferOffset;
+    drawAttrs.DrawCount                        = numArgs;
+    drawAttrs.DrawArgsStride                   = sizeof(uint32_t) * 4;
+    drawAttrs.AttribsBufferStateTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
     if (pCountBuffer)
     {
-        drawAttrs.pCounterBuffer = pCountBuffer->GetDiligentBuffer();
-        drawAttrs.CounterOffset  = countBufferOffset;
+        drawAttrs.pCounterBuffer                   = pCountBuffer->GetDiligentBuffer();
+        drawAttrs.CounterOffset                    = countBufferOffset;
+        drawAttrs.CounterBufferStateTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
     }
-    pCtx->DrawIndexedIndirect(drawAttrs);
+    pCtx->DrawIndirect(drawAttrs);
 }
 
 void Dispatch(IDeviceContext* pCtx, ComputeState* pState, ComputeVars* pVars, const uint3& groups)

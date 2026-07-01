@@ -59,6 +59,12 @@ struct DebugToggles
     bool atmosphere    = true;   // sun-in-atmosphere + volumetric fog compute
     bool terrainUpdate = true;   // terrain.update(): tile stream / clip / lod compute
 
+    // Sync the render camera into the terrain manager each frame (terrain.setCamera).
+    // When false the terrain keeps its last camera, so its frustum / tile visibility
+    // stops following where we look - a way to test whether the terrain frustum is
+    // pointing somewhere other than the render view.
+    bool syncCamera = true;
+
     // --- terrain.onFrameRender passes ----------------------------------
     bool skydome      = true;
     bool terrainTiles = true;    // the indirect terrain-tile draw
@@ -69,8 +75,19 @@ struct DebugToggles
 
     // --- Earthworks_4.onFrameRender post passes ------------------------
     bool tonemapper = true;
-    bool overlay    = true;
-    bool debugGrid  = true;
+    // Tonemapper output mode (compute_tonemapper.hlsl). Because everything that
+    // renders into the HDR FBO reaches the screen ONLY through this pass, it is the
+    // prime suspect when the HDR content is black. Modes:
+    //   0 = normal (ACES + colour cube)
+    //   1 = raw HDR (saturate(hdr), no ACES/LUT) -> is there ANY content in hdrFbo?
+    //   2 = solid test colour (ignores hdr)       -> does the pass reach the swapchain?
+    int  tonemapperView = 0;
+    bool overlay        = true;
+    // Debug orientation aids (see debugGrid.hlsl / Earthworks_4::renderDebugGlobe):
+    bool debugGlobe      = true;  // lat/lon globe, depth-tested so terrain occludes it
+    bool debugGroundGrid = true;  // world ground grid (area boundary + 1 km grid), on top
+    bool debugEarthworksShader = false;
+    bool debugEarthworksInfoGui = false;
 
     // --- ImGui ---------------------------------------------------------
     // The Earthworks editor GUI (terrain/vegetation editor windows) drawn by
@@ -89,6 +106,7 @@ struct DebugMetrics
 {
     int  terrainMode        = -1;
     bool vegetationEarlyOut = false; // vegetation mode returns before terrain tiles
+    bool updateEarlyOut     = false; // terrain.update() skipped tile streaming for this mode
 
     // Per-pass draw submissions counted this frame.
     uint32_t skydomeDraws     = 0;
@@ -99,6 +117,7 @@ struct DebugMetrics
     uint32_t splineDraws      = 0;
     uint32_t tonemapperDraws  = 0;
     uint32_t overlayDraws     = 0;
+    uint32_t debugGlobeDraws  = 0;
     uint32_t debugGridDraws   = 0;
 
     // CPU-side scene counts (cheap, no GPU readback).
@@ -108,11 +127,30 @@ struct DebugMetrics
     uint32_t staticSplines  = 0;
     uint32_t dynamicSplines = 0;
 
+    // --- tile-split diagnostics ----------------------------------------
+    // Why the quadtree does (or does not) refine past the root tile. The split
+    // test (terrainManager::testForSplit) needs a tile to be BOTH in-frustum and
+    // large enough on screen (lod_Pix). Both depend on the ported camera matrices,
+    // so a matrix-convention mismatch shows up as "candidates 0 / inFrust false".
+    bool     cameraMainInUse = false; // cameraViews[CameraType_Main_Center].bUse
+    float    splitMaxLodPix  = 0.f;   // largest lod_Pix seen this frame (want > 150)
+    bool     splitAnyInFrust = false; // any tile passed the frustum test
+    uint32_t splitCandidates = 0;     // tiles that requested a split (forSplit set)
+    uint32_t splitsPerformed = 0;     // splits actually executed this frame
+    uint32_t splitBlockedData = 0;    // forSplit tile skipped: source data not ready
+    bool     splitBlockedFree = false;// splitOne bailed early: fewer than 8 free tiles
+
     void resetCounters()
     {
         skydomeDraws = terrainTileDraws = billboardDraws = plantDraws = 0;
-        ribbonDraws = splineDraws = tonemapperDraws = overlayDraws = debugGridDraws = 0;
+        ribbonDraws = splineDraws = tonemapperDraws = overlayDraws = 0;
+        debugGlobeDraws = debugGridDraws = 0;
         vegetationEarlyOut = false;
+        updateEarlyOut = false;
+
+        cameraMainInUse = splitAnyInFrust = splitBlockedFree = false;
+        splitMaxLodPix  = 0.f;
+        splitCandidates = splitsPerformed = splitBlockedData = 0;
     }
 };
 

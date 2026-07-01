@@ -1,6 +1,7 @@
 #include "EarthworksFXWindowBase.hpp"
 
 #include "imgui.h"
+#include "EarthworksDebug.h"
 
 namespace Diligent
 {
@@ -15,6 +16,12 @@ void EarthworksFXWindowBase::DrawImGuiControls(bool ShowFirstPersonCamera)
 
     if (ShowFirstPersonCamera)
         ImGui::Checkbox("First-person camera (WASD + RMB look)", &m_bFirstPersonCamera);
+
+    ImGui::Checkbox("Sync camera into terrain", &ew::gDebug.toggles.syncCamera);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("When off, the terrain manager keeps its last camera, so its\nfrustum / tile visibility stops following the view. Use it to\ntest whether the terrain frustum points where we are looking.");
 }
 
 void EarthworksFXWindowBase::SetInitialSize(int Width, int Height)

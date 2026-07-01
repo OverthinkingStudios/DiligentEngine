@@ -1,6 +1,7 @@
 #include "EarthworksFXSample.hpp"
 
 #include "imgui.h"
+#include "EarthworksDebug.h"
 
 namespace Diligent
 {
@@ -32,6 +33,8 @@ void EarthworksFXSample::DrawDebugUI()
     {
         Earthworks_4& earthworks = GetEarthworks();
         ImGui::Checkbox("Debug grid (orientation + movement)", &earthworks.debugGridEnabled());
+        ImGui::Checkbox("Earthworks debug 2d shaders", &ew::gDebug.toggles.debugEarthworksShader);
+        ImGui::Checkbox("Earthworks debug gui", &ew::gDebug.toggles.debugEarthworksInfoGui);
 
         if (const auto& cam = earthworks.getCamera())
         {

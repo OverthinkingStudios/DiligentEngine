@@ -37,7 +37,7 @@
 #define MAX_LIGHTS_PER_TILE 64
 #define MAX_LIGHTS_PER_TILE_ARRAY 32
 
-//#define COMPUTE_DEBUG_OUTPUT
+#define COMPUTE_DEBUG_OUTPUT
 
 struct t_DrawArguments
 {

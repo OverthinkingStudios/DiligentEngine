@@ -989,8 +989,8 @@ public:
     void clearTexture(Texture* tx);
     void blit(Diligent::ITextureView* pSrc, Diligent::ITextureView* pDst, const glm::vec4& srcRect, const glm::vec4& dstRect, Sampler::Filter filter, BlendState::SharedPtr blend = nullptr);
     void updateTextureData(Texture* pTexture, const void* pData);
-    void copyResource(Texture* pSrc, Texture* pDst);
-    void copyResource(Buffer* pSrc, Buffer* pDst);
+    void copyResource(Texture* pDst, Texture* pSrc);
+    void copyResource(Buffer* pDst, Buffer* pSrc);
     void copySubresource(Texture* pDst, uint32_t dstSubresource, Texture* pSrc, uint32_t srcSubresource);
     void resourceBarrier(Texture* pTexture, Resource::State state);
     void flush();

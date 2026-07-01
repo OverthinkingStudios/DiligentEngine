@@ -339,6 +339,11 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
     aboutTex = Texture::createFromFile("earthworks_4/about.dds", false, true);
 
     postProcess.tonemapper.load("Samples/Earthworks_4/hlsl/compute_tonemapper.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
+    // pixelShader::load always attaches an index buffer, which forces the compat's
+    // DrawIndexed path - that only ever rasterized one triangle for this full-screen
+    // pass (half the screen). Swap in a null-IB VAO so the tonemapper uses the same
+    // non-indexed draw path the debug grid uses correctly; vsMain builds a 6-vertex quad.
+    postProcess.tonemapper.State()->setVao(Vao::create(Vao::Topology::TriangleList, VertexLayout::create(), Vao::BufferVec{}, nullptr, ResourceFormat::R16Uint));
     //loadColorCube("F:/terrains/colorcubes/K_TONE Vintage_KODACHROME.cube");
     loadColorCube(terrain.settings.dirResource + "/colorcubes/ColdChrome.cube");
 
@@ -354,14 +359,28 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
         debugGridState = GraphicsState::create();
         debugGridState->setProgram(debugGridProgram);
 
+        RasterizerState::Desc gridRsDesc;
+        gridRsDesc.setCullMode(RasterizerState::CullMode::None);
+        RasterizerState::SharedPtr gridRs = RasterizerState::create(gridRsDesc);
+
+        // Ground grid: no depth test, drawn on top of the tonemapped image so the
+        // world layout stays readable regardless of what is in front of it.
         DepthStencilState::Desc gridDsDesc;
         gridDsDesc.setDepthEnabled(false);
         gridDsDesc.setDepthWriteMask(false);
         debugGridState->setDepthStencilState(DepthStencilState::create(gridDsDesc));
+        debugGridState->setRasterizerState(gridRs);
 
-        RasterizerState::Desc gridRsDesc;
-        gridRsDesc.setCullMode(RasterizerState::CullMode::None);
-        debugGridState->setRasterizerState(RasterizerState::create(gridRsDesc));
+        // Globe: depth-tested (LessEqual) but does NOT write depth, so terrain (which
+        // wrote depth to the HDR FBO) occludes it and its silhouette becomes visible.
+        debugGlobeState = GraphicsState::create();
+        debugGlobeState->setProgram(debugGridProgram);
+        DepthStencilState::Desc globeDsDesc;
+        globeDsDesc.setDepthEnabled(true);
+        globeDsDesc.setDepthWriteMask(false);
+        globeDsDesc.setDepthFunc(DepthStencilState::Func::LessEqual);
+        debugGlobeState->setDepthStencilState(DepthStencilState::create(globeDsDesc));
+        debugGlobeState->setRasterizerState(gridRs);
 
         debugGridVars = GraphicsVars::create(debugGridProgram->getActiveVersion()->getReflector());
 
@@ -371,6 +390,7 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
         Vao::BufferVec          gridEmptyVbo;
         debugGridVao = Vao::create(Vao::Topology::LineList, gridLayout, gridEmptyVbo, nullptr, ResourceFormat::R16Uint);
         debugGridState->setVao(debugGridVao);
+        debugGlobeState->setVao(debugGridVao);
     }
 
 
@@ -465,7 +485,8 @@ void Earthworks_4::onFrameUpdate(RenderContext* _renderContext)
 
         terrain.updateShaderConstants(hdrPreviousFrame, lightBuffer);
 
-        terrain.setCamera(CameraType_Main_Center, toGLM(camera->getViewMatrix()), toGLM(camera->getProjMatrix()), camera->getPosition(), true, 1920);
+        if (ew::gDebug.toggles.syncCamera)
+            terrain.setCamera(CameraType_Main_Center, toGLM(camera->getViewMatrix()), toGLM(camera->getProjMatrix()), camera->getPosition(), true, 1920);
 
         if (ew::gDebug.toggles.terrainUpdate)
             terrain.update(_renderContext);
@@ -515,7 +536,13 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
             _renderContext->clearFbo(hdrFbo.get(), clearColor, 1.0f, 0, FboAttachmentType::All);
         }
 
-        terrain.onFrameRender(_renderContext, hdrFbo, camera, viewport3d);
+        terrain.onFrameRender(_renderContext, pTargetFbo, camera, viewport3d);
+
+        // Orientation globe: drawn INTO the HDR FBO (before tonemapping) with depth
+        // testing so terrain occludes it. Where terrain exists the globe lines vanish,
+        // so the terrain silhouette is visible even if the terrain shades black.
+        if (showDebugGrid && ew::gDebug.toggles.debugGlobe)
+            renderDebugGlobe(_renderContext, hdrFbo);
 
         if (ew::gDebug.toggles.tonemapper)
         {
@@ -523,9 +550,13 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
             postProcess.tonemapper.Vars()->setTexture("hdr", hdrFbo->getColorTexture(0));
             postProcess.tonemapper.Vars()->setTexture("cube", postProcess.colorCube);
             postProcess.tonemapper.Vars()->setSampler("linearSampler", terrain.sampler_Clamp);
+            postProcess.tonemapper.Vars()["gConstants"]["debugView"] = ew::gDebug.toggles.tonemapperView;
             postProcess.tonemapper.State()->setFbo(pTargetFbo);
             postProcess.tonemapper.State()->setRasterizerState(graphicsState->getRasterizerState());
-            postProcess.tonemapper.drawInstanced(_renderContext, 3, 1);
+            // 6 indices -> the two triangles of a full-screen quad (see vsMain). Drawing
+            // only 3 gave a half-screen triangle because the shared index buffer forces an
+            // indexed draw and the oversized-triangle trick clips badly on this backend.
+            postProcess.tonemapper.drawInstanced(_renderContext, 6, 1);
             ew::gDebug.live.tonemapperDraws++;
         }
 
@@ -535,8 +566,10 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
             ew::gDebug.live.overlayDraws++;
         }
 
-        if (ew::gDebug.toggles.debugGrid)
-            renderDebugGrid(_renderContext, pTargetFbo);
+        // World ground grid: drawn ON TOP of the final image (no depth test) so the
+        // terrain area boundary / 1 km grid stays readable at all times.
+        if (showDebugGrid && ew::gDebug.toggles.debugGroundGrid)
+            renderDebugGroundGrid(_renderContext, pTargetFbo);
 
         glm::vec4 srcRect = glm::vec4(0, 0, screenSize.x, screenSize.y);
         glm::vec4 dstRect = glm::vec4(0, 0, screenSize.x * 0.5f, screenSize.y * 0.5f);
@@ -553,38 +586,65 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
 
 
 
-void Earthworks_4::renderDebugGrid(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo)
+// Line counts / world extents shared by the globe and ground-grid draws.
+// The globe values must match the ranges in debugGrid.hlsl.
+namespace {
+    constexpr int   kLatLines  = 17;      // latitudes  -80..+80 in 10 deg steps
+    constexpr int   kLonLines  = 24;      // longitudes every 15 deg
+    constexpr int   kSeg       = 96;      // segments per circle
+    constexpr float kGlobeRad  = 3000.0f; // globe radius around the camera (m)
+
+    // Total terrain footprint: 40 km x 40 km centred on the origin (see jp2Map::set,
+    // wSize = 40000, wOffset = -20000). Draw a 1 km grid across it.
+    constexpr float kAreaMin     = -20000.0f;
+    constexpr float kAreaMax      =  20000.0f;
+    constexpr float kKmSpacing   =  1000.0f;
+    constexpr int   kKmLines     = 41;    // (40000 / 1000) + 1, edge-inclusive
+    constexpr float kGroundY     = 0.0f;  // ground-plane height (0 = sea level)
+}
+
+void Earthworks_4::setDebugGridConstants(int drawMode)
 {
-    if (!showDebugGrid || !debugGridProgram || !debugGridState || !debugGridVars || !camera)
+    // Mirror the terrain/skydome convention exactly (see render_triangles.hlsl).
+    const float4x4 viewproj = camera->getViewProjMatrix().getTranspose();
+    debugGridVars["gConstantBuffer"]["viewproj"]    = viewproj;
+    debugGridVars["gConstantBuffer"]["eye"]         = camera->getPosition();
+    debugGridVars["gConstantBuffer"]["globeRadius"] = kGlobeRad;
+    debugGridVars["gConstantBuffer"]["areaMin"]     = float3(kAreaMin, kGroundY, kAreaMin);
+    debugGridVars["gConstantBuffer"]["areaMax"]     = float3(kAreaMax, kGroundY, kAreaMax);
+    debugGridVars["gConstantBuffer"]["kmSpacing"]   = kKmSpacing;
+    debugGridVars["gConstantBuffer"]["drawMode"]    = drawMode;
+    debugGridVars["gConstantBuffer"]["latLines"]    = kLatLines;
+    debugGridVars["gConstantBuffer"]["lonLines"]    = kLonLines;
+    debugGridVars["gConstantBuffer"]["segments"]    = kSeg;
+    debugGridVars["gConstantBuffer"]["kmLines"]     = kKmLines;
+}
+
+void Earthworks_4::renderDebugGlobe(RenderContext* _renderContext, const Fbo::SharedPtr& pHdrFbo)
+{
+    if (!debugGridProgram || !debugGlobeState || !debugGridVars || !camera)
         return;
 
-    // Single source of truth for the line counts; must match the ranges in debugGrid.hlsl.
-    const int kLatLines    = 17;   // latitudes  -80..+80 in 10 deg steps
-    const int kLonLines    = 24;   // longitudes every 15 deg
-    const int kSeg         = 96;   // segments per circle
-    const int kGroundLines = 41;   // ground grid lines per axis
+    debugGlobeState->setFbo(pHdrFbo);
+    debugGlobeState->setViewport(0, viewport3d, true);
+    setDebugGridConstants(0);
+
+    const uint32_t globeVerts = (kLatLines + kLonLines) * kSeg * 2;
+    _renderContext->drawInstanced(debugGlobeState.get(), debugGridVars.get(), globeVerts, 1, 0, 0);
+    ew::gDebug.live.debugGlobeDraws++;
+}
+
+void Earthworks_4::renderDebugGroundGrid(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo)
+{
+    if (!debugGridProgram || !debugGridState || !debugGridVars || !camera)
+        return;
 
     debugGridState->setFbo(pTargetFbo);
     debugGridState->setViewport(0, viewport3d, true);
+    setDebugGridConstants(1);
 
-    // Mirror the terrain/skydome convention exactly (see render_triangles.hlsl).
-    const float4x4 viewproj = camera->getViewProjMatrix().getTranspose();
-    debugGridVars["gConstantBuffer"]["viewproj"]      = viewproj;
-    debugGridVars["gConstantBuffer"]["eye"]           = camera->getPosition();
-    debugGridVars["gConstantBuffer"]["globeRadius"]   = 3000.0f;
-    debugGridVars["gConstantBuffer"]["groundSpacing"] = 100.0f;
-    debugGridVars["gConstantBuffer"]["groundHeight"]  = 0.0f;
-    debugGridVars["gConstantBuffer"]["latLines"]      = kLatLines;
-    debugGridVars["gConstantBuffer"]["lonLines"]      = kLonLines;
-    debugGridVars["gConstantBuffer"]["segments"]      = kSeg;
-    debugGridVars["gConstantBuffer"]["groundLines"]   = kGroundLines;
-
-    const uint32_t latVerts    = kLatLines * kSeg * 2;
-    const uint32_t lonVerts    = kLonLines * kSeg * 2;
-    const uint32_t groundVerts = kGroundLines * 2 * 2; // X-lines + Z-lines
-    const uint32_t totalVerts  = latVerts + lonVerts + groundVerts;
-
-    _renderContext->drawInstanced(debugGridState.get(), debugGridVars.get(), totalVerts, 1, 0, 0);
+    const uint32_t groundVerts = kKmLines * 2 /*axes*/ * 2 /*endpoints*/;
+    _renderContext->drawInstanced(debugGridState.get(), debugGridVars.get(), groundVerts, 1, 0, 0);
     ew::gDebug.live.debugGridDraws++;
 }
 
