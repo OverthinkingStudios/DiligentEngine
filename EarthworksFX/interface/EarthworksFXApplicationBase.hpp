@@ -173,6 +173,13 @@ protected:
     /// call from any UpdateUI() override.
     void DrawCommonUI();
 
+    /// Runtime feature toggles + per-frame render metrics for the Earthworks
+    /// renderer (ew::gDebug). Lets you bisect rendering by switching terrain
+    /// mode and enabling/disabling individual passes, and shows which passes
+    /// actually ran. Safe to call from any UpdateUI() override; no-op visuals
+    /// when no terrain scene exists.
+    void DrawEarthworksDebugUI();
+
     /// The Earthworks terrain scene owned by the base. Only valid when scene
     /// creation is enabled (the default); guard with HasEarthworksScene() in apps
     /// that run with EarthworksFXAppSettings::CreateScene == false.

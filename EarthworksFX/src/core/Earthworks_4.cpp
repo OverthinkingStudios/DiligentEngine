@@ -26,6 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #include "Earthworks_4.h"
+#include "EarthworksDebug.h"
 //#include "Utils/UI/TextRenderer.h"
 #include "imgui.h"
 //#include "Core/Platform/MonitorInfo.h"
@@ -466,9 +467,11 @@ void Earthworks_4::onFrameUpdate(RenderContext* _renderContext)
 
         terrain.setCamera(CameraType_Main_Center, toGLM(camera->getViewMatrix()), toGLM(camera->getProjMatrix()), camera->getPosition(), true, 1920);
 
-        terrain.update(_renderContext);
+        if (ew::gDebug.toggles.terrainUpdate)
+            terrain.update(_renderContext);
 
         //if (terrain.terrainMode != _terrainMode::vegetation)
+        if (ew::gDebug.toggles.atmosphere)
         {
             //atmosphere.setSmokeTime(terrain.cfd.clipmap.lodOffsets, terrain.cfd.clipmap.lodScales);
             atmosphere.setSMOKE(terrain.cfd.sliceVolumeTexture);
@@ -485,6 +488,17 @@ void Earthworks_4::onFrameUpdate(RenderContext* _renderContext)
 
 void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo)
 {
+    ew::gDebug.beginFrame();
+
+    // The desktop host does not forward the 1..7 mode keys; honour a UI-driven
+    // mode request here so update() and the render below both see it this frame.
+    if (ew::gDebug.toggles.requestTerrainMode >= 0)
+    {
+        terrain.terrainMode = static_cast<_terrainMode>(ew::gDebug.toggles.requestTerrainMode);
+        ew::gDebug.toggles.requestTerrainMode = -1;
+    }
+    ew::gDebug.live.terrainMode = static_cast<int>(terrain.terrainMode);
+
     onFrameUpdate(_renderContext);
 
     
@@ -503,6 +517,7 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
 
         terrain.onFrameRender(_renderContext, hdrFbo, camera, viewport3d);
 
+        if (ew::gDebug.toggles.tonemapper)
         {
             FALCOR_PROFILE("tonemapper");
             postProcess.tonemapper.Vars()->setTexture("hdr", hdrFbo->getColorTexture(0));
@@ -511,11 +526,17 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
             postProcess.tonemapper.State()->setFbo(pTargetFbo);
             postProcess.tonemapper.State()->setRasterizerState(graphicsState->getRasterizerState());
             postProcess.tonemapper.drawInstanced(_renderContext, 3, 1);
+            ew::gDebug.live.tonemapperDraws++;
         }
 
-        onRenderOverlay(_renderContext, pTargetFbo);
+        if (ew::gDebug.toggles.overlay)
+        {
+            onRenderOverlay(_renderContext, pTargetFbo);
+            ew::gDebug.live.overlayDraws++;
+        }
 
-        renderDebugGrid(_renderContext, pTargetFbo);
+        if (ew::gDebug.toggles.debugGrid)
+            renderDebugGrid(_renderContext, pTargetFbo);
 
         glm::vec4 srcRect = glm::vec4(0, 0, screenSize.x, screenSize.y);
         glm::vec4 dstRect = glm::vec4(0, 0, screenSize.x * 0.5f, screenSize.y * 0.5f);
@@ -526,6 +547,8 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
             Sleep(20);       // aim for 15fps in this mode
         }
     }
+
+    ew::gDebug.endFrame();
 }
 
 
@@ -562,6 +585,7 @@ void Earthworks_4::renderDebugGrid(RenderContext* _renderContext, const Fbo::Sha
     const uint32_t totalVerts  = latVerts + lonVerts + groundVerts;
 
     _renderContext->drawInstanced(debugGridState.get(), debugGridVars.get(), totalVerts, 1, 0, 0);
+    ew::gDebug.live.debugGridDraws++;
 }
 
 

@@ -11,6 +11,8 @@
 #include "ImGuiImplDiligent.hpp"
 #include "ImGuiUtils.hpp"
 
+#include "EarthworksDebug.h"
+
 #include "ots/Log.hpp"
 #include "ots/CrashGuard.hpp"
 
@@ -581,6 +583,94 @@ void EarthworksFXApplicationBase::DrawCommonUI()
         m_Window.DrawImGuiControls(m_CreateScene);
     }
     ImGui::End();
+
+    DrawEarthworksDebugUI();
+}
+
+void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
+{
+    ew::DebugState&   dbg   = ew::gDebug;
+    ew::DebugToggles& t     = dbg.toggles;
+    const ew::DebugMetrics& m = dbg.shown;
+
+    ImGui::SetNextWindowPos(ImVec2(10, 320), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(330, 470), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Earthworks Features & Metrics"))
+    {
+        const bool hasScene = HasEarthworksScene();
+        if (!hasScene)
+            ImGui::TextDisabled("No terrain scene (CreateScene == false).");
+
+        // --- Terrain mode --------------------------------------------------
+        ImGui::SeparatorText("Terrain mode");
+        ImGui::Text("current: %s", ew::TerrainModeName(m.terrainMode));
+        if (m.vegetationEarlyOut)
+            ImGui::TextColored(ImVec4(1.f, 0.5f, 0.2f, 1.f),
+                               "vegetation mode: terrain tiles NOT drawn\n(renderer returns after skydome + plants)");
+
+        int curMode = m.terrainMode >= 0 ? m.terrainMode : 0;
+        const char* modeNames[] = {"vegetation", "ecotope", "terrafector", "roads",
+                                    "glider", "terrainBuilder", "textureTool"};
+        if (ImGui::Combo("set mode", &curMode, modeNames, IM_ARRAYSIZE(modeNames)))
+            t.requestTerrainMode = curMode;
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The desktop host does not forward the 1..7 mode keys;\nuse this to switch modes at runtime.");
+
+        // --- Passes --------------------------------------------------------
+        ImGui::SeparatorText("Render passes");
+        ImGui::Checkbox("skydome", &t.skydome);
+        ImGui::Checkbox("terrain tiles", &t.terrainTiles);
+        ImGui::Checkbox("billboards", &t.billboards);
+        ImGui::Checkbox("plants", &t.plants);
+        ImGui::Checkbox("ribbons (glider)", &t.ribbons);
+        ImGui::Checkbox("splines (roads/terrafector)", &t.splines);
+
+        ImGui::SeparatorText("Compute / update");
+        ImGui::Checkbox("terrain update (stream/clip/lod)", &t.terrainUpdate);
+        ImGui::Checkbox("atmosphere (sun + volumetric)", &t.atmosphere);
+
+        ImGui::SeparatorText("Post / overlay");
+        ImGui::Checkbox("tonemapper", &t.tonemapper);
+        ImGui::Checkbox("overlay (thumbnail blit)", &t.overlay);
+        ImGui::Checkbox("debug grid", &t.debugGrid);
+
+        ImGui::SeparatorText("ImGui");
+        ImGui::Checkbox("Earthworks editor GUI", &t.earthworksGui);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The terrain/vegetation editor windows.\nIn vegetation mode this draws a full-screen HUD +\n'vegetation builder' panel (the static rectangle).");
+
+        if (ImGui::SmallButton("enable all"))
+            t = ew::DebugToggles{};
+        ImGui::SameLine();
+        if (ImGui::SmallButton("isolate terrain"))
+        {
+            t = ew::DebugToggles{};
+            t.skydome = t.billboards = t.plants = t.ribbons = t.splines = t.overlay = false;
+            t.earthworksGui = false;
+        }
+
+        // --- Metrics (last completed frame) --------------------------------
+        ImGui::SeparatorText("Draws this frame");
+        ImGui::Text("skydome      %u", m.skydomeDraws);
+        ImGui::Text("terrainTiles %u", m.terrainTileDraws);
+        ImGui::Text("billboards   %u", m.billboardDraws);
+        ImGui::Text("plants       %u", m.plantDraws);
+        ImGui::Text("ribbons      %u", m.ribbonDraws);
+        ImGui::Text("splines      %u", m.splineDraws);
+        ImGui::Text("tonemapper   %u", m.tonemapperDraws);
+        ImGui::Text("overlay      %u", m.overlayDraws);
+        ImGui::Text("debugGrid    %u", m.debugGridDraws);
+
+        ImGui::SeparatorText("Scene counts");
+        ImGui::Text("tiles used / free : %u / %u", m.tilesUsed, m.tilesFree);
+        ImGui::Text("ribbons loaded    : %u", m.ribbonsLoaded);
+        ImGui::Text("splines static/dyn: %u / %u", m.staticSplines, m.dynamicSplines);
+    }
+    ImGui::End();
 }
 
 void EarthworksFXApplicationBase::UpdateUI()
@@ -614,7 +704,7 @@ void EarthworksFXApplicationBase::OnUpdate(double CurrTime, double ElapsedTime, 
     else
         SyncInput();
 
-    if (DoUpdateUI)
+    if (DoUpdateUI && ew::gDebug.toggles.earthworksGui)
     {
         ScopedFalcorFramework scope{&m_Framework};
         m_Earthworks->onGuiRender(&m_Gui);

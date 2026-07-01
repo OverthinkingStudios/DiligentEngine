@@ -563,7 +563,7 @@ private:
 
 
     pixelShader ribbonShader;
-    uint numLoadedRibbons;  // paraglider only
+    uint numLoadedRibbons = 0;  // paraglider only
     Buffer::SharedPtr       ribbonData[2];  // also paraglider  - split these into seperate block at least, not true groveTree.bChanged writes to this, so duplicate maybe
     uint bufferidx = 0;
 

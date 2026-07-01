@@ -26,6 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #include "terrain.h"
+#include "EarthworksDebug.h"
 #include "ots/Log.hpp"
 #include "imgui.h"
 #include <imgui_internal.h>
@@ -5081,8 +5082,20 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         }
     }
 
+    // --- debug instrumentation: cheap CPU-side scene counts -----------------
+    ew::gDebug.live.tilesUsed      = static_cast<uint32_t>(m_used.size());
+    ew::gDebug.live.tilesFree      = static_cast<uint32_t>(m_free.size());
+    ew::gDebug.live.ribbonsLoaded  = numLoadedRibbons;
+    ew::gDebug.live.staticSplines  = splines.numStaticSplines;
+    ew::gDebug.live.dynamicSplines = splines.numDynamicSplines;
+
     if (terrainMode == _terrainMode::vegetation)
     {
+        // NOTE: vegetation mode draws only the (screen-space) skydome + plants
+        // and returns BEFORE the terrain-tile / billboard passes below.
+        ew::gDebug.live.vegetationEarlyOut = true;
+
+        if (ew::gDebug.toggles.skydome)
         {
             FALCOR_PROFILE("skydome - veg");
 
@@ -5094,6 +5107,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
             triangleShader.State()->setRasterizerState(split.rasterstateSplines);
             triangleShader.State()->setBlendState(split.blendstateSplines);
             triangleShader.drawInstanced(_renderContext, 36, 1);
+            ew::gDebug.live.skydomeDraws++;
         }
 
         rmcv::mat4 clipPlanes;
@@ -5108,7 +5122,11 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         float m_halfAngle_to_Pixels = cameraViews[CameraType_Main_Center].resolution * fovscale / 2.f;
 
 
-        plants_Root.render(_renderContext, _fbo, _viewport, viewproj, _camera->getPosition(), view, clipPlanes, m_halfAngle_to_Pixels);
+        if (ew::gDebug.toggles.plants)
+        {
+            plants_Root.render(_renderContext, _fbo, _viewport, viewproj, _camera->getPosition(), view, clipPlanes, m_halfAngle_to_Pixels);
+            ew::gDebug.live.plantDraws++;
+        }
 
 
 
@@ -5118,6 +5136,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
     if (terrainMode == _terrainMode::glider)
     {
 
+        if (ew::gDebug.toggles.skydome)
         {
             FALCOR_PROFILE("skydome");
 
@@ -5129,6 +5148,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
             triangleShader.State()->setRasterizerState(split.rasterstateSplines);
             triangleShader.State()->setBlendState(split.blendstateSplines);
             triangleShader.drawInstanced(_renderContext, 36, 1);
+            ew::gDebug.live.skydomeDraws++;
             //triangleShader.renderIndirect(_renderContext, split.drawArgs_clippedloddedplants);
         }
 
@@ -5150,7 +5170,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         }
 
 
-        if (!useFreeCamWhileGliding && (terrainMode == _terrainMode::glider) && numLoadedRibbons > 1)
+        if (ew::gDebug.toggles.ribbons && !useFreeCamWhileGliding && (terrainMode == _terrainMode::glider) && numLoadedRibbons > 1)
             //if ((terrainMode == 4) && AirSim.ribbonCount > 1)
         {
             ribbonShader.Vars()["gConstantBuffer"]["viewproj"] = viewproj_ribbon;
@@ -5179,6 +5199,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
 
             // ribbonShader.drawInstanced(_renderContext, paraRuntime.ribbonCount, 1);
             ribbonShader.drawInstanced(_renderContext, numLoadedRibbons, 1);
+            ew::gDebug.live.ribbonDraws++;
             //ribbonShader.drawInstanced(_renderContext, AirSim.ribbonCount, 1);
         }
 
@@ -5186,6 +5207,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         //return;
     }
 
+    if (ew::gDebug.toggles.plants)
     {
         FALCOR_PROFILE("PLANTS_clip_lod");
         rmcv::mat4 view, clip;
@@ -5207,6 +5229,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
     }
 
 
+    if (ew::gDebug.toggles.terrainTiles)
     {
         FALCOR_PROFILE("terrainManager");
 
@@ -5218,6 +5241,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         terrainShader.Vars()["gConstantBuffer"]["eye"] = _camera->getPosition();
         terrainShader.Vars()->setBuffer("tileLookup", split.buffer_lookup_terrain[CameraType_Main_Center]);      // FIXME2025 set the ccorrect view not 0
         terrainShader.renderIndirect(_renderContext, split.drawArgs_tiles, nullptr, CameraType_Main_Center, 1);
+        ew::gDebug.live.terrainTileDraws++;
     }
     {
         /*
@@ -5241,6 +5265,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         _plantMaterial::static_materials_veg.setTextures(varBBTextures);
 
     }
+    if (ew::gDebug.toggles.billboards)
     {
         FALCOR_PROFILE("billboards");
         terrainSpiteShader.State()->setFbo(_fbo);
@@ -5256,6 +5281,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         terrainSpiteShader.Vars()->setBuffer("tileLookup", split.buffer_lookup_quads[CameraType_Main_Center]);
 
         terrainSpiteShader.renderIndirect(_renderContext, split.drawArgs_quads, nullptr, CameraType_Main_Center, 1);
+        ew::gDebug.live.billboardDraws++;
 
         //terrainSpiteShader.Vars()["gConstantBuffer"]["alpha_pass"] = 1;
         //terrainSpiteShader.renderIndirect(_renderContext, split.drawArgs_quads);
@@ -5270,11 +5296,16 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         }
         float fovscale = glm::length(cameraViews[CameraType_Main_Center].proj[1]);
         float m_halfAngle_to_Pixels = cameraViews[CameraType_Main_Center].resolution * fovscale / 2.f;
-        plants_Root.render(_renderContext, _fbo, _viewport, viewproj, _camera->getPosition(), view, clip, m_halfAngle_to_Pixels, true);
+        if (ew::gDebug.toggles.plants)
+        {
+            plants_Root.render(_renderContext, _fbo, _viewport, viewproj, _camera->getPosition(), view, clip, m_halfAngle_to_Pixels, true);
+            ew::gDebug.live.plantDraws++;
+        }
     }
 
 
 
+    if (ew::gDebug.toggles.skydome)
     {
         FALCOR_PROFILE("skydome");
 
@@ -5286,6 +5317,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         triangleShader.State()->setRasterizerState(split.rasterstateSplines);
         triangleShader.State()->setBlendState(split.blendstateSplines);
         triangleShader.drawInstanced(_renderContext, 36, 1);
+        ew::gDebug.live.skydomeDraws++;
         //triangleShader.renderIndirect(_renderContext, split.drawArgs_clippedloddedplants);
     }
 
@@ -5357,7 +5389,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
 
     }
 
-    if (terrainMode == _terrainMode::terrafector)
+    if (ew::gDebug.toggles.splines && terrainMode == _terrainMode::terrafector)
     {
         split.shader_spline3D.State()->setFbo(_fbo);
         split.shader_spline3D.State()->setRasterizerState(split.rasterstateSplines);
@@ -5376,9 +5408,10 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         split.shader_spline3D.Vars()->setBuffer("splineData", splines.dynamic_bezierData);
         split.shader_spline3D.Vars()->setBuffer("indexData", splines.dynamic_indexData);
         split.shader_spline3D.drawIndexedInstanced(_renderContext, 64 * 6, splines.numDynamicStampIndex);
+        ew::gDebug.live.splineDraws++;
     }
 
-    if ((splines.numStaticSplines || splines.numDynamicSplines) && showRoadSpline && !bSplineAsTerrafector)
+    if (ew::gDebug.toggles.splines && (splines.numStaticSplines || splines.numDynamicSplines) && showRoadSpline && !bSplineAsTerrafector)
     {
         //FALCOR_PROFILE("splines");
 
@@ -5410,6 +5443,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
             split.shader_spline3D.Vars()->setBuffer("indexData", splines.indexData);
             split.shader_spline3D.drawIndexedInstanced(_renderContext, 64 * 6, splines.numStaticSplinesIndex);
         }
+        ew::gDebug.live.splineDraws++;
         /*
         if (terrainMode == _terrainMode::terrafector)
         {
