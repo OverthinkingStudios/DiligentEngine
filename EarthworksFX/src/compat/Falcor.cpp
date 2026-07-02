@@ -586,7 +586,6 @@ Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, TEXTURE_FO
 
 Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, Falcor::ResourceFormat format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags)
 {
-    (void)arraySize;
     (void)mipLevels;
     auto tex     = std::make_shared<Texture>();
     tex->m_Width = width;
@@ -599,8 +598,15 @@ Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, Falcor::Re
         return tex;
     }
 
+    // arraySize > 1 must create a real texture ARRAY (F11). Earthworks streams
+    // all per-tile data (albedo/normals/PBR/height) into one array slice per
+    // quadtree tile and samples it as Texture2DArray with texCoords.z =
+    // tileIDX. When this was silently flattened to a single 2D texture, every
+    // tile sampled the SAME image and each tile split overwrote it ("one
+    // texture on everything, changing as the camera moves").
     Diligent::TextureDesc desc;
-    desc.Type      = Diligent::RESOURCE_DIM_TEX_2D;
+    desc.Type      = arraySize > 1 ? Diligent::RESOURCE_DIM_TEX_2D_ARRAY : Diligent::RESOURCE_DIM_TEX_2D;
+    desc.ArraySize = std::max(arraySize, 1u);
     desc.Width     = width;
     desc.Height    = height;
     desc.Format    = ToDiligentFormat(format);
@@ -611,7 +617,14 @@ Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, Falcor::Re
     Diligent::TextureSubResData  subres;
     Diligent::TextureData        initData;
     Diligent::TextureData*       pInitData = nullptr;
-    if (BuildTextureInitData(format, desc.Format, width, height, 1, pData, initStorage, subres))
+    if (arraySize > 1)
+    {
+        // Diligent requires init data for EVERY subresource; no current caller
+        // creates an array with initial contents, so just flag it if one appears.
+        if (pData)
+            spdlog::error("Texture::create2D: init data for texture arrays not implemented ({} slices) - created empty", arraySize);
+    }
+    else if (BuildTextureInitData(format, desc.Format, width, height, 1, pData, initStorage, subres))
     {
         initData.pSubResources   = &subres;
         initData.NumSubresources = 1;

@@ -78,7 +78,7 @@ struct DebugToggles
     // (render_Tiles.hlsl, gConstColor). Splits the search space: pattern shows
     // up -> geometry/draw path is fine and the problem is in the shading
     // inputs; still nothing -> tile pipeline / draw args / camera.
-    bool terrainConstColor = true;
+    bool terrainConstColor = false;
 
     // --- Earthworks_4.onFrameRender post passes ------------------------
     // Bring-up bypass: render the 3D scene (terrain, globe, ...) straight into
@@ -97,10 +97,10 @@ struct DebugToggles
     int  tonemapperView = 0;
     bool overlay        = true;
     // Debug orientation aids (see debugGrid.hlsl / Earthworks_4::renderDebugGlobe):
-    bool debugGlobe      = true;  // lat/lon globe, depth-tested so terrain occludes it
-    bool debugGroundGrid = true;  // world ground grid (area boundary + 1 km grid), on top
-    bool debugEarthworksShader = false;
-    bool debugEarthworksInfoGui = false;
+    bool debugGlobe      = false;  // lat/lon globe, depth-tested so terrain occludes it
+    bool debugGroundGrid = false;  // world ground grid (area boundary + 1 km grid), on top
+    bool debugEarthworksShader = true;
+    bool debugEarthworksInfoGui = true;
 
     // --- ImGui ---------------------------------------------------------
     // The Earthworks editor GUI (terrain/vegetation editor windows) drawn by

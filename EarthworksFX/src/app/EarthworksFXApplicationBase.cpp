@@ -342,6 +342,13 @@ void EarthworksFXApplicationBase::InitializeDiligentEngine(const NativeWindow* p
             IEngineFactoryVk* pFactoryVk = LoadAndGetEngineFactoryVk();
             m_pEngineFactory             = pFactoryVk;
 
+            // In Debug builds Diligent turns validation failures (UNEXPECTED)
+            // into a MODAL Abort/Retry/Ignore MessageBox on the render thread.
+            // That is the mysterious "freeze ~1s after load": the window stops
+            // updating while the (sometimes hidden) dialog waits for input,
+            // and each further frame re-asserts. Log the error instead.
+            pFactoryVk->SetBreakOnError(false);
+
             EngineVkCreateInfo EngineCI;
             if (m_ValidationLevel >= 0)
                 EngineCI.SetValidationLevel(static_cast<VALIDATION_LEVEL>(m_ValidationLevel));
@@ -353,6 +360,15 @@ void EarthworksFXApplicationBase::InitializeDiligentEngine(const NativeWindow* p
             };
             EngineCI.ppIgnoreDebugMessageNames = ppIgnoreDebugMessages;
             EngineCI.IgnoreDebugMessageCount   = _countof(ppIgnoreDebugMessages);
+
+            // Several Earthworks shaders declare Texture2D arrays of 4096
+            // (render_tile_sprite, render_ribbons, render_*Terrafector, ...).
+            // One descriptor set for such a PSO needs >4096 sampled-image
+            // descriptors, but Diligent's default DYNAMIC pool only holds 2048
+            // in total -> vkAllocateDescriptorSets fails as soon as those
+            // passes start drawing (unlocked by the F11 texture-array fix).
+            EngineCI.DynamicDescriptorPoolSize.NumSampledImageDescriptors = 32768;
+            EngineCI.MainDescriptorPoolSize.NumSampledImageDescriptors    = 16384;
 
             EngineCI.AdapterId = FindAdapter(pFactoryVk, EngineCI.GraphicsAPIVersion);
             ModifyEngineInitInfo({pFactoryVk, m_DeviceType, EngineCI, m_SwapChainInitDesc});

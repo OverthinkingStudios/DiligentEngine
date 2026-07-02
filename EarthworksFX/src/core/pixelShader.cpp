@@ -40,7 +40,12 @@ void pixelShader::load(const std::filesystem::path& _path, const std::string _vs
 		ibData[i * 6 + 4] = 3 + i * 2;
 		ibData[i * 6 + 5] = 2 + i * 2;
 	}
-	Buffer::SharedPtr pIB = Buffer::create(128 * 6 * 2, Buffer::BindFlags::Index, Buffer::CpuAccess::Write, ibData.data());
+	// CpuAccess::None, NOT Write: Write maps to Diligent USAGE_DYNAMIC, whose
+	// contents are discarded at the END OF EVERY FRAME. This buffer is filled
+	// once and reused forever, so as a dynamic buffer every later frame drew
+	// from a stale/recycled allocation -> garbage indices -> out-of-bounds GPU
+	// reads -> VK_DEVICE_LOST ("application unresponsive" shortly after load).
+	Buffer::SharedPtr pIB = Buffer::create(128 * 6 * 2, Buffer::BindFlags::Index, Buffer::CpuAccess::None, ibData.data());
 	state->setVao(Vao::create(_topology, pLayout, bufferVec, pIB, ResourceFormat::R16Uint));
 }
 

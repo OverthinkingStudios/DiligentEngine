@@ -5,13 +5,18 @@
 // (VUID-vkCmdDispatch-OpImageWrite-08795) requires OpImageWrite to supply at
 // least as many components as the view format, so these UAVs must be float4
 // and every store is padded to float4.
-RWTexture3D<float4> gInscatter : register(u0);
-RWTexture2D<float4> gInscatter_cloudBase : register(u1);
-RWTexture2D<float4> gInscatter_sky : register(u2);
+// The [[vk::image_format]] attributes make the SPIR-V image format match the
+// actual texture formats (mainFar volumes = R11G11B10F, 2D slices = RGBA16F).
+// Without them DXC emits Rgba32f and per spec ALL loads/stores to the
+// mismatched image are undefined (validation:
+// Undefined-Value-StorageImage-FormatMismatch-ImageView).
+[[vk::image_format("r11f_g11f_b10f")]] RWTexture3D<float4> gInscatter : register(u0);
+[[vk::image_format("rgba16f")]] RWTexture2D<float4> gInscatter_cloudBase : register(u1);
+[[vk::image_format("rgba16f")]] RWTexture2D<float4> gInscatter_sky : register(u2);
 
-RWTexture3D<float4> gOutscatter : register(u3);
-RWTexture2D<float4> gOutscatter_cloudBase : register(u4);
-RWTexture2D<float4> gOutscatter_sky : register(u5);
+[[vk::image_format("r11f_g11f_b10f")]] RWTexture3D<float4> gOutscatter : register(u3);
+[[vk::image_format("rgba16f")]] RWTexture2D<float4> gOutscatter_cloudBase : register(u4);
+[[vk::image_format("rgba16f")]] RWTexture2D<float4> gOutscatter_sky : register(u5);
 
 void write(float3 inscatter, float3 outscatter, uint3 coord) {
 	gInscatter[coord] = float4(inscatter, 0);

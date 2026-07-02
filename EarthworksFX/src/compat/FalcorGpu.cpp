@@ -43,6 +43,7 @@ struct ShaderResourceInfo
     std::string          Name;
     SHADER_RESOURCE_TYPE Type = SHADER_RESOURCE_TYPE_UNKNOWN;
     SHADER_TYPE          Stages = SHADER_TYPE_UNKNOWN;
+    Uint32               ArraySize = 1;
 };
 
 struct GfxProgramGpu
@@ -92,6 +93,7 @@ struct ComputePipelineCacheEntry
 std::unordered_map<const ComputeProgram*, ComputePipelineCacheEntry> g_ComputePSOCache;
 
 Texture::SharedPtr g_DummyTex2D;
+Texture::SharedPtr g_DummyTex2DArray;
 Texture::SharedPtr g_DummyTex3D;
 Texture::SharedPtr g_DummyTexCube;
 Sampler::SharedPtr g_DummySampler;
@@ -101,9 +103,10 @@ void EnsureDummyTextures()
     if (g_DummyTex2D)
         return;
     const uint32_t bind = Resource::BindFlags::ShaderResource | Resource::BindFlags::UnorderedAccess;
-    g_DummyTex2D   = Texture::create2D(1, 1, ResourceFormat::RGBA8Unorm, 1, 1, nullptr, bind);
-    g_DummyTex3D   = Texture::create3D(1, 1, 1, ResourceFormat::RGBA8Unorm, 1, nullptr, bind);
-    g_DummyTexCube = Texture::createCube(1, ResourceFormat::RGBA8Unorm, Resource::BindFlags::ShaderResource);
+    g_DummyTex2D      = Texture::create2D(1, 1, ResourceFormat::RGBA8Unorm, 1, 1, nullptr, bind);
+    g_DummyTex2DArray = Texture::create2D(1, 1, ResourceFormat::RGBA8Unorm, 2, 1, nullptr, bind);
+    g_DummyTex3D      = Texture::create3D(1, 1, 1, ResourceFormat::RGBA8Unorm, 1, nullptr, bind);
+    g_DummyTexCube    = Texture::createCube(1, ResourceFormat::RGBA8Unorm, Resource::BindFlags::ShaderResource);
 
     Sampler::Desc samplerDesc;
     samplerDesc.setFilterMode(Sampler::Filter::Linear, Sampler::Filter::Linear, Sampler::Filter::Linear);
@@ -111,21 +114,56 @@ void EnsureDummyTextures()
     g_DummySampler = Sampler::create(samplerDesc);
 }
 
-IDeviceObject* GetDummyTextureObject(SHADER_RESOURCE_TYPE type, const std::string& name)
+// The shader reflection (Diligent ShaderResourceDesc) does not carry the
+// texture dimension, but Vulkan requires the bound view's dimension to match
+// the shader declaration exactly - otherwise Diligent fires a fatal Debug
+// assert (ValidateResourceViewDimension) and Vulkan rejects the draw with a
+// viewType error (VUID-vkCmd...-viewType-07752). So the expected dimension is
+// inferred from the resource name. Names not listed default to Texture2D.
+Diligent::RESOURCE_DIMENSION GuessResourceDimFromName(const std::string& name)
+{
+    if (name == "envMap" || name == "gSky" || name == "gEnv"
+        || name == "gCube" || name == "gCube_Close" || name == "gCube_Mid" || name == "gCube_Far")
+        return Diligent::RESOURCE_DIM_TEX_CUBE;
+
+    // NB: exact names only! An earlier substring match ("Inscatter" anywhere
+    // in the name) classified the 2D textures gInscatter_sky /
+    // gInscatter_cloudBase / gAtmosphereInscatter_Sky as 3D; combined with the
+    // dimension guard in GetTextureBinding this replaced their correct 2D
+    // bindings with a 3D dummy -> invalid descriptors -> VK_DEVICE_LOST (the
+    // "app becomes unresponsive when terrain debug color is disabled" bug -
+    // the full shading path is what samples these).
+    if (name.find("gCfd_T_") == 0 || name == "gLightVolume" || name == "cube"
+        || name == "gInscatter" || name == "gOutscatter" || name == "gInOutscatter"
+        || name == "gAtmosphereInscatter" || name == "gAtmosphereOutscatter"
+        || name == "gSmokeAndDustInscatter" || name == "gSmokeAndDustOutscatter")
+        return Diligent::RESOURCE_DIM_TEX_3D;
+
+    // render_sprite/sprite.hlsl sample these as Texture2DArray, but the C++
+    // side feeds them Texture::createFromFile stubs (plain 1x1 2D).
+    if (name == "gTex" || name == "gNorm" || name == "gTranclucent")
+        return Diligent::RESOURCE_DIM_TEX_2D_ARRAY;
+
+    return Diligent::RESOURCE_DIM_TEX_2D;
+}
+
+Texture::SharedPtr GetDummyTextureForDim(Diligent::RESOURCE_DIMENSION dim)
 {
     EnsureDummyTextures();
-    // A texture/UAV slot that has no resource bound still needs a dummy whose
-    // dimension matches the shader's declared type (TextureCube/Texture3D/
-    // Texture2D); otherwise Vulkan rejects the draw with a viewType mismatch
-    // (VUID-vkCmd...-viewType-07752). The reflection type does not carry the
-    // dimension, so it is inferred from the resource name.
-    const bool useCube = (name == "envMap" || name == "gSky");
-    const bool use3D   = useCube ? false
-        : (name.find("gCfd_T_") == 0 || name == "gLightVolume" || name == "gInscatter" || name == "gOutscatter"
-           || name == "cube"
-           || name.find("Inscatter") != std::string::npos || name.find("Outscatter") != std::string::npos);
+    switch (dim)
+    {
+        case Diligent::RESOURCE_DIM_TEX_CUBE: return g_DummyTexCube;
+        case Diligent::RESOURCE_DIM_TEX_3D: return g_DummyTex3D;
+        case Diligent::RESOURCE_DIM_TEX_2D_ARRAY: return g_DummyTex2DArray;
+        default: return g_DummyTex2D;
+    }
+}
 
-    Texture::SharedPtr tex = useCube ? g_DummyTexCube : (use3D ? g_DummyTex3D : g_DummyTex2D);
+IDeviceObject* GetDummyTextureObject(SHADER_RESOURCE_TYPE type, const std::string& name)
+{
+    // A texture/UAV slot that has no resource bound still needs a dummy whose
+    // dimension matches the shader's declared type.
+    Texture::SharedPtr tex = GetDummyTextureForDim(GuessResourceDimFromName(name));
     if (!tex)
         return nullptr;
     return type == SHADER_RESOURCE_TYPE_TEXTURE_UAV ? tex->getUAV() : tex->getSRV(0, 1, 0, 1);
@@ -198,7 +236,7 @@ void CollectShaderResources(IShader* pShader, SHADER_TYPE stage, std::vector<Sha
             }
         }
         if (!found)
-            outResources.push_back({desc.Name, desc.Type, stage});
+            outResources.push_back({desc.Name, desc.Type, stage, std::max(desc.ArraySize, 1u)});
     }
 }
 
@@ -447,10 +485,36 @@ Buffer::SharedPtr GetOrCreateConstantBuffer(const CBufferLayout& layout, std::ve
     return it->second;
 }
 
-IDeviceObject* GetTextureBinding(const Texture* pTex, SHADER_RESOURCE_TYPE resType)
+IDeviceObject* GetTextureBinding(const Texture* pTex, SHADER_RESOURCE_TYPE resType, const std::string& resName)
 {
     if (!pTex)
         return nullptr;
+    // Guard: a texture whose dimension does not match the shader declaration
+    // (e.g. Texture2D bound to a TextureCube/Texture2DArray slot) triggers a
+    // fatal Debug assert inside Diligent (ValidateResourceViewDimension) - the
+    // "Runtime assertion failed" popup that looks like a freeze - and a Vulkan
+    // viewType error in Release. This really happens: gEnv/gSky/gTex/gNorm/
+    // gTranclucent are fed from Texture::createFromFile, which is a stub that
+    // returns a 1x1 2D texture. Substitute a dummy of the declared dimension;
+    // content is no worse than the stub's. Only enforced for names whose
+    // expected dimension is known to be non-2D (2D is the fallback guess and
+    // must not override legitimate array/cube bindings).
+    const Diligent::RESOURCE_DIMENSION expectedDim = GuessResourceDimFromName(resName);
+    if (expectedDim != Diligent::RESOURCE_DIM_TEX_2D)
+    {
+        Diligent::ITexture* pDiligentTex = pTex->GetDiligentTexture();
+        if (pDiligentTex && pDiligentTex->GetDesc().Type != expectedDim)
+        {
+            static std::unordered_set<const Texture*> s_WarnedWrongDim;
+            if (s_WarnedWrongDim.insert(pTex).second)
+                spdlog::error("Texture {}x{} bound to slot '{}' has the wrong dimension (createFromFile stub?) - substituting a dummy of the declared dimension",
+                              pTex->getWidth(), pTex->getHeight(), resName);
+            Texture::SharedPtr dummy = GetDummyTextureForDim(expectedDim);
+            if (!dummy)
+                return nullptr;
+            return resType == SHADER_RESOURCE_TYPE_TEXTURE_UAV ? dummy->getUAV() : dummy->getSRV(0, 1, 0, 1);
+        }
+    }
     if (resType == SHADER_RESOURCE_TYPE_TEXTURE_UAV)
     {
         if (auto* pView = pTex->getUAV())
@@ -503,15 +567,22 @@ void BindShaderResource(IPipelineState* pPSO, IShaderResourceBinding* pSRB, cons
         return tryBindStatic(stage) || tryBindDynamic(stage);
     };
 
+    // Bind to EVERY stage that has the variable, not just the first hit:
+    // Diligent's implicit resource signature keeps a SEPARATE variable per
+    // shader stage for a resource that is declared in several stages (the
+    // default resource layout does not merge them). Early-outing after the
+    // first successful stage left e.g. render_tile_sprite's gConstantBuffer
+    // bound in VS but dangling in GS -> Vulkan descriptor-never-written
+    // errors (VUID-...-08114) once that pass started to draw.
     auto tryStages = [&](std::initializer_list<SHADER_TYPE> stages) -> bool {
+        bool bound = false;
         for (SHADER_TYPE stage : stages)
         {
             if (res.Stages != SHADER_TYPE_UNKNOWN && !(res.Stages & stage))
                 continue;
-            if (tryBindStage(stage))
-                return true;
+            bound |= tryBindStage(stage);
         }
-        return false;
+        return bound;
     };
 
     if (pipelineType == PIPELINE_TYPE_COMPUTE)
@@ -522,6 +593,92 @@ void BindShaderResource(IPipelineState* pPSO, IShaderResourceBinding* pSRB, cons
 
     if (!tryStages({SHADER_TYPE_VERTEX, SHADER_TYPE_PIXEL, SHADER_TYPE_GEOMETRY}))
         tryStages({SHADER_TYPE_VERTEX, SHADER_TYPE_PIXEL});
+}
+
+// Arrayed resources (Texture2D textures_T[4096] in the sprite/ribbon/
+// terrafector shaders) need every element written: Set() only fills element 0
+// and Vulkan then rejects the draw because elements 1..4095 were never
+// written (thousands of "No resource is bound to variable 'textures_T[N]'"
+// errors per draw once those passes were unlocked by the texture-array fix).
+void BindShaderResourceArray(IPipelineState* pPSO, IShaderResourceBinding* pSRB, const ShaderResourceInfo& res,
+                             const std::vector<IDeviceObject*>& objects, PIPELINE_TYPE pipelineType)
+{
+    if (objects.empty() || (!pPSO && !pSRB))
+        return;
+
+    auto trySetArray = [&objects](IShaderResourceVariable* pVar) -> bool {
+        if (!pVar)
+            return false;
+        pVar->SetArray(objects.data(), 0, static_cast<Uint32>(objects.size()));
+        return true;
+    };
+
+    auto tryBindStage = [&](SHADER_TYPE stage) -> bool {
+        if (stage == SHADER_TYPE_UNKNOWN)
+            return false;
+        bool bound = false;
+        if (pPSO)
+            bound = trySetArray(pPSO->GetStaticVariableByName(stage, res.Name.c_str()));
+        if (!bound && pSRB)
+            bound = trySetArray(pSRB->GetVariableByName(stage, res.Name.c_str()));
+        return bound;
+    };
+
+    auto tryStages = [&](std::initializer_list<SHADER_TYPE> stages) -> bool {
+        bool bound = false;
+        for (SHADER_TYPE stage : stages)
+        {
+            if (res.Stages != SHADER_TYPE_UNKNOWN && !(res.Stages & stage))
+                continue;
+            bound |= tryBindStage(stage);
+        }
+        return bound;
+    };
+
+    if (pipelineType == PIPELINE_TYPE_COMPUTE)
+    {
+        tryStages({SHADER_TYPE_COMPUTE});
+        return;
+    }
+
+    if (!tryStages({SHADER_TYPE_VERTEX, SHADER_TYPE_PIXEL, SHADER_TYPE_GEOMETRY}))
+        tryStages({SHADER_TYPE_VERTEX, SHADER_TYPE_PIXEL});
+}
+
+// Collects the element views for an arrayed texture resource from the
+// ShaderVar tree (materialCache::setTextures assigns var[i] = tex, which
+// lands in numeric children of the node) and pads every remaining element
+// with the dummy so the whole array is valid.
+bool BindArrayedTextureResource(IPipelineState* pPSO, IShaderResourceBinding* pSRB, const ShaderResourceInfo& res,
+                                const ShaderVar::Node* pRoot, PIPELINE_TYPE pipelineType)
+{
+    if (res.ArraySize <= 1 || (res.Type != SHADER_RESOURCE_TYPE_TEXTURE_SRV && res.Type != SHADER_RESOURCE_TYPE_TEXTURE_UAV))
+        return false;
+
+    IDeviceObject*              pDummy = GetDummyTextureObject(res.Type, res.Name);
+    std::vector<IDeviceObject*> objects(res.ArraySize, pDummy);
+
+    if (pRoot)
+    {
+        const auto arrayIt = pRoot->Children.find(res.Name);
+        if (arrayIt != pRoot->Children.end() && arrayIt->second)
+        {
+            for (const auto& [key, child] : arrayIt->second->Children)
+            {
+                if (!child || !child->TextureValue)
+                    continue;
+                char*               end = nullptr;
+                const unsigned long idx = std::strtoul(key.c_str(), &end, 10);
+                if (end == key.c_str() || *end != '\0' || idx >= res.ArraySize)
+                    continue;
+                if (IDeviceObject* pObj = GetTextureBinding(child->TextureValue.get(), res.Type, res.Name))
+                    objects[idx] = pObj;
+            }
+        }
+    }
+
+    BindShaderResourceArray(pPSO, pSRB, res, objects, pipelineType);
+    return true;
 }
 
 void BindGraphicsVars(IPipelineState* pPSO, IShaderResourceBinding* pSRB, GraphicsVars* pVars, const GfxProgramGpu& program)
@@ -537,6 +694,9 @@ void BindGraphicsVars(IPipelineState* pPSO, IShaderResourceBinding* pSRB, Graphi
         if (res.Type == SHADER_RESOURCE_TYPE_CONSTANT_BUFFER)
             continue;
 
+        if (BindArrayedTextureResource(pPSO, pSRB, res, root.get(), PIPELINE_TYPE_GRAPHICS))
+            continue;
+
         IDeviceObject* pObj = nullptr;
         if (pData)
         {
@@ -544,7 +704,7 @@ void BindGraphicsVars(IPipelineState* pPSO, IShaderResourceBinding* pSRB, Graphi
             {
                 auto it = pData->Textures.find(res.Name);
                 if (it != pData->Textures.end() && it->second)
-                    pObj = GetTextureBinding(it->second.get(), res.Type);
+                    pObj = GetTextureBinding(it->second.get(), res.Type, res.Name);
             }
             else if (res.Type == SHADER_RESOURCE_TYPE_SAMPLER)
             {
@@ -572,7 +732,7 @@ void BindGraphicsVars(IPipelineState* pPSO, IShaderResourceBinding* pSRB, Graphi
             if (childIt != root->Children.end() && childIt->second)
             {
                 if (childIt->second->TextureValue)
-                    pObj = GetTextureBinding(childIt->second->TextureValue.get(), res.Type);
+                    pObj = GetTextureBinding(childIt->second->TextureValue.get(), res.Type, res.Name);
                 else if (childIt->second->BufferValue)
                     pObj = res.Type == SHADER_RESOURCE_TYPE_BUFFER_UAV
                         ? static_cast<IDeviceObject*>(GetBufferUAV(childIt->second->BufferValue.get()))
@@ -624,6 +784,9 @@ void BindComputeVars(IPipelineState* pPSO, IShaderResourceBinding* pSRB, Compute
         if (res.Type == SHADER_RESOURCE_TYPE_CONSTANT_BUFFER)
             continue;
 
+        if (BindArrayedTextureResource(pPSO, pSRB, res, root.get(), PIPELINE_TYPE_COMPUTE))
+            continue;
+
         IDeviceObject* pObj = nullptr;
         if (pData)
         {
@@ -631,7 +794,7 @@ void BindComputeVars(IPipelineState* pPSO, IShaderResourceBinding* pSRB, Compute
             {
                 auto it = pData->Textures.find(res.Name);
                 if (it != pData->Textures.end() && it->second)
-                    pObj = GetTextureBinding(it->second.get(), res.Type);
+                    pObj = GetTextureBinding(it->second.get(), res.Type, res.Name);
             }
             else if (res.Type == SHADER_RESOURCE_TYPE_SAMPLER)
             {
@@ -660,7 +823,7 @@ void BindComputeVars(IPipelineState* pPSO, IShaderResourceBinding* pSRB, Compute
             {
                 if (childIt->second->TextureValue)
                 {
-                    pObj = GetTextureBinding(childIt->second->TextureValue.get(), res.Type);
+                    pObj = GetTextureBinding(childIt->second->TextureValue.get(), res.Type, res.Name);
                 }
                 else if (childIt->second->BufferValue)
                     pObj = GetBufferUAV(childIt->second->BufferValue.get());
