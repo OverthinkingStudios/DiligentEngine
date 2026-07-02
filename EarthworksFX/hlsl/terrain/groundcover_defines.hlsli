@@ -279,6 +279,12 @@ struct GC_variables
 	uint startIndex;
 };
 
+// NOTE (Diligent/Vulkan port): this struct is compiled by BOTH MSVC (via
+// terrafector.h) and DXC->SPIR-V. SPIR-V aligns float4x4 and float3 members to
+// 16 bytes while glm packs them tightly, so the two layouts silently diverged
+// (GPU stride 1888 vs C++ sizeof 1868) and every CPU readback past p_world was
+// shifted. The padd_align_* members below make the C++ layout match the SPIR-V
+// layout exactly; static_asserts at the end of this file verify it.
 struct GC_feedback			// to log and read back to debug and test the process
 {
 	uint 	plants_in_frustum;
@@ -294,6 +300,9 @@ struct GC_feedback			// to log and read back to debug and test the process
 	int		xmax;
 	int		zmin;
 	int		zmax;
+	
+	uint	padd_align_0;		// SPIR-V aligns the following float4x4 to 16 bytes (offset 48)
+	uint	padd_align_1;
 	
 	float4x4	p_world;
 	float4	p_proj;
@@ -323,6 +332,8 @@ struct GC_feedback			// to log and read back to debug and test the process
     uint numLookupBlocks_Plants[numRenderViews];
     uint numLookupBlocks_Terrain[numRenderViews];       
 	
+	uint	padd_align_2;		// SPIR-V aligns the following float3 to 16 bytes (offset 1232)
+	
 	// terrain under mouse
 	float3 	tum_Position;
 	uint 	tum_idx;
@@ -351,7 +362,24 @@ struct GC_feedback			// to log and read back to debug and test the process
     uint numTris[20];
 
     uint numPix[20];
+
+	uint	padd_align_3;		// SPIR-V rounds the struct size up to a 16-byte multiple (stride 1888)
+	uint	padd_align_4;
 };
+
+#ifdef __cplusplus
+// Guard against the C++ mirror of GC_feedback drifting from the SPIR-V layout
+// again. The expected offsets come from the DXC SPIR-V OpMemberDecorate output
+// (see BRINGUP_NOTES.md). If one of these fires after editing the struct,
+// re-dump the offsets with:
+//   dxc -T cs_6_0 -E main -spirv -fspv-reflect compute_tileClear.hlsl -Fc out.spvasm
+static_assert(offsetof(GC_feedback, p_world) == 48, "GC_feedback::p_world must sit at SPIR-V offset 48");
+static_assert(offsetof(GC_feedback, numTerrainTiles) == 724, "GC_feedback::numTerrainTiles must sit at SPIR-V offset 724");
+static_assert(offsetof(GC_feedback, tum_Position) == 1232, "GC_feedback::tum_Position must sit at SPIR-V offset 1232");
+static_assert(offsetof(GC_feedback, frustum) == 1280, "GC_feedback::frustum must sit at SPIR-V offset 1280");
+static_assert(offsetof(GC_feedback, numTiles) == 1480, "GC_feedback::numTiles must sit at SPIR-V offset 1480");
+static_assert(sizeof(GC_feedback) == 1888, "GC_feedback size must match the SPIR-V structured buffer stride (1888)");
+#endif
 
 
 

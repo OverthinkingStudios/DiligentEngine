@@ -73,8 +73,21 @@ struct DebugToggles
     bool ribbons      = true;    // paraglider ribbons (glider mode)
     bool splines      = true;    // road / terrafector splines
 
+    // Replace the terrain pixel shader's full shading (albedo * sun * shadow *
+    // atmosphere in/outscatter) with a constant world-position pattern
+    // (render_Tiles.hlsl, gConstColor). Splits the search space: pattern shows
+    // up -> geometry/draw path is fine and the problem is in the shading
+    // inputs; still nothing -> tile pipeline / draw args / camera.
+    bool terrainConstColor = true;
+
     // --- Earthworks_4.onFrameRender post passes ------------------------
-    bool tonemapper = true;
+    // Bring-up bypass: render the 3D scene (terrain, globe, ...) straight into
+    // the swap chain instead of hdrFbo, and skip the tonemapper. Removes the
+    // HDR buffer + tonemapper from the pipeline entirely so anything the scene
+    // produces is guaranteed to reach the screen. Turn OFF to restore the
+    // original path (scene -> hdrFbo -> tonemapper -> swap chain).
+    bool bypassHdr = true;
+    bool tonemapper = true;    // no effect while bypassHdr is on
     // Tonemapper output mode (compute_tonemapper.hlsl). Because everything that
     // renders into the HDR FBO reaches the screen ONLY through this pass, it is the
     // prime suspect when the HDR content is black. Modes:
@@ -127,6 +140,16 @@ struct DebugMetrics
     uint32_t staticSplines  = 0;
     uint32_t dynamicSplines = 0;
 
+    // GPU-side counts for the main view (CameraType_Main_Center), read back
+    // from GC_feedback (filled by compute_tileBuildLookup). These prove what
+    // the GPU actually packed into the indirect draw: if gpuTerrainBlocks is 0
+    // the terrain draw has instanceCount 0 and cannot produce pixels, no
+    // matter what the CPU-side draw counters say.
+    uint32_t gpuTerrainTiles  = 0;
+    uint32_t gpuTerrainBlocks = 0;
+    uint32_t gpuTerrainTris   = 0;
+    uint32_t gpuQuads         = 0;
+
     // --- tile-split diagnostics ----------------------------------------
     // Why the quadtree does (or does not) refine past the root tile. The split
     // test (terrainManager::testForSplit) needs a tile to be BOTH in-frustum and
@@ -151,6 +174,7 @@ struct DebugMetrics
         cameraMainInUse = splitAnyInFrust = splitBlockedFree = false;
         splitMaxLodPix  = 0.f;
         splitCandidates = splitsPerformed = splitBlockedData = 0;
+        gpuTerrainTiles = gpuTerrainBlocks = gpuTerrainTris = gpuQuads = 0;
     }
 };
 

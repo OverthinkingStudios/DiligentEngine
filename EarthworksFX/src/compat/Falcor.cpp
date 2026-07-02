@@ -260,8 +260,15 @@ float4x4 Camera::getViewMatrix() const
 
 float4x4 Camera::getProjMatrix() const
 {
-    const float fovY = std::atan(0.5f * m_Data.FrameHeight / m_Data.FocalLength);
-    return float4x4::Projection(fovY, m_Data.AspectRatio, m_Data.NearPlane, m_Data.FarPlane, m_Data.Position.y > 0.f);
+    // Falcor convention (focalLengthToFovY): FrameHeight is the film-back
+    // height in millimetres (24mm default), NOT a screen height in pixels.
+    // fovY = 2*atan(0.5*frameHeight/focalLength) -> ~77.3 deg at 15mm.
+    const float fovY = 2.f * std::atan(0.5f * m_Data.FrameHeight / m_Data.FocalLength);
+    // Last argument is NegativeOneToOneZ, i.e. the OpenGL [-1,1] depth
+    // convention. It MUST be false on Vulkan/D3D ([0,1] depth). It was
+    // previously `m_Data.Position.y > 0.f`, which silently switched the depth
+    // convention with camera height (BRINGUP_NOTES.md, F3).
+    return float4x4::Projection(fovY, m_Data.AspectRatio, m_Data.NearPlane, m_Data.FarPlane, false);
 }
 
 float4x4 Camera::getViewProjMatrix() const
@@ -407,10 +414,19 @@ void ComputeVars::setBlob(const void* pData, size_t offset, size_t size)
         return;
     if (!m_pData)
         m_pData = std::make_shared<ComputeVarsData>();
-    const size_t end = offset + size;
-    if (m_pData->Blob.size() < end)
-        m_pData->Blob.resize(end);
-    std::memcpy(m_pData->Blob.data() + offset, pData, size);
+    // Key the bytes by the parameter block (cbuffer) this vars object was
+    // created for. Previously all raw blobs landed in ONE shared vector whose
+    // target cbuffer was unknown at bind time, so BindComputeVars silently
+    // dropped them and the shader got zeros (this is what starved
+    // compute_tileBuildLookup of frustumFlags -> instanceCount 0 -> no terrain).
+    const std::string blockName = m_pBlockRoot ? m_pBlockRoot->Name : std::string();
+    if (blockName.empty())
+        spdlog::warn("ComputeVars::setBlob without a parameter block - data will not reach any cbuffer");
+    auto&        blob = m_pData->Blobs[blockName];
+    const size_t end  = offset + size;
+    if (blob.size() < end)
+        blob.resize(end);
+    std::memcpy(blob.data() + offset, pData, size);
 }
 
 ComputeVars::SharedPtr ComputeVars::getParameterBlock(const char* name)
@@ -1003,9 +1019,17 @@ Fbo::SharedPtr Fbo::create2D(uint32_t width, uint32_t height, const Desc& desc)
         const TEXTURE_FORMAT fmt = ToDiligentFormat(desc.GetColorFormat(slot));
         if (fmt != TEX_FORMAT_UNKNOWN)
         {
-            fbo->m_ColorTextures[slot] = Texture::create2D(
-                width, height, fmt, 1, 1, nullptr,
-                Resource::BindFlags::RenderTarget | Resource::BindFlags::ShaderResource);
+            // Earthworks binds FBO color targets as compute UAVs too
+            // (compute_tileBicubic writes gOutput = tileFbo color0, the tile
+            // ecotope/normal passes write colors 1..7). Falcor created FBO
+            // textures with AllColorViews, so replicate that here whenever the
+            // device supports UAV access for the format; without it getUAV()
+            // is null and the compute writes silently go nowhere (this kept
+            // the elevation target at its 0.3 clear value -> flat terrain).
+            uint32_t bind = Resource::BindFlags::RenderTarget | Resource::BindFlags::ShaderResource;
+            if (g_pDevice && (g_pDevice->GetTextureFormatInfoExt(fmt).BindFlags & Diligent::BIND_UNORDERED_ACCESS))
+                bind |= Resource::BindFlags::UnorderedAccess;
+            fbo->m_ColorTextures[slot] = Texture::create2D(width, height, fmt, 1, 1, nullptr, bind);
         }
     }
     if (desc.GetDepthFormat() != TEX_FORMAT_UNKNOWN)
@@ -1537,28 +1561,56 @@ void TextRenderer::render(RenderContext* pContext, const std::string& text, cons
 
 // --- Gui ---------------------------------------------------------------------
 
-Gui::Window::Window(Gui*, const char* name, bool show_window, float2 size, float2 pos, WindowFlags)
+namespace
+{
+ImGuiWindowFlags MapGuiWindowFlags(Gui::WindowFlags flags)
+{
+    ImGuiWindowFlags f = 0;
+    if (static_cast<uint32_t>(flags) & static_cast<uint32_t>(Gui::WindowFlags::Empty))
+        f |= ImGuiWindowFlags_NoDecoration;
+    if (static_cast<uint32_t>(flags) & static_cast<uint32_t>(Gui::WindowFlags::NoResize))
+        f |= ImGuiWindowFlags_NoResize;
+    return f;
+}
+} // namespace
+
+// size/pos use FirstUseEver (not Always): Falcor windows are user-resizable and
+// movable. Forcing the size every frame crammed e.g. the terrain "##debuginfo"
+// panel (3 columns of tile stats) into its 200x200 creation size
+// (AUTHOR_DEBUG_STEPS.md #1). NoDecoration is now only applied for
+// WindowFlags::Empty instead of unconditionally, so windows get a resize grip.
+Gui::Window::Window(Gui*, const char* name, bool show_window, float2 size, float2 pos, WindowFlags flags)
 {
     m_Open = show_window;
-    ImGui::SetNextWindowSize(ImVec2(size.x, size.y), ImGuiCond_Always);
-    ImGui::SetNextWindowPos(ImVec2(pos.x, pos.y), ImGuiCond_Always);
-    m_Open = ImGui::Begin(name, &m_Open, ImGuiWindowFlags_NoDecoration);
+    ImGui::SetNextWindowSize(ImVec2(size.x, size.y), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(pos.x, pos.y), ImGuiCond_FirstUseEver);
+    m_Open = ImGui::Begin(name, &m_Open, MapGuiWindowFlags(flags));
 }
 
-Gui::Window::Window(Gui*, const char* name, float2 size, float2 pos, WindowFlags)
+Gui::Window::Window(Gui*, const char* name, float2 size, float2 pos, WindowFlags flags)
 {
-    ImGui::SetNextWindowSize(ImVec2(size.x, size.y), ImGuiCond_Always);
-    ImGui::SetNextWindowPos(ImVec2(pos.x, pos.y), ImGuiCond_Always);
-    m_Open = ImGui::Begin(name, nullptr, ImGuiWindowFlags_NoDecoration);
+    ImGui::SetNextWindowSize(ImVec2(size.x, size.y), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(pos.x, pos.y), ImGuiCond_FirstUseEver);
+    m_Open = ImGui::Begin(name, nullptr, MapGuiWindowFlags(flags));
 }
 
 Gui::Window::~Window()
 {
-    if (m_Open)
-        ImGui::End();
+    release();
 }
 
-void Gui::Window::release() {}
+// Falcor semantics: release() closes the window early so subsequent ImGui calls
+// target the parent window again. ImGui requires End() for every Begin(),
+// REGARDLESS of Begin()'s return value (the old code skipped End() when Begin
+// returned false -> unbalanced window stack when a window was collapsed).
+void Gui::Window::release()
+{
+    if (!m_Ended)
+    {
+        ImGui::End();
+        m_Ended = true;
+    }
+}
 
 void Gui::Window::windowPos(int x, int y)
 {

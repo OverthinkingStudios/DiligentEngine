@@ -629,12 +629,23 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         ImGui::Checkbox("plants", &t.plants);
         ImGui::Checkbox("ribbons (glider)", &t.ribbons);
         ImGui::Checkbox("splines (roads/terrafector)", &t.splines);
+        ImGui::Checkbox("terrain debug colour", &t.terrainConstColor);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Replace the terrain shading (sun/shadow/atmosphere) with a\nworld-position pattern. Pattern visible -> geometry + draw path OK,\nproblem is the shading inputs. Nothing -> tile pipeline/camera.");
 
         ImGui::SeparatorText("Compute / update");
         ImGui::Checkbox("terrain update (stream/clip/lod)", &t.terrainUpdate);
         ImGui::Checkbox("atmosphere (sun + volumetric)", &t.atmosphere);
 
         ImGui::SeparatorText("Post / overlay");
+        ImGui::Checkbox("bypass HDR (scene direct to swapchain)", &t.bypassHdr);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("ON: terrain/globe render straight into the swap chain; the HDR\nbuffer and tonemapper are out of the loop entirely.\nOFF: original path (scene -> hdrFbo -> tonemapper -> swapchain).");
+        if (t.bypassHdr) ImGui::BeginDisabled();
         ImGui::Checkbox("tonemapper", &t.tonemapper);
         {
             const char* views[] = { "normal (ACES+LUT)", "raw HDR", "solid test colour" };
@@ -647,6 +658,7 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
                                   "'raw HDR' shows whether anything rendered into it;\n"
                                   "'solid test colour' shows whether the pass writes the swapchain at all.");
         }
+        if (t.bypassHdr) ImGui::EndDisabled();
         ImGui::Checkbox("overlay (thumbnail blit)", &t.overlay);
 
         ImGui::SeparatorText("Debug aids");
@@ -654,7 +666,7 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Camera-centred lat/lon globe drawn into the HDR buffer with\ndepth testing: terrain occludes it, so the terrain silhouette\nis visible even when the terrain shades black.");
+            ImGui::SetTooltip("Camera-centred lat/lon globe drawn into the same buffer as the\nterrain with depth testing: terrain occludes it, so the terrain\nsilhouette is visible even when the terrain shades black.");
         ImGui::Checkbox("ground grid (area boundary + 1km)", &t.debugGroundGrid);
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
@@ -695,6 +707,16 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         ImGui::Text("tiles used / free : %u / %u", m.tilesUsed, m.tilesFree);
         ImGui::Text("ribbons loaded    : %u", m.ribbonsLoaded);
         ImGui::Text("splines static/dyn: %u / %u", m.staticSplines, m.dynamicSplines);
+
+        // What the GPU actually packed into the indirect draw args for the main
+        // view (GC_feedback readback). If blocks is 0 the terrain draw runs with
+        // instanceCount 0 and CANNOT produce pixels regardless of the draw
+        // counters above.
+        ImGui::SeparatorText("GPU main view (feedback)");
+        ImGui::TextColored(m.gpuTerrainBlocks > 0 ? ImVec4(0.5f, 1.f, 0.5f, 1.f) : ImVec4(1.f, 0.4f, 0.2f, 1.f),
+                           "terrain tiles/blocks: %u / %u", m.gpuTerrainTiles, m.gpuTerrainBlocks);
+        ImGui::Text("terrain tris      : %u", m.gpuTerrainTris);
+        ImGui::Text("billboard quads   : %u", m.gpuQuads);
 
         ImGui::SeparatorText("Tile split");
         ImGui::TextColored(m.cameraMainInUse ? ImVec4(0.5f, 1.f, 0.5f, 1.f) : ImVec4(1.f, 0.4f, 0.2f, 1.f),

@@ -199,8 +199,15 @@ void prepareMaterialLayerTerrain( in SH_Attributes Attr, inout layer_material MA
 
 float4 psMain(terrainVSOut vIn) : SV_TARGET0
 {
-    
-    
+    // Bring-up debug (ew::gDebug.toggles.terrainConstColor): bypass every
+    // shading input (sun/shadow/atmosphere textures) and show a world-position
+    // pattern instead - 1km-period gradient in x (red) / z (green), plus the
+    // per-tile UV in blue so tile seams are visible.
+    if (gConstColor)
+    {
+        return float4(frac(vIn.worldPos.x / 1000.0), frac(vIn.worldPos.z / 1000.0), vIn.texCoords.x * 0.5 + 0.25, 1);
+    }
+
 	SH_Attributes 	Attr;
 	eval_mat		Values;
 	layer_material	mat;

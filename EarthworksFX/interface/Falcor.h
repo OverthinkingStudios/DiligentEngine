@@ -196,7 +196,10 @@ struct CameraData
     float    NearPlane    = 0.1f;
     float    FarPlane     = 40000.f;
     float    AspectRatio  = 16.f / 9.f;
-    float    FrameHeight  = 1080.f;
+    // Film-back height in millimetres (Falcor convention; 24mm full frame).
+    // The FOV is derived from this + FocalLength. This is NOT a pixel height;
+    // it was 1080.f during early bring-up, which produced a ~88deg FOV.
+    float    FrameHeight  = 24.f;
 };
 
 class Camera
@@ -636,7 +639,12 @@ struct ComputeVarsData
     std::unordered_map<std::string, SharedPtr<Texture>> Textures;
     std::unordered_map<std::string, SharedPtr<Sampler>> Samplers;
     std::unordered_map<std::string, SharedPtr<Buffer>>  Buffers;
-    std::vector<uint8_t>                                Blob;
+    // Raw cbuffer contents keyed by cbuffer name. Filled by
+    // getParameterBlock("name")->setBlob(...) (the Earthworks pattern for bulk
+    // constant uploads, e.g. the 16KB frustumFlags array for
+    // compute_tileBuildLookup). Bind time seeds each cbuffer from this and
+    // then overlays per-member ShaderVar assignments.
+    std::unordered_map<std::string, std::vector<uint8_t>> Blobs;
     std::shared_ptr<ShaderVar::Node>                    Root = std::make_shared<ShaderVar::Node>();
 };
 
@@ -1030,6 +1038,7 @@ public:
     private:
         Gui*  m_pGui = nullptr;
         bool  m_Open = false;
+        bool  m_Ended = false;
     };
 
     ImFont* getFont(const char* name);

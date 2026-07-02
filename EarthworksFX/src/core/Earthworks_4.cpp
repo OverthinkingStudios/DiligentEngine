@@ -328,6 +328,10 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
         fread(&data, sizeof(CameraData), 1, file);
         camera->getData() = data;
         fclose(file);
+        // camera.bin written before 2026-07 persists FrameHeight=1080 (screen
+        // pixels); it must be the 24mm film-back height or the FOV and the
+        // volume-fog ray basis (atmosphere.cpp) blow up. Force-correct it.
+        camera->getData().FrameHeight = 24.f;
     }
 
     std::ifstream is("earthworks4_presets.xml");
@@ -536,15 +540,22 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
             _renderContext->clearFbo(hdrFbo.get(), clearColor, 1.0f, 0, FboAttachmentType::All);
         }
 
-        terrain.onFrameRender(_renderContext, pTargetFbo, camera, viewport3d);
+        // Bring-up bypass (ew::gDebug.toggles.bypassHdr): render the scene straight
+        // into the swap chain and skip the tonemapper, so scene output cannot be
+        // lost in the HDR->tonemap step. Original path: scene -> hdrFbo ->
+        // tonemapper -> pTargetFbo.
+        const Fbo::SharedPtr& sceneFbo = ew::gDebug.toggles.bypassHdr ? pTargetFbo : hdrFbo;
 
-        // Orientation globe: drawn INTO the HDR FBO (before tonemapping) with depth
-        // testing so terrain occludes it. Where terrain exists the globe lines vanish,
-        // so the terrain silhouette is visible even if the terrain shades black.
+        terrain.onFrameRender(_renderContext, sceneFbo, camera, viewport3d);
+
+        // Orientation globe: drawn into the SAME FBO as the terrain (before any
+        // tonemapping) with depth testing so terrain occludes it. Where terrain
+        // exists the globe lines vanish, so the terrain silhouette is visible
+        // even if the terrain shades black.
         if (showDebugGrid && ew::gDebug.toggles.debugGlobe)
-            renderDebugGlobe(_renderContext, hdrFbo);
+            renderDebugGlobe(_renderContext, sceneFbo);
 
-        if (ew::gDebug.toggles.tonemapper)
+        if (!ew::gDebug.toggles.bypassHdr && ew::gDebug.toggles.tonemapper)
         {
             FALCOR_PROFILE("tonemapper");
             postProcess.tonemapper.Vars()->setTexture("hdr", hdrFbo->getColorTexture(0));

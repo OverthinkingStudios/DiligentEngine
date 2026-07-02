@@ -5249,6 +5249,10 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         terrainShader.Vars()["gConstantBuffer"]["view"] = view;
         terrainShader.Vars()["gConstantBuffer"]["viewproj"] = viewproj;
         terrainShader.Vars()["gConstantBuffer"]["eye"] = _camera->getPosition();
+        // Bring-up: replace full shading with a constant world-pos pattern
+        // (render_Tiles.hlsl psMain early-out) to test geometry independently
+        // of the sun/shadow/atmosphere inputs.
+        terrainShader.Vars()["PerFrameCB"]["gConstColor"] = (int)ew::gDebug.toggles.terrainConstColor;
         terrainShader.Vars()->setBuffer("tileLookup", split.buffer_lookup_terrain[CameraType_Main_Center]);      // FIXME2025 set the ccorrect view not 0
         terrainShader.renderIndirect(_renderContext, split.drawArgs_tiles, nullptr, CameraType_Main_Center, 1);
         ew::gDebug.live.terrainTileDraws++;
@@ -5488,6 +5492,13 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         const uint8_t* pData = (uint8_t*)split.buffer_feedback_read->map(Buffer::MapType::Read);
         std::memcpy(&split.feedback, pData, sizeof(GC_feedback));
         split.buffer_feedback_read->unmap();
+
+        // Surface the GPU-side main-view packing results (what the indirect
+        // draw will actually render) in the debug metrics.
+        ew::gDebug.live.gpuTerrainTiles  = split.feedback.numTerrainTiles[CameraType_Main_Center];
+        ew::gDebug.live.gpuTerrainBlocks = split.feedback.numTerrainBlocks[CameraType_Main_Center];
+        ew::gDebug.live.gpuTerrainTris   = split.feedback.numTerrainVerts[CameraType_Main_Center];
+        ew::gDebug.live.gpuQuads         = split.feedback.numQuads[CameraType_Main_Center];
 
         mouse.hit = false;
         if (split.feedback.tum_idx > 0)

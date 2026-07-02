@@ -9,6 +9,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace Falcor
 {
@@ -454,6 +455,15 @@ IDeviceObject* GetTextureBinding(const Texture* pTex, SHADER_RESOURCE_TYPE resTy
     {
         if (auto* pView = pTex->getUAV())
             return pView;
+        // A texture without BIND_UNORDERED_ACCESS bound to a RWTexture slot is
+        // always a bug: Diligent rejects the SRV fallback and the shader write
+        // silently disappears (this hid the flat-terrain bug where
+        // compute_tileBicubic could not write the tile elevation target). Warn
+        // once per texture so it can't hide again.
+        static std::unordered_set<const Texture*> s_WarnedNoUav;
+        if (s_WarnedNoUav.insert(pTex).second)
+            spdlog::error("Texture {}x{} bound to a UAV slot but created without UnorderedAccess bind flag - GPU writes to it are lost",
+                          pTex->getWidth(), pTex->getHeight());
         return pTex->getSRV(0, 1, 0, 1);
     }
     if (auto* pView = pTex->getSRV(0, 1, 0, 1))
@@ -608,7 +618,6 @@ void BindComputeVars(IPipelineState* pPSO, IShaderResourceBinding* pSRB, Compute
 
     const auto* pData = Internal::CmpData(*pVars);
     const auto  root  = Internal::CmpRoot(*pVars).m_pNode;
-    const auto  blockRoot = Internal::CmpBlockRoot(*pVars);
 
     for (const auto& res : program.Resources)
     {
@@ -671,38 +680,38 @@ void BindComputeVars(IPipelineState* pPSO, IShaderResourceBinding* pSRB, Compute
         }
     }
 
-    if (pData && !pData->Blob.empty() && blockRoot)
+    for (const auto& cbLayout : program.CBuffers)
     {
-        const auto* layout = FindCBufferLayout(program.CBuffers, blockRoot->Name.c_str());
-        if (layout)
+        std::vector<uint8_t> blob(cbLayout.Size, 0);
+        // Seed with a raw blob upload if one exists for this cbuffer
+        // (getParameterBlock("name")->setBlob(...) - e.g. the frustumFlags
+        // array for compute_tileBuildLookup, the split children for
+        // compute_tileSplitMerge, the ecotope constants). NOTE: the previous
+        // implementation only honoured raw blobs when dispatch() was called on
+        // the block-vars object itself - which Earthworks never does - so these
+        // uploads were silently dropped and the shaders ran on zeros.
+        if (pData)
         {
-            std::vector<uint8_t> blob = pData->Blob;
-            auto                 cb   = GetOrCreateConstantBuffer(*layout, blob);
-            ShaderResourceInfo   cbRes;
-            cbRes.Name   = layout->Name;
-            cbRes.Type   = SHADER_RESOURCE_TYPE_CONSTANT_BUFFER;
-            cbRes.Stages = SHADER_TYPE_COMPUTE;
-            BindShaderResource(pPSO, pSRB, cbRes, cb->GetDiligentBuffer(), PIPELINE_TYPE_COMPUTE);
-        }
-    }
-    else
-    {
-        for (const auto& cbLayout : program.CBuffers)
-        {
-            std::vector<uint8_t> blob(cbLayout.Size, 0);
-            if (root)
+            const auto blobIt = pData->Blobs.find(cbLayout.Name);
+            if (blobIt != pData->Blobs.end() && !blobIt->second.empty())
             {
-                const auto cbIt = root->Children.find(cbLayout.Name);
-                if (cbIt != root->Children.end())
-                    PackShaderVarNode(cbIt->second.get(), blob, cbLayout);
+                const size_t n = std::min<size_t>(blobIt->second.size(), blob.size());
+                std::memcpy(blob.data(), blobIt->second.data(), n);
             }
-            auto               cb = GetOrCreateConstantBuffer(cbLayout, blob);
-            ShaderResourceInfo cbRes;
-            cbRes.Name   = cbLayout.Name;
-            cbRes.Type   = SHADER_RESOURCE_TYPE_CONSTANT_BUFFER;
-            cbRes.Stages = cbLayout.Stages != SHADER_TYPE_UNKNOWN ? cbLayout.Stages : SHADER_TYPE_COMPUTE;
-            BindShaderResource(pPSO, pSRB, cbRes, cb->GetDiligentBuffer(), PIPELINE_TYPE_COMPUTE);
         }
+        // Per-member ShaderVar assignments overlay the raw blob.
+        if (root)
+        {
+            const auto cbIt = root->Children.find(cbLayout.Name);
+            if (cbIt != root->Children.end())
+                PackShaderVarNode(cbIt->second.get(), blob, cbLayout);
+        }
+        auto               cb = GetOrCreateConstantBuffer(cbLayout, blob);
+        ShaderResourceInfo cbRes;
+        cbRes.Name   = cbLayout.Name;
+        cbRes.Type   = SHADER_RESOURCE_TYPE_CONSTANT_BUFFER;
+        cbRes.Stages = cbLayout.Stages != SHADER_TYPE_UNKNOWN ? cbLayout.Stages : SHADER_TYPE_COMPUTE;
+        BindShaderResource(pPSO, pSRB, cbRes, cb->GetDiligentBuffer(), PIPELINE_TYPE_COMPUTE);
     }
 }
 
@@ -726,15 +735,24 @@ VALUE_TYPE MapIndexType(ResourceFormat format)
 GfxPipelineCacheKey MakeGfxPipelineKey(const GraphicsProgram* pProgram, TEXTURE_FORMAT rtvFmt, TEXTURE_FORMAT dsvFmt,
                                        const GraphicsState* pState, Vao::Topology topology)
 {
+    // hash-combine (boost style). The state objects are hashed by IDENTITY
+    // (pointer), which is correct here because Earthworks creates its state
+    // objects once at load and keeps them alive in shared_ptrs. Hashing only
+    // the *presence* of a state (the previous scheme) made e.g. "blend on" and
+    // "blend off" states collide onto one stale PSO.
+    const auto mix = [](GfxPipelineCacheKey h, GfxPipelineCacheKey v) {
+        return h ^ (v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2));
+    };
+
     GfxPipelineCacheKey key = reinterpret_cast<GfxPipelineCacheKey>(pProgram);
-    key ^= (static_cast<GfxPipelineCacheKey>(rtvFmt) << 8);
-    key ^= (static_cast<GfxPipelineCacheKey>(dsvFmt) << 24);
-    key ^= static_cast<GfxPipelineCacheKey>(topology) << 40;
+    key = mix(key, static_cast<GfxPipelineCacheKey>(rtvFmt));
+    key = mix(key, static_cast<GfxPipelineCacheKey>(dsvFmt));
+    key = mix(key, static_cast<GfxPipelineCacheKey>(topology));
     if (pState)
     {
-        if (pState->getBlendState()) key ^= 0x1000;
-        if (pState->getDepthStencilState()) key ^= 0x2000;
-        if (pState->getRasterizerState()) key ^= 0x4000;
+        key = mix(key, reinterpret_cast<GfxPipelineCacheKey>(pState->getBlendState().get()));
+        key = mix(key, reinterpret_cast<GfxPipelineCacheKey>(pState->getDepthStencilState().get()));
+        key = mix(key, reinterpret_cast<GfxPipelineCacheKey>(pState->getRasterizerState().get()));
     }
     return key;
 }
