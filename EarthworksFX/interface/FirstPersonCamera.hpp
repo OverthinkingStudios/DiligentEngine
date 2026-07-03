@@ -65,6 +65,8 @@ public:
     // clang-format on
 
     float3 GetPos() const { return m_Pos; }
+    float  GetYaw() const { return m_fYawAngle; }
+    float  GetPitch() const { return m_fPitchAngle; }
     float  GetMoveSpeed() const { return m_fMoveSpeed; }
     float  GetCurrentSpeed() const { return m_fCurrentSpeed; }
 

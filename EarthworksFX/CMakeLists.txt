@@ -32,6 +32,7 @@ set(EFX_APP_SOURCES
     src/app/EarthworksFXApplicationBase.cpp
     src/app/EarthworksFXWindowBase.cpp
     src/app/FirstPersonCamera.cpp
+    src/app/TestFlightController.cpp
 )
 
 set(EFX_INPUT_SOURCES "")
@@ -41,6 +42,7 @@ set(EFX_APP_INCLUDES
     interface/EarthworksFXWindowBase.hpp
     interface/FirstPersonCamera.hpp
     interface/InputController.hpp
+    interface/TestFlightController.hpp
 )
 
 if(PLATFORM_WIN32)
@@ -158,7 +160,8 @@ source_group("src/compat" FILES
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src/app" PREFIX "src/app" FILES
     src/app/EarthworksFXApplicationBase.cpp
     src/app/EarthworksFXWindowBase.cpp
-    src/app/FirstPersonCamera.cpp)
+    src/app/FirstPersonCamera.cpp
+    src/app/TestFlightController.cpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src/input" PREFIX "src/input" FILES ${EFX_INPUT_SOURCES})
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/interface" PREFIX "interface" FILES ${EFX_APP_INCLUDES})
 set_target_properties(EarthworksFX PROPERTIES FOLDER "EarthworksFX")

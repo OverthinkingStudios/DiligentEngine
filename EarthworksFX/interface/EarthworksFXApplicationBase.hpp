@@ -23,6 +23,7 @@ namespace Diligent
 {
 
 class ImGuiImplDiligent;
+class TestFlightController;
 
 struct EarthworksFXAppSettings
 {
@@ -73,6 +74,13 @@ public:
     bool IsReady() const override final {
         return m_pDevice && m_pSwapChain && m_NumImmediateContexts > 0;
     }
+
+    /// Exit code of the process; a --testflight run reports its failure count here.
+    int GetExitCode() const override final { return m_ExitCode; }
+
+    /// True while a --testflight run drives the application (input ignored, UI
+    /// reduced to the testflight badge, camera under script control).
+    bool IsTestFlightActive() const { return m_TestFlight != nullptr; }
 
     IDeviceContext* GetImmediateContext(size_t Ind = 0) {
         VERIFY_EXPR(Ind < m_NumImmediateContexts);
@@ -180,6 +188,11 @@ protected:
     /// when no terrain scene exists.
     void DrawEarthworksDebugUI();
 
+    /// Testflight editor window: browse/create the flight sets under
+    /// <UserData>/testflights, reorder/preview cameras, append the live camera.
+    /// Part of DrawCommonUI(); safe to call from any UpdateUI() override.
+    void DrawTestFlightsUI();
+
     /// The Earthworks terrain scene owned by the base. Only valid when scene
     /// creation is enabled (the default); guard with HasEarthworksScene() in apps
     /// that run with EarthworksFXAppSettings::CreateScene == false.
@@ -266,6 +279,11 @@ private:
     int m_ValidationLevel = -1;
     bool m_bFullScreenMode = false;
     bool m_CreateScene = true;
+
+    // --- testflight mode (--testflight <name|path>) --------------------------
+    std::unique_ptr<TestFlightController> m_TestFlight;
+    bool m_TestFlightExitPosted = false;
+    int  m_ExitCode             = 0;
 
     // --- Earthworks rendering environment owned by the base -----------------
     std::unique_ptr<Falcor::EarthworksWrapper> m_FalcorWrapper;

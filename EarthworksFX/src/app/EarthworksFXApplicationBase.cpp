@@ -1,6 +1,7 @@
 #include "EarthworksFXApplicationBase.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 
 #include "Errors.hpp"
@@ -12,6 +13,8 @@
 #include "ImGuiUtils.hpp"
 
 #include "EarthworksDebug.h"
+#include "TestFlightData.h"
+#include "TestFlightController.hpp"
 
 #include "ots/Log.hpp"
 #include "ots/CrashGuard.hpp"
@@ -211,6 +214,37 @@ AppBase::CommandLineStatus EarthworksFXApplicationBase::ProcessCommandLine(int a
     bool FirstPersonCamera = m_Window.GetFirstPersonCameraEnabled();
     ArgsParser.Parse("first_person_camera", FirstPersonCamera);
     m_Window.SetFirstPersonCameraEnabled(FirstPersonCamera);
+
+    // --- testflight mode -----------------------------------------------------
+    std::string TestFlightArg;
+    ArgsParser.Parse("testflight", TestFlightArg);
+    if (!TestFlightArg.empty())
+    {
+        TestFlightController::Options TFOpts;
+        TFOpts.FlightArg = TestFlightArg;
+        ArgsParser.Parse("tf_camera", TFOpts.OnlyCamera);
+        ArgsParser.Parse("tf_lossless", TFOpts.Lossless);
+        ArgsParser.Parse("tf_settle_ms", TFOpts.SettleMsOverride);
+        ArgsParser.Parse("tf_jpg_quality", TFOpts.JpgQuality);
+
+        m_TestFlight = std::make_unique<TestFlightController>(TFOpts);
+        if (!m_TestFlight->LoadFlight())
+        {
+            m_TestFlight.reset();
+            return CommandLineStatus::Error;
+        }
+
+        // A testflight enforces its environment: exact (windowed) window size,
+        // vsync off for honest timings, camera under script control. ShowUI stays
+        // on so the badge is burned into the captures; the regular UI is
+        // suppressed in Update() instead.
+        const ew::TestFlight& Flight = m_TestFlight->GetFlight();
+        if (Flight.windowWidth > 0 && Flight.windowHeight > 0)
+            m_Window.SetInitialSize(Flight.windowWidth, Flight.windowHeight);
+        m_Window.SetVSync(false);
+        m_Window.SetShowUI(true);
+        m_Window.SetFirstPersonCameraEnabled(true);
+    }
 
 #if !VULKAN_SUPPORTED
     if (m_DeviceType == RENDER_DEVICE_TYPE_VULKAN)
@@ -519,6 +553,14 @@ void EarthworksFXApplicationBase::InitializeGraphicsResources()
     OnWindowResized(SCDesc.Width, SCDesc.Height);
     UpdateFirstPersonCameraProjAttribs();
 
+    if (m_TestFlight)
+    {
+        std::string DeviceString{GetRenderDeviceTypeString(m_DeviceType)};
+        DeviceString += " / ";
+        DeviceString += m_pDevice->GetAdapterInfo().Description;
+        m_TestFlight->OnGraphicsReady(m_pDevice, m_pSwapChain, m_pImmediateContext, DeviceString);
+    }
+
     OnGraphicsReady();
 }
 
@@ -606,13 +648,39 @@ void EarthworksFXApplicationBase::Update(double CurrTime, double ElapsedTime)
 
     if (m_pDevice)
     {
-        const bool DoUpdateUI = m_Window.GetShowUI();
-        if (UseFirstPersonCamera())
+        const bool TestFlightActive = m_TestFlight != nullptr;
+        const bool DoUpdateUI       = m_Window.GetShowUI() && !TestFlightActive;
+
+        // In testflight mode user input is ignored; the controller owns the camera.
+        if (UseFirstPersonCamera() && !TestFlightActive)
             UpdateFirstPersonCamera(static_cast<float>(ElapsedTime));
+
+        if (TestFlightActive)
+        {
+            Falcor::Camera* pSceneCamera = m_Earthworks ? m_Earthworks->getCamera().get() : nullptr;
+            const bool      SceneReady   = m_CreateScene ? m_Initialized : true;
+            m_TestFlight->Update(CurrTime, ElapsedTime, m_FirstPersonCamera, pSceneCamera, SceneReady);
+        }
+
         OnUpdate(CurrTime, ElapsedTime, DoUpdateUI);
         if (DoUpdateUI)
             UpdateUI();
+        else if (TestFlightActive && m_Window.GetShowUI())
+            m_TestFlight->DrawBadgeUI();
         m_InputController.ClearState();
+
+        if (TestFlightActive && m_TestFlight->IsFinished() && !m_TestFlightExitPosted)
+        {
+            m_TestFlightExitPosted = true;
+            m_ExitCode             = m_TestFlight->GetExitCode();
+#if PLATFORM_WIN32
+            PostQuitMessage(m_ExitCode);
+#else
+            // No quit path on this platform yet (testflights are Windows-first);
+            // the run folder is complete at this point.
+            LOG_WARNING_MESSAGE("Testflight finished; automatic exit is not implemented on this platform");
+#endif
+        }
     }
 }
 
@@ -630,6 +698,231 @@ void EarthworksFXApplicationBase::DrawCommonUI()
     ImGui::End();
 
     DrawEarthworksDebugUI();
+    DrawTestFlightsUI();
+}
+
+void EarthworksFXApplicationBase::DrawTestFlightsUI()
+{
+    // Deliberately self-contained (static locals, no class members): ImGui code
+    // will be rehomed during a later base-class cleanup, this keeps the move cheap.
+    namespace fs = std::filesystem;
+
+    static std::vector<std::string> s_Flights;   // flight names (json stems)
+    static bool                     s_Scanned  = false;
+    static int                      s_Selected = -1;
+    static ew::TestFlight           s_Flight;
+    static bool                     s_Loaded = false;
+    static bool                     s_Dirty  = false;
+    static char                     s_NewName[64] = "";
+    static std::string              s_Status;
+
+    const auto Rescan = []() {
+        s_Flights.clear();
+        std::error_code ec;
+        for (const fs::directory_entry& Entry : fs::directory_iterator(TestFlightController::GetTestflightsDir(), ec))
+        {
+            if (Entry.is_regular_file(ec) && Entry.path().extension() == ".json")
+                s_Flights.push_back(Entry.path().stem().string());
+        }
+        std::sort(s_Flights.begin(), s_Flights.end());
+    };
+
+    const auto LoadSelected = []() {
+        s_Loaded = false;
+        s_Dirty  = false;
+        if (s_Selected < 0 || s_Selected >= static_cast<int>(s_Flights.size()))
+            return;
+        const fs::path Path = TestFlightController::GetTestflightsDir() / (s_Flights[static_cast<size_t>(s_Selected)] + ".json");
+        std::string    Error;
+        if (ew::LoadTestFlight(Path.string(), s_Flight, Error))
+        {
+            s_Loaded = true;
+            s_Status = "loaded " + Path.filename().string();
+        }
+        else
+        {
+            s_Status = Error;
+        }
+    };
+
+    ImGui::SetNextWindowPos(ImVec2(350, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(430, 380), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Testflights"))
+    {
+        if (!s_Scanned)
+        {
+            Rescan();
+            s_Scanned = true;
+        }
+
+        Falcor::Camera* pSceneCamera = HasEarthworksScene() ? GetEarthworks().getCamera().get() : nullptr;
+
+        // --- flight selection ------------------------------------------------
+        const char* Preview = (s_Selected >= 0 && s_Selected < static_cast<int>(s_Flights.size()))
+            ? s_Flights[static_cast<size_t>(s_Selected)].c_str()
+            : "<select flight>";
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::BeginCombo("##flight", Preview))
+        {
+            for (int i = 0; i < static_cast<int>(s_Flights.size()); ++i)
+            {
+                if (ImGui::Selectable(s_Flights[static_cast<size_t>(i)].c_str(), i == s_Selected))
+                {
+                    s_Selected = i;
+                    LoadSelected();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("rescan"))
+            Rescan();
+
+        ImGui::SetNextItemWidth(220);
+        ImGui::InputTextWithHint("##newflight", "new_name", s_NewName, sizeof(s_NewName));
+        ImGui::SameLine();
+        if (ImGui::SmallButton("create") && s_NewName[0] != '\0')
+        {
+            ew::TestFlight NewFlight;
+            NewFlight.name = s_NewName;
+            if (m_pSwapChain)
+            {
+                const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
+                NewFlight.windowWidth       = static_cast<int>(SCDesc.Width);
+                NewFlight.windowHeight      = static_cast<int>(SCDesc.Height);
+            }
+            const fs::path Path = TestFlightController::GetTestflightsDir() / (NewFlight.name + ".json");
+            std::string    Error;
+            if (ew::SaveTestFlight(Path.string(), NewFlight, Error))
+            {
+                Rescan();
+                const auto it = std::find(s_Flights.begin(), s_Flights.end(), std::string{s_NewName});
+                s_Selected    = it != s_Flights.end() ? static_cast<int>(it - s_Flights.begin()) : -1;
+                LoadSelected();
+                s_NewName[0] = '\0';
+            }
+            else
+            {
+                s_Status = Error;
+            }
+        }
+
+        // --- selected flight --------------------------------------------------
+        if (s_Loaded)
+        {
+            ImGui::SeparatorText(s_Flight.name.c_str());
+            ImGui::Text("window %dx%d", s_Flight.windowWidth, s_Flight.windowHeight);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("set from current") && m_pSwapChain)
+            {
+                const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
+                s_Flight.windowWidth        = static_cast<int>(SCDesc.Width);
+                s_Flight.windowHeight       = static_cast<int>(SCDesc.Height);
+                s_Dirty                     = true;
+            }
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputInt("settle ms", &s_Flight.settleMs, 0))
+                s_Dirty = true;
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputInt("timeout ms", &s_Flight.settleTimeoutMs, 0))
+                s_Dirty = true;
+
+            // --- camera list --------------------------------------------------
+            int MoveUp = -1, MoveDown = -1, Remove = -1;
+            for (int i = 0; i < static_cast<int>(s_Flight.shots.size()); ++i)
+            {
+                ew::TestFlightShot& Shot = s_Flight.shots[static_cast<size_t>(i)];
+                ImGui::PushID(i);
+
+                ImGui::Text("%02d", i);
+                ImGui::SameLine();
+                char NameBuf[64];
+                std::snprintf(NameBuf, sizeof(NameBuf), "%s", Shot.name.c_str());
+                ImGui::SetNextItemWidth(140);
+                if (ImGui::InputText("##name", NameBuf, sizeof(NameBuf)))
+                {
+                    Shot.name = NameBuf;
+                    s_Dirty   = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("view"))
+                    TestFlightController::ApplyShotToCamera(Shot, m_FirstPersonCamera, pSceneCamera);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("up"))
+                    MoveUp = i;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("dn"))
+                    MoveDown = i;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("del"))
+                    Remove = i;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("pos (%.1f  %.1f  %.1f)  yaw %.2f  pitch %.2f  fov %.1f",
+                                      Shot.posX, Shot.posY, Shot.posZ, Shot.yaw, Shot.pitch, Shot.fovYDeg);
+
+                ImGui::PopID();
+            }
+            if (MoveUp > 0)
+            {
+                std::swap(s_Flight.shots[static_cast<size_t>(MoveUp)], s_Flight.shots[static_cast<size_t>(MoveUp) - 1]);
+                s_Dirty = true;
+            }
+            if (MoveDown >= 0 && MoveDown + 1 < static_cast<int>(s_Flight.shots.size()))
+            {
+                std::swap(s_Flight.shots[static_cast<size_t>(MoveDown)], s_Flight.shots[static_cast<size_t>(MoveDown) + 1]);
+                s_Dirty = true;
+            }
+            if (Remove >= 0)
+            {
+                s_Flight.shots.erase(s_Flight.shots.begin() + Remove);
+                s_Dirty = true;
+            }
+
+            // --- actions ------------------------------------------------------
+            if (ImGui::Button("add current"))
+            {
+                ew::TestFlightShot Shot = TestFlightController::CaptureShotFromCamera(m_FirstPersonCamera, pSceneCamera);
+                Shot.name               = "cam_" + std::to_string(s_Flight.shots.size());
+                s_Flight.shots.push_back(std::move(Shot));
+                s_Dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("save"))
+            {
+                const fs::path Path = TestFlightController::GetTestflightsDir() / (s_Flights[static_cast<size_t>(s_Selected)] + ".json");
+                std::string    Error;
+                if (ew::SaveTestFlight(Path.string(), s_Flight, Error))
+                {
+                    s_Dirty  = false;
+                    s_Status = "saved " + Path.filename().string();
+                }
+                else
+                {
+                    s_Status = Error;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("reload"))
+                LoadSelected();
+            if (s_Dirty)
+            {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.f, 0.6f, 0.2f, 1.f), "unsaved");
+            }
+
+            ImGui::TextDisabled("run: --testflight %s", s_Flight.name.c_str());
+        }
+        else
+        {
+            ImGui::TextDisabled("no flight selected");
+            ImGui::TextDisabled("folder: %s", TestFlightController::GetTestflightsDir().string().c_str());
+        }
+
+        if (!s_Status.empty())
+            ImGui::TextDisabled("%s", s_Status.c_str());
+    }
+    ImGui::End();
 }
 
 void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
@@ -914,7 +1207,13 @@ void EarthworksFXApplicationBase::Present()
     if (!m_pSwapChain)
         return;
 
+    if (m_TestFlight)
+        m_TestFlight->PrePresent();
+
     m_pSwapChain->Present(m_Window.GetVSync() ? 1 : 0);
+
+    if (m_TestFlight)
+        m_TestFlight->PostPresent();
 }
 
 #if PLATFORM_WIN32

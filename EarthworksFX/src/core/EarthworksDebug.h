@@ -86,7 +86,7 @@ struct DebugToggles
     // HDR buffer + tonemapper from the pipeline entirely so anything the scene
     // produces is guaranteed to reach the screen. Turn OFF to restore the
     // original path (scene -> hdrFbo -> tonemapper -> swap chain).
-    bool bypassHdr = true;
+    bool bypassHdr = false;
     bool tonemapper = true;    // no effect while bypassHdr is on
     // Tonemapper output mode (compute_tonemapper.hlsl). Because everything that
     // renders into the HDR FBO reaches the screen ONLY through this pass, it is the
