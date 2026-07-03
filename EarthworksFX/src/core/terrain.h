@@ -29,6 +29,7 @@
 #include "Falcor.h"
 #include "computeShader.h"
 #include "pixelShader.h"
+#include "buildings.h"     // PORT NOTE: new far-LOD buildings delegate
 
 #include <thread>
 #include "Barrier.hpp"
@@ -606,6 +607,7 @@ public:
     Buffer::SharedPtr   rappersvilleData;
     //Buffer::SharedPtr   drawArgs_rappersville;
     int numrapperstri = 0;
+    buildingsRenderer   buildings;     // PORT NOTE: replaces the commented-out rappersville blocks, see buildings.h
 
     pixelShader         gliderwingShader;
     uint    wingloadedCnt;

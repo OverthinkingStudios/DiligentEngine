@@ -68,6 +68,7 @@ struct DebugToggles
     // --- terrain.onFrameRender passes ----------------------------------
     bool skydome      = true;
     bool terrainTiles = true;    // the indirect terrain-tile draw
+    bool buildings    = true;    // far-LOD building volumes (buildingsRenderer)
     bool billboards   = true;    // terrain sprite/billboard quads
     bool plants       = true;    // plants_Root + plant clip/lod compute
     bool ribbons      = true;    // paraglider ribbons (glider mode)
@@ -124,6 +125,7 @@ struct DebugMetrics
     // Per-pass draw submissions counted this frame.
     uint32_t skydomeDraws     = 0;
     uint32_t terrainTileDraws = 0;
+    uint32_t buildingDraws    = 0;
     uint32_t billboardDraws   = 0;
     uint32_t plantDraws       = 0;
     uint32_t ribbonDraws      = 0;
@@ -165,7 +167,7 @@ struct DebugMetrics
 
     void resetCounters()
     {
-        skydomeDraws = terrainTileDraws = billboardDraws = plantDraws = 0;
+        skydomeDraws = terrainTileDraws = buildingDraws = billboardDraws = plantDraws = 0;
         ribbonDraws = splineDraws = tonemapperDraws = overlayDraws = 0;
         debugGlobeDraws = debugGridDraws = 0;
         vegetationEarlyOut = false;

@@ -930,6 +930,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
             numrapperstri = numVerts / 3;
             //drawArgs_rappersville = Buffer::createStructured(sizeof(t_DrawArguments), 1, Resource::BindFlags::UnorderedAccess | Resource::BindFlags::IndirectArg);
             */
+            buildings.load(settings.dirRoot + "/buildings/rappersville");   // PORT NOTE: block above delegated to buildingsRenderer
         }
 
 
@@ -3931,6 +3932,7 @@ void terrainManager::updateShaderConstants(Texture::SharedPtr _previousFrame, sh
     rappersvilleShader.Vars()["LightsCB"]["fog_far_log_F"] = _buffer.fog_far_log_F;
     rappersvilleShader.Vars()["LightsCB"]["fog_far_one_over_k"] = _buffer.fog_far_one_over_k;
     */
+    buildings.updateShaderConstants(terrainShadowTexture, _buffer);   // PORT NOTE: block above delegated to buildingsRenderer
     /*gliderwingShader.Vars()["LightsCB"]["sunDirection"] = _buffer.sunDirection;
     gliderwingShader.Vars()["LightsCB"]["sunRightVector"] = _buffer.sunRightVector;
     gliderwingShader.Vars()["LightsCB"]["sunUpVector"] = _buffer.sunUpVector;
@@ -5274,6 +5276,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         rappersvilleShader.Vars()["PerFrameCB"]["eye"] = _camera->getPosition();
         rappersvilleShader.drawInstanced(_renderContext, 3, numrapperstri);
         */
+        buildings.render(_renderContext, _fbo, _viewport, view, viewproj, _camera->getPosition());   // PORT NOTE: block above delegated to buildingsRenderer
     }
 
     {

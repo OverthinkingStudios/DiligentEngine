@@ -288,6 +288,7 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
         //terrain.rappersvilleShader.Vars()->setTexture("gAtmosphereInscatter", atmosphere.getFar().inscatter);
         //terrain.rappersvilleShader.Vars()->setTexture("gAtmosphereOutscatter", atmosphere.getFar().outscatter);
         //terrain.rappersvilleShader.Vars()->setTexture("SunInAtmosphere", atmosphere.sunlightTexture);
+        terrain.buildings.setAtmosphere(atmosphere.getFar().inscatter, atmosphere.getFar().outscatter, atmosphere.sunlightTexture);   // PORT NOTE: lines above delegated to buildingsRenderer
 
         //terrain.gliderwingShader.Vars()->setTexture("gAtmosphereInscatter", atmosphere.getFar().inscatter);
         //terrain.gliderwingShader.Vars()->setTexture("gAtmosphereOutscatter", atmosphere.getFar().outscatter);

@@ -981,6 +981,7 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         ImGui::SeparatorText("Render passes");
         ImGui::Checkbox("skydome", &t.skydome);
         ImGui::Checkbox("terrain tiles", &t.terrainTiles);
+        ImGui::Checkbox("buildings", &t.buildings);
         ImGui::Checkbox("billboards", &t.billboards);
         ImGui::Checkbox("plants", &t.plants);
         ImGui::Checkbox("ribbons (glider)", &t.ribbons);
@@ -1042,7 +1043,7 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         if (ImGui::SmallButton("isolate terrain"))
         {
             t = ew::DebugToggles{};
-            t.skydome = t.billboards = t.plants = t.ribbons = t.splines = t.overlay = false;
+            t.skydome = t.buildings = t.billboards = t.plants = t.ribbons = t.splines = t.overlay = false;
             t.earthworksGui = false;
         }
 
@@ -1050,6 +1051,7 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         ImGui::SeparatorText("Draws this frame");
         ImGui::Text("skydome      %u", m.skydomeDraws);
         ImGui::Text("terrainTiles %u", m.terrainTileDraws);
+        ImGui::Text("buildings    %u", m.buildingDraws);
         ImGui::Text("billboards   %u", m.billboardDraws);
         ImGui::Text("plants       %u", m.plantDraws);
         ImGui::Text("ribbons      %u", m.ribbonDraws);

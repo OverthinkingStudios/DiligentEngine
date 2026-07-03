@@ -233,6 +233,7 @@ bool TestFlightController::ApplyDebugToggle(const std::string& Name, bool Value)
         {"syncCamera", &T::syncCamera},
         {"skydome", &T::skydome},
         {"terrainTiles", &T::terrainTiles},
+        {"buildings", &T::buildings},
         {"billboards", &T::billboards},
         {"plants", &T::plants},
         {"ribbons", &T::ribbons},
