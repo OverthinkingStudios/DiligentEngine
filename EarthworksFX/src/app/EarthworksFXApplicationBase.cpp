@@ -293,10 +293,39 @@ void EarthworksFXApplicationBase::InitializeDiligentEngine(const NativeWindow* p
                 LOG_ERROR_AND_THROW("Failed to load Direct3D12");
             m_pEngineFactory = pFactoryD3D12;
 
+            // Same rationale as the Vulkan branch (BRINGUP_NOTES F12): in Debug
+            // builds Diligent turns validation failures into a MODAL MessageBox
+            // on the render thread, which looks like a freeze. Log instead.
+            pFactoryD3D12->SetBreakOnError(false);
+
             EngineD3D12CreateInfo EngineCI;
             EngineCI.GraphicsAPIVersion = {11, 0};
             if (m_ValidationLevel >= 0)
                 EngineCI.SetValidationLevel(static_cast<VALIDATION_LEVEL>(m_ValidationLevel));
+
+            // D3D12 analog of the Vulkan F13 fix (see BRINGUP_NOTES F18): all
+            // compat-layer variables are DYNAMIC, so EVERY CommitShaderResources
+            // (i.e. every draw) allocates fresh GPU-visible descriptors from the
+            // DYNAMIC region of the descriptor heap, and the sprite/ribbon/
+            // vegetation shaders declare Texture2D textures_T[4096] -> ~4100
+            // CBV/SRV/UAV descriptors PER DRAW. Unlike Vulkan (whose descriptor
+            // pools grow on demand), the D3D12 shader-visible heap is ONE fixed
+            // heap sized here; the default dynamic region (8192) is exhausted by
+            // the second big-array draw of the first frame. When that happens in
+            // a Release build, CommitRootTables copies into a null descriptor
+            // handle and crashes inside the driver (the only hint is a
+            // "Dynamic space in ... GPU descriptor heap is exhausted" log line).
+            // Budget: dynamic descriptors are recycled only when the GPU finishes
+            // the frame, so this must cover (per-frame demand) x (frames in
+            // flight). Total heap (static + dynamic) must stay below the D3D12
+            // limit of 1,000,000. Tune with the end-of-run
+            // "GPU heap max allocated size (static|dynamic)" log statistics.
+            EngineCI.GPUDescriptorHeapDynamicSize[0] = 786432; // CBV/SRV/UAV (default 8192)
+            // The sampler heap is capped at 2048 TOTAL by D3D12. All samplers in
+            // this app are DYNAMIC variables too, so give the dynamic region
+            // nearly everything (defaults are 1024/1024).
+            EngineCI.GPUDescriptorHeapSize[1]        = 128;
+            EngineCI.GPUDescriptorHeapDynamicSize[1] = 1920;
 
             EngineCI.AdapterId = FindAdapter(pFactoryD3D12, EngineCI.GraphicsAPIVersion);
             ModifyEngineInitInfo({pFactoryD3D12, m_DeviceType, EngineCI, m_SwapChainInitDesc});
