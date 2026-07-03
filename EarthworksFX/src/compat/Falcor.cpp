@@ -2,6 +2,7 @@
 #include "FalcorGpuInternal.hpp"
 
 #include "GraphicsAccessories.hpp"
+#include "TextureUtilities.h"
 
 #include "imgui.h"
 
@@ -728,15 +729,77 @@ Texture::SharedPtr Texture::createCube(uint32_t size, Falcor::ResourceFormat for
     return tex;
 }
 
-Texture::SharedPtr Texture::createFromFile(const char* path, bool, bool, Resource::BindFlags bind_flags)
+Texture::SharedPtr Texture::createFromFile(const char* path, bool generateMipLevels, bool loadAsSrgb, Resource::BindFlags bind_flags)
 {
-    (void)path;
-    return create2D(1, 1, static_cast<TEXTURE_FORMAT>(ResourceFormat::RGBA8Unorm), 1, 1, nullptr, bind_flags);
+    return createFromFile(std::filesystem::path(path ? path : ""), generateMipLevels, loadAsSrgb, bind_flags);
 }
 
-Texture::SharedPtr Texture::createFromFile(const std::filesystem::path& path, bool srgb, bool generateMips, Resource::BindFlags bind_flags)
+Texture::SharedPtr Texture::createFromFile(const std::filesystem::path& path, bool generateMipLevels, bool loadAsSrgb, Resource::BindFlags bind_flags)
 {
-    return createFromFile(path.string().c_str(), srgb, generateMips, bind_flags);
+    std::filesystem::path resolved = path;
+    if (!std::filesystem::exists(resolved))
+    {
+        for (const auto& dir : g_DataDirectories)
+        {
+            std::filesystem::path candidate = dir / path;
+            if (std::filesystem::exists(candidate))
+            {
+                resolved = std::move(candidate);
+                break;
+            }
+        }
+    }
+
+    if (!g_pDevice)
+    {
+        EFX_LOG_STUB("Texture::createFromFile without device");
+    }
+    else if (!std::filesystem::exists(resolved) || std::filesystem::is_directory(resolved))
+    {
+        spdlog::warn("Texture::createFromFile: file not found '{}'", path.string());
+    }
+    else
+    {
+        const std::string resolvedStr = resolved.string();
+        const std::string name        = resolved.filename().string();
+
+        Diligent::TextureLoadInfo loadInfo;
+        loadInfo.Name         = name.c_str();
+        loadInfo.IsSRGB       = loadAsSrgb;
+        loadInfo.GenerateMips = generateMipLevels;
+        loadInfo.BindFlags    = static_cast<Diligent::BIND_FLAGS>(bind_flags);
+
+        Diligent::RefCntAutoPtr<Diligent::ITexture> pDiligentTex;
+        Diligent::CreateTextureFromFile(resolvedStr.c_str(), loadInfo, g_pDevice, &pDiligentTex);
+        if (pDiligentTex)
+        {
+            const Diligent::TextureDesc& desc = pDiligentTex->GetDesc();
+
+            auto tex          = std::make_shared<Texture>();
+            tex->m_pTexture   = pDiligentTex;
+            tex->m_Width      = desc.Width;
+            tex->m_Height     = desc.Height;
+            tex->m_Format     = desc.Format;
+            tex->m_MipCount   = desc.MipLevels;
+            tex->m_Name       = name;
+            tex->m_SourcePath = path;
+            if (bind_flags & Resource::BindFlags::ShaderResource)
+                CreateTextureView(tex->m_pTexture, Diligent::TEXTURE_VIEW_SHADER_RESOURCE, tex->m_SRV);
+            if (bind_flags & Resource::BindFlags::RenderTarget)
+                CreateTextureView(tex->m_pTexture, Diligent::TEXTURE_VIEW_RENDER_TARGET, tex->m_RTV);
+            if (bind_flags & Resource::BindFlags::UnorderedAccess)
+                CreateTextureView(tex->m_pTexture, Diligent::TEXTURE_VIEW_UNORDERED_ACCESS, tex->m_UAV);
+            return tex;
+        }
+        spdlog::error("Texture::createFromFile: failed to load '{}'", resolvedStr);
+    }
+
+    // Fallback: 1x1 fully TRANSPARENT black so alpha-blended consumers
+    // (terrafector bake!) never paint solid garbage from a missing texture.
+    const uint32_t zeroTexel = 0;
+    auto           tex       = create2D(1, 1, ResourceFormat::RGBA8Unorm, 1, 1, &zeroTexel, (uint32_t)bind_flags);
+    tex->m_SourcePath        = path;
+    return tex;
 }
 
 uint32_t Texture::getWidth() const { return m_Width; }

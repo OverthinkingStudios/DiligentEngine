@@ -530,8 +530,10 @@ public:
     static SharedPtr create2D(uint32_t width, uint32_t height, Falcor::ResourceFormat format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
     static SharedPtr create3D(uint32_t width, uint32_t height, uint32_t depth, Falcor::ResourceFormat format, uint32_t mipLevels, const void* pData, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
     static SharedPtr createCube(uint32_t size, Falcor::ResourceFormat format, uint32_t bindFlags = (uint32_t)Resource::BindFlags::ShaderResource);
-    static SharedPtr createFromFile(const char* path, bool srgb, bool generateMips, Resource::BindFlags bind_flags = Resource::BindFlags::ShaderResource);
-    static SharedPtr createFromFile(const std::filesystem::path& path, bool srgb, bool generateMips, Resource::BindFlags bind_flags = Resource::BindFlags::ShaderResource);
+    // Falcor argument order: (path, generateMipLevels, loadAsSrgb) — the core
+    // call sites were written against that signature, do not swap the bools.
+    static SharedPtr createFromFile(const char* path, bool generateMipLevels, bool loadAsSrgb, Resource::BindFlags bind_flags = Resource::BindFlags::ShaderResource);
+    static SharedPtr createFromFile(const std::filesystem::path& path, bool generateMipLevels, bool loadAsSrgb, Resource::BindFlags bind_flags = Resource::BindFlags::ShaderResource);
 
     const std::string& getName() const { return m_Name; }
     void setName(const std::string& name) { m_Name = name; }
