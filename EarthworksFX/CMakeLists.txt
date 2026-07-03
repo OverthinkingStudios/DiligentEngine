@@ -79,6 +79,12 @@ target_include_directories(EarthworksFX
         "${CMAKE_CURRENT_SOURCE_DIR}/interface"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/core")
 
+# Committed testflight scenario jsons (see TESTFLIGHTS.md). Dev-machine builds
+# read/write them straight in the source tree so flights are versioned with the
+# code; deployed builds fall back to <cwd>/testflights.
+target_compile_definitions(EarthworksFX PRIVATE
+    "EFX_TESTFLIGHTS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/testflights\"")
+
 if(NOT EARTHWORKS_WITH_OPENJPH OR NOT EARTHWORKS_WITH_ASSIMP)
     message(FATAL_ERROR
         "EarthworksFX requires OpenJPH and Assimp from Earthworks "

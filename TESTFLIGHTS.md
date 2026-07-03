@@ -37,7 +37,7 @@ Options:
 
 | Flag | Meaning |
 |---|---|
-| `--testflight <name\|path>` | Flight name (resolved to `<UserData>/testflights/<name>.json`) or explicit json path |
+| `--testflight <name\|path>` | Flight name (resolved to `EarthworksFX/testflights/<name>.json` in the source tree) or explicit json path |
 | `--tf_camera <index>` | Fly only this camera (e.g. to re-shoot one suspicious view) |
 | `--tf_lossless` | Additionally write one lossless PNG per camera |
 | `--tf_settle_ms <n>` | Override the flight's per-camera settle time |
@@ -50,15 +50,20 @@ make sure the right terrain is configured before comparing runs.
 Exit code: `0` = all cameras captured and settled; otherwise the number of
 settle timeouts + capture failures (details in metrics.json).
 
-## Where results land
+## Where things live
 
-`<UserData>` is the app's user-data folder (on Windows typically
-`%LOCALAPPDATA%/<app>` — the exact path is printed in the log at startup and the
-full run-folder path is printed at the end of every run).
+**Flight definitions are committed** in the repo at `EarthworksFX/testflights/*.json`
+(dev builds bake this source path in at compile time; the in-app editor reads and
+writes there directly, so authored flights show up in `git status`).
+
+**Run outputs go to user data.** `<UserData>` is the app's data folder under
+`Saved Games/Overthinking Studios/<app>-<stage>` — the exact run-folder path is
+printed in the log at the end of every run.
 
 ```
+EarthworksFX/testflights/<flight>.json      committed flight definitions
+
 <UserData>/testflights/
-  <flight>.json                  flight definitions (editable in-app, see below)
   <flight>/<timestamp>/          one folder per run; latest = greatest timestamp
     grid.jpg                     ALL cameras tiled row-major - read this first
     metrics.json                 per-camera fps/settle/renderer metrics - read this second
@@ -86,11 +91,13 @@ Interpreting a run as an agent:
 In any EarthworksFX app: ImGui window **Testflights** (part of the common UI) —
 select or create a flight, fly somewhere, "add current" to append the live camera
 (position/yaw/pitch/FOV/near/far), reorder with up/dn, preview with "view",
-then "save". Files are plain json under `<UserData>/testflights/` and can be
+then "save". Files are plain json under `EarthworksFX/testflights/` and can be
 edited by hand; per-camera `toggles` accept `ew::DebugToggles` field names
 (e.g. `"terrainConstColor": true` for a diagnostic shot).
 
-Flight-level fields: `window` [w,h] (enforced), `settleMs` (minimum hold per
+Flight-level fields: `terrain` (stamped from the loaded terrain on every in-app
+save; informational — the app still loads via `lastFile.xml`, so verify it matches
+before comparing runs), `window` [w,h] (enforced), `settleMs` (minimum hold per
 camera), `settleTimeoutMs` (hard cap), optional `toggles` baseline.
 
 Implementation: `EarthworksFX/src/core/TestFlightData.h` (data/json, engine-agnostic),

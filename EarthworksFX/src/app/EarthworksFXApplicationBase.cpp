@@ -719,7 +719,7 @@ void EarthworksFXApplicationBase::DrawTestFlightsUI()
     const auto Rescan = []() {
         s_Flights.clear();
         std::error_code ec;
-        for (const fs::directory_entry& Entry : fs::directory_iterator(TestFlightController::GetTestflightsDir(), ec))
+        for (const fs::directory_entry& Entry : fs::directory_iterator(TestFlightController::GetFlightsDir(), ec))
         {
             if (Entry.is_regular_file(ec) && Entry.path().extension() == ".json")
                 s_Flights.push_back(Entry.path().stem().string());
@@ -732,7 +732,7 @@ void EarthworksFXApplicationBase::DrawTestFlightsUI()
         s_Dirty  = false;
         if (s_Selected < 0 || s_Selected >= static_cast<int>(s_Flights.size()))
             return;
-        const fs::path Path = TestFlightController::GetTestflightsDir() / (s_Flights[static_cast<size_t>(s_Selected)] + ".json");
+        const fs::path Path = TestFlightController::GetFlightsDir() / (s_Flights[static_cast<size_t>(s_Selected)] + ".json");
         std::string    Error;
         if (ew::LoadTestFlight(Path.string(), s_Flight, Error))
         {
@@ -785,13 +785,15 @@ void EarthworksFXApplicationBase::DrawTestFlightsUI()
         {
             ew::TestFlight NewFlight;
             NewFlight.name = s_NewName;
+            if (HasEarthworksScene())
+                NewFlight.terrain = terrainManager::lastfile.terrain;
             if (m_pSwapChain)
             {
                 const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
                 NewFlight.windowWidth       = static_cast<int>(SCDesc.Width);
                 NewFlight.windowHeight      = static_cast<int>(SCDesc.Height);
             }
-            const fs::path Path = TestFlightController::GetTestflightsDir() / (NewFlight.name + ".json");
+            const fs::path Path = TestFlightController::GetFlightsDir() / (NewFlight.name + ".json");
             std::string    Error;
             if (ew::SaveTestFlight(Path.string(), NewFlight, Error))
             {
@@ -811,6 +813,8 @@ void EarthworksFXApplicationBase::DrawTestFlightsUI()
         if (s_Loaded)
         {
             ImGui::SeparatorText(s_Flight.name.c_str());
+            if (!s_Flight.terrain.empty())
+                ImGui::TextDisabled("terrain: %s", s_Flight.terrain.c_str());
             ImGui::Text("window %dx%d", s_Flight.windowWidth, s_Flight.windowHeight);
             ImGui::SameLine();
             if (ImGui::SmallButton("set from current") && m_pSwapChain)
@@ -890,7 +894,11 @@ void EarthworksFXApplicationBase::DrawTestFlightsUI()
             ImGui::SameLine();
             if (ImGui::Button("save"))
             {
-                const fs::path Path = TestFlightController::GetTestflightsDir() / (s_Flights[static_cast<size_t>(s_Selected)] + ".json");
+                // Stamp the currently loaded terrain so the flight is traceable
+                // to the world it was authored on.
+                if (HasEarthworksScene())
+                    s_Flight.terrain = terrainManager::lastfile.terrain;
+                const fs::path Path = TestFlightController::GetFlightsDir() / (s_Flights[static_cast<size_t>(s_Selected)] + ".json");
                 std::string    Error;
                 if (ew::SaveTestFlight(Path.string(), s_Flight, Error))
                 {
@@ -916,7 +924,7 @@ void EarthworksFXApplicationBase::DrawTestFlightsUI()
         else
         {
             ImGui::TextDisabled("no flight selected");
-            ImGui::TextDisabled("folder: %s", TestFlightController::GetTestflightsDir().string().c_str());
+            ImGui::TextDisabled("folder: %s", TestFlightController::GetFlightsDir().string().c_str());
         }
 
         if (!s_Status.empty())

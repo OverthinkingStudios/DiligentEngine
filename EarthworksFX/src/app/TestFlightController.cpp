@@ -146,7 +146,24 @@ void DownscaleRGB8Half(const std::vector<uint8_t>& Src, uint32_t W, uint32_t H,
 
 // --- statics -----------------------------------------------------------------
 
-std::filesystem::path TestFlightController::GetTestflightsDir()
+std::filesystem::path TestFlightController::GetFlightsDir()
+{
+    std::error_code ec;
+#ifdef EFX_TESTFLIGHTS_DIR
+    const std::filesystem::path SourceDir{EFX_TESTFLIGHTS_DIR};
+    if (std::filesystem::exists(SourceDir.parent_path(), ec))
+    {
+        std::filesystem::create_directories(SourceDir, ec);
+        return SourceDir;
+    }
+#endif
+    // Deployed builds without the source tree: flights next to the working dir.
+    const std::filesystem::path Dir = std::filesystem::current_path() / "testflights";
+    std::filesystem::create_directories(Dir, ec);
+    return Dir;
+}
+
+std::filesystem::path TestFlightController::GetRunsDir()
 {
     const std::filesystem::path Dir =
         (overthinking::Env::getPath(overthinking::Env::SpecialFolder::UserData) / "testflights").lexically_normal();
@@ -160,7 +177,7 @@ std::filesystem::path TestFlightController::ResolveFlightPath(const std::string&
     std::filesystem::path AsPath{NameOrPath};
     if (AsPath.extension() == ".json" || std::filesystem::exists(AsPath))
         return AsPath;
-    return GetTestflightsDir() / (NameOrPath + ".json");
+    return GetFlightsDir() / (NameOrPath + ".json");
 }
 
 void TestFlightController::ApplyShotToCamera(const ew::TestFlightShot& Shot, FirstPersonCamera& Camera, Falcor::Camera* pSceneCamera)
@@ -324,7 +341,7 @@ void TestFlightController::Update(double CurrTime, double ElapsedTime, FirstPers
                 break;
 
             m_RunTimestamp = ots::formatUtcTimestamp();
-            m_RunDir       = GetTestflightsDir() / m_Flight.name / m_RunTimestamp;
+            m_RunDir       = GetRunsDir() / m_Flight.name / m_RunTimestamp;
             std::error_code ec;
             std::filesystem::create_directories(m_RunDir, ec);
             if (ec)
@@ -607,6 +624,7 @@ void TestFlightController::WriteMetricsJson(double TotalRunSec) const
 {
     nlohmann::json j;
     j["testflight"]   = m_Flight.name;
+    j["terrain"]      = m_Flight.terrain;
     j["runTimestamp"] = m_RunTimestamp;
     j["device"]       = m_DeviceString;
     j["window"]       = {m_Flight.windowWidth, m_Flight.windowHeight};

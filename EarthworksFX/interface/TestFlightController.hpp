@@ -59,8 +59,13 @@ public:
         int JpgQuality = 90;
     };
 
-    /// <UserData>/testflights (created on demand).
-    static std::filesystem::path GetTestflightsDir();
+    /// Flight definitions: EarthworksFX/testflights in the source tree this
+    /// binary was built from (baked in at compile time; the jsons are versioned
+    /// with the code). Falls back to <cwd>/testflights when unavailable.
+    static std::filesystem::path GetFlightsDir();
+
+    /// Run outputs: <UserData>/testflights (created on demand).
+    static std::filesystem::path GetRunsDir();
 
     /// Resolves a flight name ("steg_bringup") or path ("d:/x/f.json") to a file path.
     static std::filesystem::path ResolveFlightPath(const std::string& NameOrPath);

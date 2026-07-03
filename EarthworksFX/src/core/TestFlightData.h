@@ -47,6 +47,11 @@ struct TestFlight
 {
     std::string name;
 
+    /// Terrain the flight was authored on (informational for now: the app still
+    /// loads whatever lastFile.xml points to). Stamped by the in-app editor on
+    /// every save so runs are traceable to their terrain.
+    std::string terrain;
+
     int windowWidth  = 1280;
     int windowHeight = 768;
 
@@ -99,6 +104,7 @@ inline void to_json(nlohmann::json& j, const TestFlight& f)
 {
     j = nlohmann::json{
         {"name", f.name},
+        {"terrain", f.terrain},
         {"window", {f.windowWidth, f.windowHeight}},
         {"settleMs", f.settleMs},
         {"settleTimeoutMs", f.settleTimeoutMs},
@@ -110,7 +116,8 @@ inline void to_json(nlohmann::json& j, const TestFlight& f)
 
 inline void from_json(const nlohmann::json& j, TestFlight& f)
 {
-    f.name = j.value("name", std::string{});
+    f.name    = j.value("name", std::string{});
+    f.terrain = j.value("terrain", std::string{});
     if (const auto it = j.find("window"); it != j.end() && it->is_array() && it->size() >= 2)
     {
         f.windowWidth  = (*it)[0].get<int>();
