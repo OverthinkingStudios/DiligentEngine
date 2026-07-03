@@ -81,6 +81,7 @@
 #include <future> // Required for std::async and std::future
 #include <thread> // Required for std::this_thread::sleep_for
 #include <memory>
+#include <atomic>
 
 using namespace Falcor;
 
@@ -501,13 +502,13 @@ private:
     void markChildrenForRemove(quadtree_tile* _tile);
 
 public:
-    int hashCount = 0;
+    std::atomic<int> hashCount = 0;
     Texture::SharedPtr cacheTexture;
     uint cacheHash;
     std::future<void> hashFuture;
     std::vector<unsigned short> jphData;
 
-    int hashCountImage = 0;
+    std::atomic<int> hashCountImage = 0;
     Texture::SharedPtr cacheTextureImage;
     uint cacheHashImage;
     std::future<void> hashIFuture;

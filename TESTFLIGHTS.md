@@ -8,6 +8,25 @@ contact-sheet JPG plus machine-readable metrics. Use it to compare two builds
 Works with any EarthworksFX app; `EarthworksFXSample` is the usual host.
 Windows-first (the app exits via the Win32 message loop).
 
+## Build & run EarthworksFXSample (Windows)
+
+The CMake build dir is `build\Win64` (VS generator, multi-config). RelWithDebInfo
+is the usual config for testflights (fast + usable stack traces). Build from the
+repo root, then **run with `%ACSMP_GAMEROOT%` as the working directory** — that
+content folder holds assets and other dependencies the app needs (and it's the
+VS2022 debugger working dir):
+
+```powershell
+cmake --build build\Win64 --config RelWithDebInfo --target EarthworksFXSample
+Set-Location $env:ACSMP_GAMEROOT
+& "C:\dev\git\os\DiligentEngine\build\Win64\EarthworksFXSample\RelWithDebInfo\EarthworksFXSample.exe" --testflight smoke -m d3d12
+Write-Host "exit code: $LASTEXITCODE"
+```
+
+Swap `RelWithDebInfo` for `Debug`/`Release` as needed; the exe always lands in
+`build\Win64\EarthworksFXSample\<config>\`. A full smoke run takes only a few
+seconds after load, so it's cheap to run repeatedly.
+
 ## Run one
 
 ```

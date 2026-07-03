@@ -99,7 +99,7 @@ struct DebugToggles
     // Debug orientation aids (see debugGrid.hlsl / Earthworks_4::renderDebugGlobe):
     bool debugGlobe      = false;  // sparse compass globe (N red / S black), depth-tested so terrain occludes it
     bool debugGroundGrid = false;  // live quadtree leaf tiles colour-coded by LOD, on top
-    bool debugEarthworksShader = true;
+    bool debugEarthworksShader = false;
     bool debugEarthworksInfoGui = true;
 
     // --- ImGui ---------------------------------------------------------
