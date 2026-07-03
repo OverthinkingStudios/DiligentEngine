@@ -992,6 +992,12 @@ GraphicsPipelineCacheEntry* GetOrCreateGraphicsPSO(const GraphicsProgram* pProgr
     gp.RTVFormats[0]     = rtvFmt;
     gp.DSVFormat         = dsvFmt;
     gp.PrimitiveTopology = MapTopology(topology);
+    // Falcor's default rasterizer state is front = COUNTER-clockwise; Diligent
+    // defaults to clockwise. Draws without an explicit RasterizerState (e.g.
+    // the terrain tiles, default cull = Back) must keep Falcor's meaning now
+    // that the camera is right-handed like the original (BRINGUP_NOTES F20).
+    // Explicit states override this below (their Desc also defaults to CCW).
+    gp.RasterizerDesc.FrontCounterClockwise = True;
 
     if (pState && pState->getBlendState())
         gp.BlendDesc = pState->getBlendState()->getDesc().GetDiligentDesc();

@@ -23,10 +23,15 @@ void FirstPersonCamera::Update(InputController& Controller, float ElapsedTime)
     if (Controller.IsKeyDown(InputKeys::MoveBackward))
         MoveDirection.z -= 1.0f;
 
+    // Signs flipped for the right-handed scene camera (BRINGUP_NOTES F20):
+    // the FPC's yaw/pitch -> world-direction mapping must stay unchanged
+    // (testflight shots store yaw/pitch), but with the RH projection the
+    // FPC "right" axis now appears on the LEFT of the screen. Flipping the
+    // strafe input keeps D = move toward screen-right.
     if (Controller.IsKeyDown(InputKeys::MoveRight))
-        MoveDirection.x += 1.0f;
-    if (Controller.IsKeyDown(InputKeys::MoveLeft))
         MoveDirection.x -= 1.0f;
+    if (Controller.IsKeyDown(InputKeys::MoveLeft))
+        MoveDirection.x += 1.0f;
 
     if (Controller.IsKeyDown(InputKeys::MoveUp))
         MoveDirection.y += 1.0f;
@@ -63,7 +68,12 @@ void FirstPersonCamera::Update(InputController& Controller, float ElapsedTime)
         const float fPitchDelta = MouseDeltaY * m_fRotationSpeed;
         if (mouseState.ButtonFlags & MouseState::BUTTON_FLAG_RIGHT)
         {
-            m_fYawAngle += fYawDelta * -m_fHandness;
+            // Yaw sign flipped for the right-handed scene camera (F20), same
+            // reason as the strafe flip above: horizontal screen direction
+            // mirrored, vertical did not (pitch unchanged). The yaw->direction
+            // mapping itself is untouched so stored testflight yaw/pitch
+            // values keep their meaning.
+            m_fYawAngle += fYawDelta * m_fHandness;
             m_fPitchAngle += fPitchDelta * -m_fHandness;
             m_fPitchAngle = std::max(m_fPitchAngle, -PI_F / 2.f);
             m_fPitchAngle = std::min(m_fPitchAngle, +PI_F / 2.f);

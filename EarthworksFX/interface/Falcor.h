@@ -853,6 +853,12 @@ public:
     class Desc
     {
     public:
+        // Falcor's default rasterizer state is front = COUNTER-clockwise
+        // (mIsFrontCcw = true); Diligent's default is clockwise. Match Falcor
+        // so back-/front-culled draws keep their original meaning now that the
+        // camera is right-handed like the original (BRINGUP_NOTES F20).
+        Desc() { m_Desc.FrontCounterClockwise = true; }
+
         Desc& setCullMode(CullMode mode);
         Desc& setFillMode(FillMode mode);
 

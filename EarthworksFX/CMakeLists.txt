@@ -85,6 +85,14 @@ target_include_directories(EarthworksFX
 target_compile_definitions(EarthworksFX PRIVATE
     "EFX_TESTFLIGHTS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/testflights\"")
 
+# The original Falcor build defined this GLOBALLY (Falcor/CMakeLists.txt), so
+# every glm clip-space helper the ported core calls (glm::unProject mouse
+# picking, glm::orthoLH/orthoRH bake projections) was compiled with D3D/Vulkan
+# [0,1] depth. Without it glm defaults to GL [-1,1] and those helpers silently
+# change meaning. PUBLIC so app targets compile glm identically. Part of the
+# right-handedness restoration, BRINGUP_NOTES F20.
+target_compile_definitions(EarthworksFX PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE)
+
 if(NOT EARTHWORKS_WITH_OPENJPH OR NOT EARTHWORKS_WITH_ASSIMP)
     message(FATAL_ERROR
         "EarthworksFX requires OpenJPH and Assimp from Earthworks "

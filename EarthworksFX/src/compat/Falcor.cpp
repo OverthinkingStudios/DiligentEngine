@@ -237,8 +237,16 @@ void Camera::setNearPlane(float zNear) {
 
 float4x4 Camera::getViewMatrix() const
 {
+    // RIGHT-HANDED view matrix (F20). This is exactly glm::lookAt (what the
+    // original Falcor camera used) laid out for Diligent row-vector math:
+    // zAxis = BACKWARD (position - target), so toGLM(getViewMatrix()) equals
+    // glm::lookAt(pos, target, up) verbatim and all original Earthworks CPU
+    // code (culling, unProject picking, FogVolume basis) keeps its original
+    // semantics. It was previously a left-handed/D3D lookAt
+    // (zAxis = target - position), which mirrored the whole scene east-west
+    // and reversed every decomposed camera basis (BRINGUP_NOTES F19/F20).
     const float3 up{0.f, 1.f, 0.f};
-    const float3 zAxis = glm::normalize(m_Target - m_Data.Position);
+    const float3 zAxis = glm::normalize(m_Data.Position - m_Target);
     const float3 xAxis = glm::normalize(glm::cross(up, zAxis));
     const float3 yAxis = glm::cross(zAxis, xAxis);
 
@@ -268,7 +276,17 @@ float4x4 Camera::getProjMatrix() const
     // convention. It MUST be false on Vulkan/D3D ([0,1] depth). It was
     // previously `m_Data.Position.y > 0.f`, which silently switched the depth
     // convention with camera height (BRINGUP_NOTES.md, F3).
-    return float4x4::Projection(fovY, m_Data.AspectRatio, m_Data.NearPlane, m_Data.FarPlane, false);
+    float4x4 proj = float4x4::Projection(fovY, m_Data.AspectRatio, m_Data.NearPlane, m_Data.FarPlane, false);
+    // RIGHT-HANDED projection (F20): getViewMatrix() is a right-handed lookAt
+    // now, so visible geometry has NEGATIVE view-space z. Diligent's
+    // Projection() is left-handed (+z forward); negating _33/_34 turns it into
+    // the row-vector transpose of glm::perspectiveRH_ZO — exactly what the
+    // original Falcor produced (glm built with GLM_FORCE_DEPTH_ZERO_TO_ONE).
+    // _43 is identical in both conventions. toGLM(getProjMatrix()) therefore
+    // equals the original Falcor projection verbatim.
+    proj._33 = -proj._33;
+    proj._34 = -proj._34;
+    return proj;
 }
 
 float4x4 Camera::getViewProjMatrix() const

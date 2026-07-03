@@ -6,8 +6,8 @@
 //   drawMode 0  GLOBE        A sparse compass sphere centered on the camera, radius
 //                            matched to the corners of the 40x40 km terrain area
 //                            (20000 * sqrt(2) m). Deliberately minimal:
-//                              * meridians every 45 deg: North red, South black,
-//                                East/West grey, the four diagonals faint;
+//                              * meridians every 45 deg: North (-Z) red, South (+Z)
+//                                black, East/West grey, the four diagonals faint;
 //                              * latitude circles only at the horizon (grey) and
 //                                +/-45 deg (faint pitch markers).
 //                            Drawn INTO the HDR FBO with depth-testing enabled so
@@ -103,8 +103,11 @@ VSOut globeVertex(uint vId)
         float latDeg = lerp(-90.0, 90.0, (float)(si + endp) / (float)segments);
         wpos = eye + globeRadius * spherePoint(latDeg, lonDeg);
 
-        if (oi == 0u)      col = float3(0.9, 0.05, 0.05);    // North (+Z), compass red
-        else if (oi == 4u) col = float3(0.04, 0.04, 0.04);   // South (-Z), compass black
+        // World compass (from the GDAL import in terrain.cpp writeGdal:
+        // easting = +X, northing = -Z): NORTH = -Z = lon 180, SOUTH = +Z = lon 0.
+        // Before the F20 un-mirroring these labels were accidentally swapped.
+        if (oi == 4u)      col = float3(0.9, 0.05, 0.05);    // North (-Z), compass red
+        else if (oi == 0u) col = float3(0.04, 0.04, 0.04);   // South (+Z), compass black
         else if ((oi & 1u) == 0u) col = float3(0.45, 0.45, 0.45); // East / West, grey
         else               col = kFaint;                     // diagonals
     }
