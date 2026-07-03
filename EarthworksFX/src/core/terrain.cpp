@@ -333,6 +333,12 @@ void _shadowEdges::load(std::string filename, float _angle)
               }
               */
     }
+    else
+    {
+        // PORT NOTE (F23): this used to fail silently - height[]/Nx[] stayed
+        // zero and the terrain rendered without any shadows.
+        spdlog::error("_shadowEdges::load: cannot open heightfield '{}' - terrain shadows will be missing/wrong", filename);
+    }
 }
 
 

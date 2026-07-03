@@ -87,7 +87,7 @@ All items below are implemented **only** in `src/compat/FalcorCompat.cpp` (guard
 
 ### Phase 4 — Resource ops (bake, picking, deferred CFD)
 
-12. **`RenderContext::updateTextureData`** — staging + upload (CFD volume slices when CFD is re-enabled).
+12. **`RenderContext::updateTextureData`** — ✅ DONE 2026-07-03 (F26): full mip-0 upload via `IDeviceContext::UpdateTexture`, 2D + 3D. Was the reason solved terrain shadows never reached the GPU. RGB32→RGBA32-promoted textures would need a repack (no caller today).
 13. **`RenderContext::copySubresource`** — structurally done; verify array-texture tile picking (`height_Array` slice copies) at runtime.
 14. **`RenderContext::resourceBarrier`** — map `Resource::State` → `TransitionResourceStates` before readback/copies.
 15. **`RenderContext::readTextureSubresource`** — staging readback (bake height export, tile readback); currently returns zeros.

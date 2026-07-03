@@ -403,9 +403,11 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
 
 
     {
-        // BAD - for STEG
-        //terrain.shadowEdges.load(terrain.settings.dirRoot + "/gis/_export/root4096.bil", -global_sun_direction.y);
-        terrain.shadowEdges.load(terrain.settings.dirRoot + "/elevation/root4096.bil", -global_sun_direction.y);
+        // PORT NOTE (F23): switserland_Steg ships the 4096 heightfield in
+        // gis/_export; the elevation/ variant does not exist for this terrain
+        // (load() now warns loudly if the file is missing).
+        terrain.shadowEdges.load(terrain.settings.dirRoot + "/gis/_export/root4096.bil", -global_sun_direction.y);
+        //terrain.shadowEdges.load(terrain.settings.dirRoot + "/elevation/root4096.bil", -global_sun_direction.y);
         terrain.shadowEdges.sunAngle = 0.95605f;
         terrain.shadowEdges.dAngle = 0.0001f;
         terrain.shadowEdges.requestNewShadow = true;

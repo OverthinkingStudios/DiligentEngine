@@ -1506,9 +1506,46 @@ void RenderContext::blit(Diligent::ITextureView* pSrc, Diligent::ITextureView* p
     Gpu::Blit(m_pContext, pSrc, pDst, srcRect, dstRect, filter, blend);
 }
 
-void RenderContext::updateTextureData(Texture*, const void*)
+void RenderContext::updateTextureData(Texture* pTexture, const void* pData)
 {
-    EFX_LOG_STUB("RenderContext::updateTextureData stub");
+    // Full-texture upload of mip 0 / slice 0 (Falcor semantics of this call).
+    // This was a stub until 2026-07-03 - anything that re-uploads CPU data into
+    // an existing texture (terrainShadow solve results! terrainGenerator map
+    // tiles, vegetationBuilder RGB_MAP) silently kept the CREATE-time contents.
+    if (!m_pContext || !pTexture || !pData || !pTexture->GetDiligentTexture())
+    {
+        EFX_LOG_STUB("RenderContext::updateTextureData: missing context/texture/data");
+        return;
+    }
+
+    Diligent::ITexture*          pTex = pTexture->GetDiligentTexture();
+    const Diligent::TextureDesc& desc = pTex->GetDesc();
+
+    const auto&    attribs   = Diligent::GetTextureFormatAttribs(desc.Format);
+    const uint32_t pixelSize = uint32_t(attribs.ComponentSize) * uint32_t(attribs.NumComponents);
+    if (attribs.ComponentType == Diligent::COMPONENT_TYPE_COMPRESSED || pixelSize == 0)
+    {
+        spdlog::error("RenderContext::updateTextureData: unsupported format {} on '{}'", int(desc.Format), pTexture->getName());
+        return;
+    }
+    // NOTE: pData must be laid out in the ACTUAL texture format. If the format
+    // was promoted at creation (RGB32 -> RGBA32, see ToDiligentFormat), the
+    // caller's tightly-packed 3-component data would need repacking first -
+    // no current caller updates such a texture, so that path is not handled.
+
+    Diligent::Box box;
+    box.MaxX = desc.Width;
+    box.MaxY = desc.Height;
+    box.MaxZ = (desc.Type == Diligent::RESOURCE_DIM_TEX_3D) ? desc.Depth : 1;
+
+    Diligent::TextureSubResData subres;
+    subres.pData       = pData;
+    subres.Stride      = uint64_t(desc.Width) * pixelSize;
+    subres.DepthStride = subres.Stride * desc.Height;
+
+    m_pContext->UpdateTexture(pTex, 0, 0, box, subres,
+                              Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                              Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 }
 
 void RenderContext::clearRtv(Diligent::ITextureView* pRtv, const float4& color)
