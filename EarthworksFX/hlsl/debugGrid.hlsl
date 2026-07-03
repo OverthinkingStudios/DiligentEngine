@@ -3,19 +3,23 @@
 // Two independent primitives, each generated entirely from SV_VertexID (no vertex or
 // index buffer required) and selected by `drawMode`:
 //
-//   drawMode 0  GLOBE        A latitude/longitude sphere centered on the camera.
-//                            Renders orientation / rotation. Drawn INTO the HDR FBO
-//                            with depth-testing enabled so terrain occludes it - the
-//                            terrain silhouette then "cuts a hole" in the globe, which
-//                            is how we can see terrain geometry even when it shades black.
+//   drawMode 0  GLOBE        A sparse compass sphere centered on the camera, radius
+//                            matched to the corners of the 40x40 km terrain area
+//                            (20000 * sqrt(2) m). Deliberately minimal:
+//                              * meridians every 45 deg: North red, South black,
+//                                East/West grey, the four diagonals faint;
+//                              * latitude circles only at the horizon (grey) and
+//                                +/-45 deg (faint pitch markers).
+//                            Drawn INTO the HDR FBO with depth-testing enabled so
+//                            terrain occludes it - the terrain silhouette then "cuts
+//                            a hole" in the globe.
 //
-//   drawMode 1  GROUND GRID  A world-anchored grid on the ground plane covering the
-//                            whole terrain area [areaMin.xz .. areaMax.xz]:
-//                              * the area boundary (outer edges, bright),
-//                              * a regular grid every `kmSpacing` metres (1 km),
-//                              * the world X / Z axes highlighted.
-//                            Drawn ON TOP (depth disabled) so the layout is always
-//                            readable, at y = areaMin.y (0 or the terrain minimum).
+//   drawMode 1  GROUND GRID  The LIVE terrain quadtree: one rectangle outline per
+//                            leaf tile (CPU-side quadtree state, uploaded per frame
+//                            into `tileRects`), colour-coded by LOD and inset by 1%
+//                            of the tile size so neighbouring outlines stay separate
+//                            and splits are easy to spot. Drawn ON TOP (depth
+//                            disabled) at y = groundY.
 //
 // It mirrors the cbuffer + transpose convention used by render_triangles.hlsl
 // (mul(float4(pos,1), viewproj) with viewproj = camera->getViewProjMatrix().getTranspose())
@@ -26,14 +30,18 @@ cbuffer gConstantBuffer
     float4x4 viewproj;
 
     float3   eye;          float globeRadius;
-    float3   areaMin;      float kmSpacing;    // areaMin.y == areaMax.y == ground height
-    float3   areaMax;      int   drawMode;     // 0 = globe, 1 = ground grid
 
-    int      latLines;
-    int      lonLines;
-    int      segments;
-    int      kmLines;                          // ground grid lines per axis (edge-inclusive)
+    float    groundY;                           // ground-plane height for the tile grid
+    int      drawMode;                          // 0 = globe, 1 = ground grid
+    int      latLines;                          // globe latitude circles (odd; middle = horizon)
+    int      lonLines;                          // globe meridians (8 = every 45 deg)
+
+    int      segments;                          // segments per globe circle
+    int      tileCount;                         // entries in tileRects actually drawn
 };
+
+// One entry per quadtree leaf tile: xy = world-space origin (x, z), z = size, w = lod.
+StructuredBuffer<float4> tileRects;
 
 struct VSOut
 {
@@ -43,6 +51,8 @@ struct VSOut
 
 static const float PI      = 3.14159265358979;
 static const float DEG2RAD = PI / 180.0;
+
+static const float3 kFaint = float3(0.14, 0.14, 0.14);  // subtle in-between lines
 
 float3 spherePoint(float latDeg, float lonDeg)
 {
@@ -61,29 +71,28 @@ VSOut globeVertex(uint vId)
     VSOut o = (VSOut)0;
 
     const uint latVerts = (uint)(latLines * segments * 2);
-    const uint lonVerts = (uint)(lonLines * segments * 2);
 
     float3 wpos = eye;
-    float3 col  = float3(0.25, 0.25, 0.25);
+    float3 col  = kFaint;
 
     if (vId < latVerts)
     {
-        // Latitude circles (constant latitude, swept around longitude).
+        // Latitude circles: horizon plus faint +/-45 deg pitch markers.
         uint s    = vId / 2;
         uint endp = vId & 1u;
         uint li   = s / (uint)segments;
         uint si   = s % (uint)segments;
 
-        float latDeg = lerp(-80.0, 80.0, (float)li / (float)(latLines - 1));
+        float latDeg = lerp(-45.0, 45.0, (float)li / (float)(latLines - 1));
         float lonDeg = 360.0 * (float)(si + endp) / (float)segments;
         wpos = eye + globeRadius * spherePoint(latDeg, lonDeg);
 
-        col = float3(0.0, 0.35, 0.5);
-        if (abs(latDeg) < 0.001) col = float3(0.0, 0.9, 1.0); // equator
+        col = (abs(latDeg) < 0.001) ? float3(0.5, 0.5, 0.5)  // horizon
+                                    : kFaint;                // +/-45 pitch markers
     }
     else
     {
-        // Longitude lines (constant longitude, pole to pole).
+        // Meridians, pole to pole, every 45 deg. Cardinals stand out, diagonals faint.
         uint v    = vId - latVerts;
         uint s    = v / 2;
         uint endp = v & 1u;
@@ -94,10 +103,10 @@ VSOut globeVertex(uint vId)
         float latDeg = lerp(-90.0, 90.0, (float)(si + endp) / (float)segments);
         wpos = eye + globeRadius * spherePoint(latDeg, lonDeg);
 
-        col = float3(0.5, 0.0, 0.35);
-        if (lonDeg < 0.001)                   col = float3(0.2, 0.4, 1.0); // +Z meridian
-        else if (abs(lonDeg - 90.0)  < 0.001) col = float3(1.0, 0.3, 0.3); // +X meridian
-        else if (abs(lonDeg - 270.0) < 0.001) col = float3(1.0, 0.7, 0.2); // -X meridian
+        if (oi == 0u)      col = float3(0.9, 0.05, 0.05);    // North (+Z), compass red
+        else if (oi == 4u) col = float3(0.04, 0.04, 0.04);   // South (-Z), compass black
+        else if ((oi & 1u) == 0u) col = float3(0.45, 0.45, 0.45); // East / West, grey
+        else               col = kFaint;                     // diagonals
     }
 
     o.pos = mul(float4(wpos, 1.0), viewproj);
@@ -106,50 +115,46 @@ VSOut globeVertex(uint vId)
 }
 
 // -------------------------------------------------------------------------------------
-// GROUND GRID (drawMode 1) - world-anchored, covers the whole terrain area.
-// Vertex ranges:  [0 .. 2N)   lines running along Z (constant X)
-//                 [2N .. 4N)  lines running along X (constant Z)
+// GROUND GRID (drawMode 1) - live quadtree leaf tiles.
+// 8 vertices per tile: 4 edges x 2 endpoints, rectangle inset by 1% of the tile size
+// so adjacent tiles do not draw on top of each other and splits read clearly.
 // -------------------------------------------------------------------------------------
+static const float3 kLodPalette[8] =
+{
+    float3(0.30, 0.30, 0.30),   // lod 0 (whole area)
+    float3(0.25, 0.40, 0.90),   // 1 blue
+    float3(0.10, 0.75, 0.85),   // 2 cyan
+    float3(0.15, 0.80, 0.25),   // 3 green
+    float3(0.90, 0.85, 0.15),   // 4 yellow
+    float3(0.95, 0.55, 0.10),   // 5 orange
+    float3(0.95, 0.20, 0.15),   // 6 red
+    float3(0.85, 0.25, 0.85),   // 7 magenta (then wraps)
+};
+
 VSOut groundVertex(uint vId)
 {
     VSOut o = (VSOut)0;
 
-    const uint N       = (uint)kmLines;
-    const uint zLines  = 2u * N;          // verts used by the "constant X" set
-    const float gY     = areaMin.y;
-    const float eps    = 0.5 * kmSpacing;
+    uint tile = vId / 8u;
+    uint v    = vId % 8u;
+    if (tile >= (uint)tileCount) tile = 0u;
 
-    float3 wpos = float3(0, gY, 0);
-    float3 col  = float3(0.12, 0.22, 0.12);
+    float4 r     = tileRects[tile];
+    float  inset = r.z * 0.01;
+    float2 mn    = r.xy + inset;
+    float2 mx    = r.xy + r.z - inset;
 
-    if (vId < zLines)
-    {
-        // Line running along Z at constant X.
-        uint li   = vId / 2;
-        uint endp = vId & 1u;
-        float x   = areaMin.x + (float)li * kmSpacing;
-        float z   = (endp == 0u) ? areaMin.z : areaMax.z;
-        wpos = float3(x, gY, z);
+    uint edge = v / 2u;
+    uint endp = v & 1u;
 
-        if (li == 0u || li == N - 1u)      col = float3(1.0, 0.8, 0.2);   // area boundary
-        else if (abs(x) < eps)             col = float3(0.3, 0.5, 1.0);   // world Z axis (X==0)
-    }
-    else
-    {
-        // Line running along X at constant Z.
-        uint v    = vId - zLines;
-        uint li   = v / 2;
-        uint endp = v & 1u;
-        float z   = areaMin.z + (float)li * kmSpacing;
-        float x   = (endp == 0u) ? areaMin.x : areaMax.x;
-        wpos = float3(x, gY, z);
+    float2 p;
+    if (edge == 0u)      p = float2(endp ? mx.x : mn.x, mn.y);   // -Z edge
+    else if (edge == 1u) p = float2(mx.x, endp ? mx.y : mn.y);   // +X edge
+    else if (edge == 2u) p = float2(endp ? mn.x : mx.x, mx.y);   // +Z edge
+    else                 p = float2(mn.x, endp ? mn.y : mx.y);   // -X edge
 
-        if (li == 0u || li == N - 1u)      col = float3(1.0, 0.8, 0.2);   // area boundary
-        else if (abs(z) < eps)             col = float3(1.0, 0.35, 0.35); // world X axis (Z==0)
-    }
-
-    o.pos = mul(float4(wpos, 1.0), viewproj);
-    o.col = col;
+    o.pos = mul(float4(p.x, groundY, p.y, 1.0), viewproj);
+    o.col = kLodPalette[(uint)r.w & 7u];
     return o;
 }
 

@@ -76,6 +76,9 @@ private:
     GraphicsState::SharedPtr    debugGlobeState;       // depth-tested (globe, occluded by terrain)
     GraphicsVars::SharedPtr     debugGridVars;
     Vao::SharedPtr              debugGridVao;
+    static constexpr uint32_t   kMaxDebugTileRects = 1024;  // >= terrainManager tile pool (997)
+    Buffer::SharedPtr           debugTileRectBuffer;   // quadtree leaf rects, refreshed per frame
+    std::vector<float4>         debugTileRects;        // CPU scratch for the upload
 
     GraphicsState::Viewport     viewport3d;
     float2                      screenSize;

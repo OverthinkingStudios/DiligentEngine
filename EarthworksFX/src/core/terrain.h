@@ -468,6 +468,19 @@ public:
     void updateShaderConstants(Texture::SharedPtr _previousFrame, shaderLightBuffer _buffer);
     bool update(RenderContext* pRenderContext);
 
+    // Debug aid: world-space rectangles of the current quadtree LEAF tiles, one
+    // float4 per tile as (origin.x, origin.z, size, lod). Feeds the host's debug
+    // ground grid so the live tile splitting is visible on screen.
+    void getDebugTileRects(std::vector<float4>& _out) const
+    {
+        _out.clear();
+        for (const quadtree_tile* t : m_used)
+        {
+            if (!t->child[0])
+                _out.push_back(float4(t->origin.x, t->origin.z, t->size, (float)t->lod));
+        }
+    }
+
 
     void shadowSetup(shadowMap& _shadow);
     void shadowRenderFar();

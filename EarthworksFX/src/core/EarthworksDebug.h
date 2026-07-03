@@ -97,8 +97,8 @@ struct DebugToggles
     int  tonemapperView = 0;
     bool overlay        = true;
     // Debug orientation aids (see debugGrid.hlsl / Earthworks_4::renderDebugGlobe):
-    bool debugGlobe      = false;  // lat/lon globe, depth-tested so terrain occludes it
-    bool debugGroundGrid = false;  // world ground grid (area boundary + 1 km grid), on top
+    bool debugGlobe      = false;  // sparse compass globe (N red / S black), depth-tested so terrain occludes it
+    bool debugGroundGrid = false;  // live quadtree leaf tiles colour-coded by LOD, on top
     bool debugEarthworksShader = true;
     bool debugEarthworksInfoGui = true;
 

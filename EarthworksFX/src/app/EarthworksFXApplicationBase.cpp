@@ -682,12 +682,12 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Camera-centred lat/lon globe drawn into the same buffer as the\nterrain with depth testing: terrain occludes it, so the terrain\nsilhouette is visible even when the terrain shades black.");
-        ImGui::Checkbox("ground grid (area boundary + 1km)", &t.debugGroundGrid);
+            ImGui::SetTooltip("Camera-centred compass globe (radius = 40x40 km area half-diagonal),\ndrawn with depth testing so terrain occludes it. North meridian red,\nsouth black, east/west grey; horizon + faint 45-degree markers.");
+        ImGui::Checkbox("ground grid (quadtree tiles)", &t.debugGroundGrid);
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("World-anchored grid on the ground plane (y=0) covering the\nfull 40x40 km terrain area: bright outer boundary, 1 km grid,\nhighlighted world X/Z axes. Drawn on top of everything.");
+            ImGui::SetTooltip("Live terrain quadtree: one outline per leaf tile (slightly inset so\nneighbours stay separate), colour-coded by LOD - grey lod0, blue,\ncyan, green, yellow, orange, red, magenta. Drawn on top of everything.");
 
         ImGui::SeparatorText("ImGui");
         ImGui::Checkbox("Earthworks editor GUI", &t.earthworksGui);

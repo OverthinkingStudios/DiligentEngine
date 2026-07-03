@@ -388,6 +388,14 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
 
         debugGridVars = GraphicsVars::create(debugGridProgram->getActiveVersion()->getReflector());
 
+        // Quadtree leaf rectangles for the ground grid (one float4 per tile:
+        // origin.x, origin.z, size, lod). Sized for the full tile pool and bound
+        // once here so the globe draw (same program/vars) never sees an unbound
+        // resource; refreshed from the CPU quadtree every frame it is drawn.
+        debugTileRectBuffer = Buffer::createStructured(sizeof(float4), kMaxDebugTileRects);
+        debugGridVars->setBuffer("tileRects", debugTileRectBuffer);
+        debugTileRects.reserve(kMaxDebugTileRects);
+
         // Line list with no index buffer -> the compat layer takes the non-indexed
         // Draw() path and the vertex shader builds the geometry from SV_VertexID.
         VertexLayout::SharedPtr gridLayout = VertexLayout::create();
@@ -577,8 +585,9 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
             ew::gDebug.live.overlayDraws++;
         }
 
-        // World ground grid: drawn ON TOP of the final image (no depth test) so the
-        // terrain area boundary / 1 km grid stays readable at all times.
+        // World ground grid: the live quadtree leaf tiles, colour-coded by LOD,
+        // drawn ON TOP of the final image (no depth test) so the tile splitting
+        // stays readable at all times.
         if (showDebugGrid && ew::gDebug.toggles.debugGroundGrid)
             renderDebugGroundGrid(_renderContext, pTargetFbo);
 
@@ -600,18 +609,16 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
 // Line counts / world extents shared by the globe and ground-grid draws.
 // The globe values must match the ranges in debugGrid.hlsl.
 namespace {
-    constexpr int   kLatLines  = 17;      // latitudes  -80..+80 in 10 deg steps
-    constexpr int   kLonLines  = 24;      // longitudes every 15 deg
+    constexpr int   kLatLines  = 3;       // horizon + faint +/-45 deg pitch markers
+    constexpr int   kLonLines  = 8;       // meridians every 45 deg (N/E/S/W + faint diagonals)
     constexpr int   kSeg       = 96;      // segments per circle
-    constexpr float kGlobeRad  = 3000.0f; // globe radius around the camera (m)
 
-    // Total terrain footprint: 40 km x 40 km centred on the origin (see jp2Map::set,
-    // wSize = 40000, wOffset = -20000). Draw a 1 km grid across it.
-    constexpr float kAreaMin     = -20000.0f;
-    constexpr float kAreaMax      =  20000.0f;
-    constexpr float kKmSpacing   =  1000.0f;
-    constexpr int   kKmLines     = 41;    // (40000 / 1000) + 1, edge-inclusive
-    constexpr float kGroundY     = 0.0f;  // ground-plane height (0 = sea level)
+    // Globe radius = half-diagonal of the 40 km x 40 km terrain area (see jp2Map::set,
+    // wSize = 40000, wOffset = -20000): sqrt(20000^2 + 20000^2). With the camera at the
+    // world origin the globe passes exactly through the area corners.
+    constexpr float kGlobeRad  = 28284.271f;
+
+    constexpr float kGroundY   = 0.0f;    // ground-plane height for the tile grid (sea level)
 }
 
 void Earthworks_4::setDebugGridConstants(int drawMode)
@@ -621,14 +628,11 @@ void Earthworks_4::setDebugGridConstants(int drawMode)
     debugGridVars["gConstantBuffer"]["viewproj"]    = viewproj;
     debugGridVars["gConstantBuffer"]["eye"]         = camera->getPosition();
     debugGridVars["gConstantBuffer"]["globeRadius"] = kGlobeRad;
-    debugGridVars["gConstantBuffer"]["areaMin"]     = float3(kAreaMin, kGroundY, kAreaMin);
-    debugGridVars["gConstantBuffer"]["areaMax"]     = float3(kAreaMax, kGroundY, kAreaMax);
-    debugGridVars["gConstantBuffer"]["kmSpacing"]   = kKmSpacing;
+    debugGridVars["gConstantBuffer"]["groundY"]     = kGroundY;
     debugGridVars["gConstantBuffer"]["drawMode"]    = drawMode;
     debugGridVars["gConstantBuffer"]["latLines"]    = kLatLines;
     debugGridVars["gConstantBuffer"]["lonLines"]    = kLonLines;
     debugGridVars["gConstantBuffer"]["segments"]    = kSeg;
-    debugGridVars["gConstantBuffer"]["kmLines"]     = kKmLines;
 }
 
 void Earthworks_4::renderDebugGlobe(RenderContext* _renderContext, const Fbo::SharedPtr& pHdrFbo)
@@ -647,14 +651,25 @@ void Earthworks_4::renderDebugGlobe(RenderContext* _renderContext, const Fbo::Sh
 
 void Earthworks_4::renderDebugGroundGrid(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo)
 {
-    if (!debugGridProgram || !debugGridState || !debugGridVars || !camera)
+    if (!debugGridProgram || !debugGridState || !debugGridVars || !debugTileRectBuffer || !camera)
         return;
+
+    // Snapshot the live quadtree leaves and push them to the GPU. This is what
+    // makes the grid show the actual tile splitting rather than a fixed 1 km
+    // convention grid.
+    terrain.getDebugTileRects(debugTileRects);
+    if (debugTileRects.empty())
+        return;
+    if (debugTileRects.size() > kMaxDebugTileRects)
+        debugTileRects.resize(kMaxDebugTileRects);
+    debugTileRectBuffer->setBlob(debugTileRects.data(), 0, debugTileRects.size() * sizeof(float4));
 
     debugGridState->setFbo(pTargetFbo);
     debugGridState->setViewport(0, viewport3d, true);
     setDebugGridConstants(1);
+    debugGridVars["gConstantBuffer"]["tileCount"] = (int)debugTileRects.size();
 
-    const uint32_t groundVerts = kKmLines * 2 /*axes*/ * 2 /*endpoints*/;
+    const uint32_t groundVerts = (uint32_t)debugTileRects.size() * 8u;  // 4 edges x 2 endpoints
     _renderContext->drawInstanced(debugGridState.get(), debugGridVars.get(), groundVerts, 1, 0, 0);
     ew::gDebug.live.debugGridDraws++;
 }
