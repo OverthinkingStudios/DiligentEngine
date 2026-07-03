@@ -28,7 +28,17 @@ void FogVolume::setCamera(Camera::SharedPtr _camera)
 {
     glm::mat4 W = toGLM(_camera->getViewMatrix().getTranspose());
 
-    float3 dir = W[2] * -1.f;
+    // PORT NOTE (was: float3 dir = W[2] * -1.f;)
+    // In original Falcor, getViewMatrix() is a right-handed (glm) lookAt whose
+    // third basis row is -forward, so W[2] was "backward" and needed the -1.
+    // The Diligent compat Camera::getViewMatrix() is a left-handed/D3D-style
+    // lookAt (zAxis = +forward); after getTranspose()+toGLM (memcpy transpose)
+    // W[2] is already the camera FORWARD direction. Keeping the -1 marched the
+    // whole fog/atmosphere volume backwards: rays looking down at terrain ran
+    // upwards, hit the cloud-base exit immediately and left the debug-blue
+    // "unsolved" slices everywhere, and the sun phase peak appeared mirrored
+    // into the terrain. W[0]/W[1] (right/up) match the raster convention as-is.
+    float3 dir = W[2];
     float3 up = W[1];
     float3 right = W[0];
 
