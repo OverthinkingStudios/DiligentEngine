@@ -5276,7 +5276,14 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         rappersvilleShader.Vars()["PerFrameCB"]["eye"] = _camera->getPosition();
         rappersvilleShader.drawInstanced(_renderContext, 3, numrapperstri);
         */
-        buildings.render(_renderContext, _fbo, _viewport, view, viewproj, _camera->getPosition());   // PORT NOTE: block above delegated to buildingsRenderer
+        // Cull buildings against the terrain quadtree: only chunks overlapping a
+        // main-camera-visible leaf tile get drawn (empty list = no info = draw all).
+        // Refresh the flags here because update() early-outs in some modes (e.g.
+        // glider) and would leave them stale; the recompute is a cheap CPU loop.
+        calculateSurfaceFlags();
+        static std::vector<float4> visibleTileRects;
+        getVisibleTileRects(visibleTileRects);
+        buildings.render(_renderContext, _fbo, _viewport, view, viewproj, _camera->getPosition(), visibleTileRects);   // PORT NOTE: block above delegated to buildingsRenderer
     }
 
     {

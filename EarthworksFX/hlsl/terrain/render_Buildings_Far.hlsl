@@ -17,7 +17,7 @@ cbuffer PerFrameCB
     float4x4 viewproj;
 
     float3 eye;
-    float padd1;
+    uint firstVertex;   // start of the chunk range being drawn (per-draw)
 };
 
 
@@ -49,8 +49,10 @@ buildingFarVSOut vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
 {
     buildingFarVSOut output;
 
-    
-    _buildingVertex V = vertexBuffer[iId * 3 + vId];
+    // The CPU draws grid-cell ranges; the range start comes in through the CB
+    // because SV_VertexID does NOT include StartVertexLocation on D3D (that
+    // only arrived as SV_StartVertexLocation in SM6.8).
+    _buildingVertex V = vertexBuffer[firstVertex + vId];
     
     output.worldPos = V.pos;
     output.eye = V.pos - eye;

@@ -483,6 +483,20 @@ public:
         }
     }
 
+    // Same rects as getDebugTileRects, but only the leaves that passed the
+    // main-camera frustum test in calculateSurfaceFlags (frustumFlags .y bit).
+    // Used to skip building chunks over invisible terrain. Empty when update()
+    // has not run for the current mode - callers treat that as "no info".
+    void getVisibleTileRects(std::vector<float4>& _out) const
+    {
+        _out.clear();
+        for (const quadtree_tile* t : m_used)
+        {
+            if (!t->child[0] && (frustumFlags[t->index].y & (1u << CameraType_Main_Center)))
+                _out.push_back(float4(t->origin.x, t->origin.z, t->size, (float)t->lod));
+        }
+    }
+
 
     void shadowSetup(shadowMap& _shadow);
     void shadowRenderFar();
@@ -548,7 +562,7 @@ private:
     std::vector<quadtree_tile>	m_tiles;
     std::list<quadtree_tile*>	m_free;
     std::list<quadtree_tile*>	m_used;
-    uint4 frustumFlags[1024];
+    uint4 frustumFlags[1024] = {};  // zero-init: "no tile visible" until calculateSurfaceFlags first runs
 public:
     bool fullResetDoNotRender = false;
 private:
