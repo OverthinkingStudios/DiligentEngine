@@ -139,8 +139,9 @@ Diligent::RESOURCE_DIMENSION GuessResourceDimFromName(const std::string& name)
         || name == "gSmokeAndDustInscatter" || name == "gSmokeAndDustOutscatter")
         return Diligent::RESOURCE_DIM_TEX_3D;
 
-    // render_sprite/sprite.hlsl sample these as Texture2DArray, but the C++
-    // side feeds them Texture::createFromFile stubs (plain 1x1 2D).
+    // render_sprite/sprite.hlsl sample these as Texture2DArray; the C++ side
+    // feeds them from Texture::createFromFile, which yields a plain 2D
+    // texture (or a 1x1 2D fallback when the file is missing).
     if (name == "gTex" || name == "gNorm" || name == "gTranclucent")
         return Diligent::RESOURCE_DIM_TEX_2D_ARRAY;
 
@@ -494,9 +495,10 @@ IDeviceObject* GetTextureBinding(const Texture* pTex, SHADER_RESOURCE_TYPE resTy
     // fatal Debug assert inside Diligent (ValidateResourceViewDimension) - the
     // "Runtime assertion failed" popup that looks like a freeze - and a Vulkan
     // viewType error in Release. This really happens: gEnv/gSky/gTex/gNorm/
-    // gTranclucent are fed from Texture::createFromFile, which is a stub that
-    // returns a 1x1 2D texture. Substitute a dummy of the declared dimension;
-    // content is no worse than the stub's. Only enforced for names whose
+    // gTranclucent are fed from Texture::createFromFile, which yields a 2D
+    // texture when the source file is a plain 2D image (or a 1x1 2D fallback
+    // when the file is missing) while the shader declares Cube/2DArray.
+    // Substitute a dummy of the declared dimension. Only enforced for names whose
     // expected dimension is known to be non-2D (2D is the fallback guess and
     // must not override legitimate array/cube bindings).
     const Diligent::RESOURCE_DIMENSION expectedDim = GuessResourceDimFromName(resName);
@@ -1310,10 +1312,15 @@ void DrawInstanced(IDeviceContext* pCtx, GraphicsState* pState, GraphicsVars* pV
     pCtx->SetPipelineState(pPSO);
     pCtx->CommitShaderResources(pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
+    // Falcor semantics: drawInstanced -> RenderContext::draw is ALWAYS non-indexed,
+    // even when the VAO carries an index buffer (every pixelShader VAO has the shared
+    // 128-quad-pattern IB, which is only meant for drawIndexedInstanced). Switching to
+    // DrawIndexed here scrambled every drawInstanced triangle list (BRINGUP_NOTES F22).
+    // Bind the VAO's vertex buffers (if any) but never its IB.
     if (pState->getVao())
     {
         auto vaoIt = g_Vaos.find(pState->getVao().get());
-        if (vaoIt != g_Vaos.end() && vaoIt->second.IB)
+        if (vaoIt != g_Vaos.end())
         {
             const auto& vao = vaoIt->second;
             IBuffer*    pVBs[8] = {};
@@ -1325,16 +1332,6 @@ void DrawInstanced(IDeviceContext* pCtx, GraphicsState* pState, GraphicsVars* pV
             }
             if (numVBs > 0)
                 pCtx->SetVertexBuffers(0, numVBs, pVBs, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-            pCtx->SetIndexBuffer(vao.IB->GetDiligentBuffer(), 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-            DrawIndexedAttribs drawAttrs;
-            drawAttrs.NumIndices            = vertexCount;
-            drawAttrs.NumInstances          = instanceCount;
-            drawAttrs.FirstIndexLocation    = startVertex;
-            drawAttrs.FirstInstanceLocation = startInstance;
-            drawAttrs.IndexType             = MapIndexType(vao.IndexFormat);
-            pCtx->DrawIndexed(drawAttrs);
-            return;
         }
     }
 

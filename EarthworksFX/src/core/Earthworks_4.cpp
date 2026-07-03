@@ -343,11 +343,6 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
     aboutTex = Texture::createFromFile("earthworks_4/about.dds", false, true);
 
     postProcess.tonemapper.load("Samples/Earthworks_4/hlsl/compute_tonemapper.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
-    // pixelShader::load always attaches an index buffer, which forces the compat's
-    // DrawIndexed path - that only ever rasterized one triangle for this full-screen
-    // pass (half the screen). Swap in a null-IB VAO so the tonemapper uses the same
-    // non-indexed draw path the debug grid uses correctly; vsMain builds a 6-vertex quad.
-    postProcess.tonemapper.State()->setVao(Vao::create(Vao::Topology::TriangleList, VertexLayout::create(), Vao::BufferVec{}, nullptr, ResourceFormat::R16Uint));
     //loadColorCube("F:/terrains/colorcubes/K_TONE Vintage_KODACHROME.cube");
     loadColorCube(terrain.settings.dirResource + "/colorcubes/ColdChrome.cube");
 
