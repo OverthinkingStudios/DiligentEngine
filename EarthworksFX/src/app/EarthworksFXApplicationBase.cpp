@@ -118,6 +118,16 @@ void EarthworksFXApplicationBase::ModifyEngineInitInfo(const ModifyEngineInitInf
     Attribs.EngineCI.Features.DepthClamp     = DEVICE_FEATURE_STATE_OPTIONAL;
     Attribs.SCDesc.ColorBufferFormat         = TEX_FORMAT_BGRA8_UNORM_SRGB;
 
+    // F21: vsync-off must actually uncap the FPS on Vulkan. Diligent recreates
+    // the VkSwapchain when Present(0) is first called and prefers MAILBOX as
+    // the non-vsync mode, but with the default BufferCount = 2 mailbox
+    // degenerates to vsync cadence: one image is on the display, the other
+    // waits in the mailbox slot, so vkAcquireNextImageKHR blocks until vblank.
+    // A third image keeps one always free to render into. (D3D12 is unaffected
+    // either way: DXGI flip-model + sync interval 0 uncaps with any count.)
+    if (Attribs.DeviceType == RENDER_DEVICE_TYPE_VULKAN)
+        Attribs.SCDesc.BufferCount = 3;
+
     OnModifyEngineInitInfo(Attribs);
 }
 
