@@ -992,6 +992,13 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Replace the terrain shading (sun/shadow/atmosphere) with a\nworld-position pattern. Pattern visible -> geometry + draw path OK,\nproblem is the shading inputs. Nothing -> tile pipeline/camera.");
 
+        ImGui::SeparatorText("Load-time options");
+        ImGui::Checkbox("building shadows", &dbg.loadOptions.buildingShadows);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Bake buildings into the terrain shadow heightfield as casters.\nSampled once while a terrain loads - changing it has no effect\non the current scene, only on the next terrain (re)load.");
+
         ImGui::SeparatorText("Compute / update");
         ImGui::Checkbox("terrain update (stream/clip/lod)", &t.terrainUpdate);
         ImGui::Checkbox("atmosphere (sun + volumetric)", &t.atmosphere);

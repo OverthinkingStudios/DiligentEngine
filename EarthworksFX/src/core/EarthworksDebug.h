@@ -116,6 +116,19 @@ struct DebugToggles
     int requestTerrainMode = -1;
 };
 
+// Unlike DebugToggles these are NOT instant switches: each option is sampled
+// once while a terrain is loading and has no effect on the running scene.
+// Flip them before the next terrain (re)load. Expected to grow as more
+// load-time behaviour becomes switchable.
+struct DebugLoadOptions
+{
+    // Bake the building triangles into the semi-dynamic terrain shadow
+    // heightfield so buildings cast (and receive) the same baked shadows as
+    // the terrain. Sampled in Earthworks_4::onLoad where _shadowEdges::load
+    // runs, just before the shadow solver thread starts.
+    bool buildingShadows = true;
+};
+
 struct DebugMetrics
 {
     int  terrainMode        = -1;
@@ -183,6 +196,7 @@ struct DebugMetrics
 struct DebugState
 {
     DebugToggles toggles;
+    DebugLoadOptions loadOptions;   // sampled during terrain load, not live
     DebugMetrics live;  // accumulated during the current frame
     DebugMetrics shown; // snapshot of the last completed frame (stable for the UI)
 

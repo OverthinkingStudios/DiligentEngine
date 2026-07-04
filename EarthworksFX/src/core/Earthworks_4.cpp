@@ -407,7 +407,13 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
         // PORT NOTE (F23): switserland_Steg ships the 4096 heightfield in
         // gis/_export; the elevation/ variant does not exist for this terrain
         // (load() now warns loudly if the file is missing).
-        terrain.shadowEdges.load(terrain.settings.dirRoot + "/gis/_export/root4096.bil", -global_sun_direction.y);
+        // Buildings are baked into the shadow heightfield so they cast the
+        // same semi-dynamic shadows as the terrain (terrain.onLoad ran above,
+        // so the building verts are available; the solver thread starts below).
+        // Load-time option, not a live toggle: skipping the bake here is the
+        // only way to get terrain-only shadows.
+        const buildingsRenderer* shadowCasters = ew::gDebug.loadOptions.buildingShadows ? &terrain.buildings : nullptr;
+        terrain.shadowEdges.load(terrain.settings.dirRoot + "/gis/_export/root4096.bil", -global_sun_direction.y, shadowCasters);
         //terrain.shadowEdges.load(terrain.settings.dirRoot + "/elevation/root4096.bil", -global_sun_direction.y);
         terrain.shadowEdges.sunAngle = 0.95605f;
         terrain.shadowEdges.dAngle = 0.0001f;

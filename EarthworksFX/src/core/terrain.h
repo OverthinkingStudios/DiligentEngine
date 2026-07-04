@@ -100,7 +100,12 @@ struct _shadowEdges
     unsigned char edge[4096][4096];
     float2 shadowH[4096][4096];
 
-    void load(std::string filename, float _angle);
+    // Loads the 4096x4096 terrain heightfield; when _buildings is given, its
+    // triangles are overlaid onto height[][] (max per cell) before the slopes
+    // are computed, so the solver casts building shadows exactly like terrain
+    // edges. Call before launchSolveThread() - buildings are static, so no
+    // further synchronization with the solver thread is needed.
+    void load(std::string filename, float _angle, const buildingsRenderer* _buildings = nullptr);
     void solve(float _angle, bool dx);
 
     float sunAngle = 0.02f;  // just afetr sunruise

@@ -53,6 +53,7 @@ void buildingsRenderer::load(const std::string& _basePath)
 
     vertexData = Buffer::createStructured(sizeof(vertex), numVerts);
     vertexData->setBlob(verts.data(), 0, numVerts * sizeof(vertex));
+    cpuVerts = std::move(verts);        // kept for overlayShadowHeights()
 
     shader.load("Samples/Earthworks_4/hlsl/terrain/render_Buildings_Far.hlsl", "vsMain", "psMain", Vao::Topology::TriangleList);
     shader.Vars()->setBuffer("vertexBuffer", vertexData);
@@ -151,6 +152,63 @@ void buildingsRenderer::buildChunks(std::vector<vertex>& _verts)
         }
         chunks.push_back(ch);
     }
+}
+
+
+void buildingsRenderer::overlayShadowHeights(float* _height, int _dim, float _metersPerPixel) const
+{
+    if (cpuVerts.empty()) return;
+
+    // Continuous grid coords: world origin maps to the grid centre, cell i's
+    // centre sits at i + 0.5 - the texel-centre convention shadow() samples
+    // with (uv = pos.xz / (dim * mpp) + 0.5).
+    const float half = _dim * 0.5f;
+    auto splat = [&](int _x, int _y, float _h)
+    {
+        if (_x < 0 || _y < 0 || _x >= _dim || _y >= _dim) return;
+        float& cell = _height[_y * _dim + _x];
+        cell = std::max(cell, _h);
+    };
+
+    const size_t numTris = cpuVerts.size() / 3;
+    for (size_t t = 0; t < numTris; t++)
+    {
+        const vertex* tri = &cpuVerts[t * 3];
+        float2 g[3];
+        for (int i = 0; i < 3; i++)
+        {
+            g[i] = float2(tri[i].pos.x / _metersPerPixel + half,
+                          tri[i].pos.z / _metersPerPixel + half);
+            // Vertices always splat their own cell, so buildings smaller than
+            // one cell (~10 m) still register.
+            splat((int)std::floor(g[i].x), (int)std::floor(g[i].y), tri[i].pos.y);
+        }
+
+        // Walls are vertical (zero x/z footprint) - their top edge is covered
+        // by the vertex splats above; only roof triangles have area to fill.
+        const float det = (g[1].x - g[0].x) * (g[2].y - g[0].y) - (g[2].x - g[0].x) * (g[1].y - g[0].y);
+        if (std::abs(det) < 1e-6f) continue;
+
+        const int minX = std::max(0, (int)std::floor(std::min({ g[0].x, g[1].x, g[2].x })));
+        const int maxX = std::min(_dim - 1, (int)std::ceil(std::max({ g[0].x, g[1].x, g[2].x })));
+        const int minY = std::max(0, (int)std::floor(std::min({ g[0].y, g[1].y, g[2].y })));
+        const int maxY = std::min(_dim - 1, (int)std::ceil(std::max({ g[0].y, g[1].y, g[2].y })));
+
+        for (int y = minY; y <= maxY; y++)
+        {
+            for (int x = minX; x <= maxX; x++)
+            {
+                const float2 p(x + 0.5f, y + 0.5f);
+                const float b1 = ((p.x - g[0].x) * (g[2].y - g[0].y) - (g[2].x - g[0].x) * (p.y - g[0].y)) / det;
+                const float b2 = ((g[1].x - g[0].x) * (p.y - g[0].y) - (p.x - g[0].x) * (g[1].y - g[0].y)) / det;
+                const float b0 = 1.f - b1 - b2;
+                if (b0 < 0.f || b1 < 0.f || b2 < 0.f) continue;
+                splat(x, y, b0 * tri[0].pos.y + b1 * tri[1].pos.y + b2 * tri[2].pos.y);
+            }
+        }
+    }
+
+    spdlog::info("buildings: overlaid {} triangles onto the {}x{} shadow height grid", numTris, _dim, _dim);
 }
 
 

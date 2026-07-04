@@ -195,7 +195,7 @@ void _shadowEdges::solve(float _angle, bool dx)
     }
 }
 
-void _shadowEdges::load(std::string filename, float _angle)
+void _shadowEdges::load(std::string filename, float _angle, const buildingsRenderer* _buildings)
 {
     int edgeCnt = 0;
     int shadowEdge = 0;
@@ -207,6 +207,14 @@ void _shadowEdges::load(std::string filename, float _angle)
     {
         ifs.read((char*)height, 4096 * 4096 * 4);
         ifs.close();
+
+        // Buildings become part of the caster heightfield: their walls show
+        // up as steep Nx slopes below, so the existing edge-detect + march in
+        // solve() casts their shadows with no extra code.
+        if (_buildings)
+        {
+            _buildings->overlayShadowHeights(&height[0][0], 4096, 9.765625f);
+        }
 
         for (int y = 0; y < 4095; y++)
         {

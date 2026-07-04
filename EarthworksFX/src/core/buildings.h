@@ -70,6 +70,17 @@ public:
     // Atmosphere textures, bound once after load (call from Earthworks_4::onLoad).
     void setAtmosphere(Texture::SharedPtr _inscatter, Texture::SharedPtr _outscatter, Texture::SharedPtr _sunlight);
 
+    // Splat the building triangles into a _dim x _dim max-height grid
+    // (row-major, row = world z, column = world x, world origin at the grid
+    // centre - the same mapping shadow() in render_Common.hlsli uses). Cells
+    // covered by a triangle take max(cell, interpolated triangle height);
+    // every vertex also splats its own cell so buildings smaller than one
+    // cell (~10 m) still register. Used by _shadowEdges::load() to make the
+    // baked terrain shadows include buildings as casters. Buildings are
+    // static, so calling this once before the shadow solver thread starts
+    // needs no synchronization.
+    void overlayShadowHeights(float* _height, int _dim, float _metersPerPixel) const;
+
     // Draws the building chunks whose x/z bounds overlap any of the visible
     // terrain tile rects (same float4 layout as getDebugTileRects: x, z,
     // size, lod - see terrainManager::getVisibleTileRects). An empty list
@@ -90,4 +101,5 @@ private:
     Sampler::SharedPtr sampler_Clamp;
     int                numTriangles = 0;
     std::vector<chunk> chunks;          // grid cells, row-major, built in load()
+    std::vector<vertex> cpuVerts;       // CPU copy kept for overlayShadowHeights()
 };
