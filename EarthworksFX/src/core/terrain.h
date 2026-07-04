@@ -718,7 +718,7 @@ private:
     void allStamps_to_Terrafector();
 
 
-    bool bSplineAsTerrafector = false;
+    bool bSplineAsTerrafector = true;
     bool showRoadOverlay = true;
     bool showRoadSpline = true;
 

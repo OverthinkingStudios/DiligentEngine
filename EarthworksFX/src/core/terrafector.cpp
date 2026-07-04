@@ -1193,11 +1193,8 @@ bool terrafectorElement::isMeshCached(const std::string _path)
     }
     auto timeFile = std::filesystem::last_write_time(_path);
     auto timeCache = std::filesystem::last_write_time(_path + ".lod4Cache");
-    if (timeFile < timeCache);
-    {
-        return true;
-    }
-    return false;
+
+    return timeFile < timeCache;
 }
 
 
@@ -1332,9 +1329,11 @@ terrafectorElement& terrafectorElement::find_insert(const std::string _name, tfT
 
     if (_type == tf_fbx)
     {
+        std::filesystem::path element_path = _path;
+
         terrafectorElement& me = children.back();
-        me.path = _path;
-        me.name = _path.substr(_path.find_last_of("\\/") + 1, _path.size());
+        me.path = element_path.string();
+        me.name = element_path.filename().string();
         //std::string fullName = terrafectorEditorMaterial::rootFolder + _path;
         std::string fullName = _path;
         std::string fullPath = fullName.substr(0, fullName.find_last_of("\\/") + 1);
@@ -1484,7 +1483,7 @@ void terrafectorElement::renderGui(Gui* _pGui, float tab)
 void terrafectorElement::loadPath(std::string _path)
 {
     //if (!std::filesystem::exists(_path)) {
-        return;
+    //    return;
     //}
 
     for (const auto& entry : std::filesystem::directory_iterator(_path))

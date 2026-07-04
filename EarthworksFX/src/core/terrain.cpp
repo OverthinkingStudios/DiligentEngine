@@ -1373,6 +1373,47 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
         mRoadNetwork.rootPath = settings.dirRoot + "/";
     }
 
+    if(ew::gDebug.toggles.splines) {
+        // PORT NOTE: roads are runtime content, not an editor-only feature. They ship
+        // with the terrafectors and get rasterized into every tile's top-down bake, so
+        // load the network at startup. Falls back to the newest .roadnetwork in
+        // <dirRoot>/roads when lastFile.xml has no (valid) <road> entry.
+        LOG_BLOCK("roadNetwork.load", 0);
+
+        std::filesystem::path roadFile = lastfile.road;
+        if (lastfile.road.empty() || !std::filesystem::exists(roadFile))
+        {
+            roadFile.clear();
+            std::filesystem::path roadDir = std::filesystem::path(settings.dirRoot) / "roads";
+            if (std::filesystem::exists(roadDir))
+            {
+                for (const auto& entry : std::filesystem::directory_iterator(roadDir))
+                {
+                    if (entry.is_regular_file() && entry.path().extension() == ".roadnetwork")
+                    {
+                        // names carry a version suffix (steg_001..010), lexicographic max = newest
+                        if (roadFile.empty() || entry.path().filename() > roadFile.filename())
+                            roadFile = entry.path();
+                    }
+                }
+            }
+            if (!roadFile.empty())
+                spdlog::info("lastFile.xml has no valid <road> entry, falling back to {}", roadFile.string());
+        }
+
+        if (!roadFile.empty() && std::filesystem::exists(roadFile))
+        {
+            spdlog::info("loading road network {}", roadFile.string());
+            mRoadNetwork.load(roadFile);
+            mRoadNetwork.updateAllRoads();      // build bezier + index data, sets isDirty for the GPU upload in update()
+            bSplineAsTerrafector = true;        // bake roads into the tiles ("show baked")
+        }
+        else
+        {
+            spdlog::warn("no road network found, terrain will have no roads");
+        }
+    }
+
     {
         /*
         LOG_BLOCK("paraglider", 0);
