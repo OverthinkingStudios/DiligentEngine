@@ -1,0 +1,25 @@
+{
+    "cameras": [
+        {
+            "far": 40000.0,
+            "fovYDeg": 60.0,
+            "name": "cam_0",
+            "near": 0.10000000149011612,
+            "pitch": -0.14079640805721283,
+            "pos": [
+                15932.515625,
+                897.6074829101563,
+                -2159.43408203125
+            ],
+            "yaw": 12.314262390136719
+        }
+    ],
+    "name": "road_testing_steg_single",
+    "settleMs": 1000,
+    "settleTimeoutMs": 15000,
+    "terrain": "C:\\dev\\git\\os\\gameroot_dev\\terrains\\switserland_Steg\\switserland_Steg.terrainSettings.json",
+    "window": [
+        1280,
+        768
+    ]
+}

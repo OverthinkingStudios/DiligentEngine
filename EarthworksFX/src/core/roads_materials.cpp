@@ -2,6 +2,7 @@
 #include"roads_materials.h"
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "StringUtility.h"
 
 
 //#pragma optimize( "", off )
@@ -170,21 +171,22 @@ bool roadMaterialGroup::renderGui(Gui* _gui, Gui::Window& _window)
 
 uint roadMaterialCache::find_insert_material(std::string _path)
 {
-    replaceAllrm(_path, "\\", "/");
-    replaceAllrm(_path, "//", "/");     // remove double
-
-    if (_path.find(terrafectorEditorMaterial::rootFolder) == 0)
+    const std::filesystem::path root_path = terrafectorEditorMaterial::rootFolder;
+    std::filesystem::path relative_to_root = ots::getRelativeTo(_path, root_path);
+    if (!relative_to_root.empty() && *relative_to_root.begin() != "..")
     {
-        std::string relative = _path.substr(terrafectorEditorMaterial::rootFolder.length());
-
         for (uint i = 0; i < materialVector.size(); i++)
         {
-            if (materialVector[i].relativePath.compare(relative) == 0)
+            if (ots::doesRelativePathExistIn(materialVector[i].relativePath, root_path))
             {
                 // try to load the thumbnail
                 if (!materialVector[i].thumbnail) {
                     materialVector[i].thumbnail = Texture::createFromFile(_path + ".jpg", false, true);
-                    spdlog::error("Road material - failed to load {}.jpg", _path.c_str());
+                    if (!materialVector[i].thumbnail) {
+                        spdlog::error("Road material - failed to load {}.jpg", _path.c_str());
+                    } else {
+                        spdlog::info("Road material - loaded {}.jpg", _path.c_str());
+                    }
                 }
                 return i;
             }
@@ -193,7 +195,7 @@ uint roadMaterialCache::find_insert_material(std::string _path)
         // not found - add new
         spdlog::info("roadMaterialCache - add {}", _path.c_str());
         materialVector.emplace_back();
-        materialVector.back().import(relative);
+        materialVector.back().import(relative_to_root.string());
         materialVector.back().thumbnail = Texture::createFromFile(_path + ".jpg", false, true);
 
         // load all the terrafector Materials and set
@@ -202,9 +204,7 @@ uint roadMaterialCache::find_insert_material(std::string _path)
         spdlog::info("roadMaterialCache ({})  {} layers", _path.c_str(), (int)current.layers.size());
         for (uint i = 0; i < current.layers.size(); i++)
         {
-            std::string file = terrafectorEditorMaterial::rootFolder + current.layers[i].material;
-            replaceAllrm(file, "//", "/");     // remove double
-            current.layers[i].materialIndex = terrafectorEditorMaterial::static_materials.find_insert_material(file);
+            current.layers[i].materialIndex = terrafectorEditorMaterial::static_materials.find_insert_material(root_path / current.layers[i].material);
         }
 
         return (uint)(materialVector.size() - 1);

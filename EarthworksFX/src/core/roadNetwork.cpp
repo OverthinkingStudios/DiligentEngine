@@ -1113,6 +1113,7 @@ void roadNetwork::renderGUI(Gui* _gui)
     style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.03f, 0.03f, 0.3f, 0.5f);
     if (ImGui::Button("Load last file")) {
         load(lastUsedFilename);
+        updateAllRoads();   // PORT NOTE: was missing - loaded roads never reached the GPU until some edit triggered it
     }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip(lastUsedFilename.string().c_str());

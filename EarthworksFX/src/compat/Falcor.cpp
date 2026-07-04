@@ -1570,6 +1570,12 @@ void RenderContext::copyResource(Texture* pDst, Texture* pSrc)
     auto* pDstTex = pDst->GetDiligentTexture();
     if (pSrcTex && pDstTex)
     {
+        // The source is often an FBO texture that is still bound as render
+        // target from the pass that produced it (e.g. tile-split FBOs).
+        // CopyTexture's state transition would then implicitly unbind it and
+        // Diligent logs an info message each time; unbind explicitly instead.
+        m_pContext->SetRenderTargets(0, nullptr, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_NONE);
+
         Diligent::CopyTextureAttribs copyAttribs;
         copyAttribs.pSrcTexture = pSrcTex;
         copyAttribs.pDstTexture = pDstTex;
@@ -1621,6 +1627,11 @@ void RenderContext::copySubresource(Texture* pDst, uint32_t dstSubresource, Text
     auto* pSrcTex = pSrc->GetDiligentTexture();
     if (!pDstTex || !pSrcTex)
         return;
+
+    // See copyResource(): the source (e.g. split.tileFbo color texture) may
+    // still be bound as render target; unbind it explicitly so the copy's
+    // state transition doesn't spam Diligent's implicit-unbind info message.
+    m_pContext->SetRenderTargets(0, nullptr, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_NONE);
 
     Diligent::CopyTextureAttribs copyAttribs;
     copyAttribs.pSrcTexture             = pSrcTex;
