@@ -412,7 +412,7 @@ struct jp2Dir
 
 
 
-enum _terrainMode { vegetation, ecotope, terrafector, roads, glider, terrainBuilder, textureTool };
+enum _terrainMode { vegetation, ecotope, terrafector, roads, glider, terrainBuilder, textureTool_mode };
 
 class terrainManager
 {

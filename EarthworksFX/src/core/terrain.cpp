@@ -3970,7 +3970,7 @@ bool terrainManager::update(RenderContext* _renderContext)
     if ((terrainMode == _terrainMode::vegetation) ||
         (terrainMode == _terrainMode::glider) ||
         (terrainMode == _terrainMode::terrainBuilder) ||
-        (terrainMode == _terrainMode::textureTool))
+        (terrainMode == _terrainMode::textureTool_mode))
     {
         ew::gDebug.live.updateEarlyOut = true;
         fullResetDoNotRender = false;
@@ -6640,7 +6640,7 @@ bool terrainManager::onKeyEvent(const KeyboardEvent& keyEvent)
         if (keyPressed && keyEvent.key == Input::Key::Key4) terrainMode = _terrainMode::roads;
         //if (keyPressed && keyEvent.key == Input::Key::Key5) terrainMode = _terrainMode::glider;
         if (keyPressed && keyEvent.key == Input::Key::Key6) terrainMode = _terrainMode::terrainBuilder;
-        if (keyPressed && keyEvent.key == Input::Key::Key7) terrainMode = _terrainMode::textureTool;
+        if (keyPressed && keyEvent.key == Input::Key::Key7) terrainMode = _terrainMode::textureTool_mode;
 
     }
 

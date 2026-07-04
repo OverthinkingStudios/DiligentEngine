@@ -15,6 +15,7 @@
 
 //lodTriangleMesh     terrafectorSystem::lod_4_mesh;
 
+#pragma optimize("", off)
 
 const JLogger::SharedPtr& JLogger::instancePtr()
 {
