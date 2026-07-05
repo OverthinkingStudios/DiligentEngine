@@ -1653,19 +1653,70 @@ void RenderContext::resourceBarrier(Texture* pTexture, Resource::State state)
 
 std::vector<uint8_t> RenderContext::readTextureSubresource(Texture* pTexture, uint32_t subresource)
 {
-    (void)subresource;
-    if (!m_pContext || !pTexture)
+    // Synchronous staging readback (debug/instrumentation use only - stalls the GPU).
+    if (!m_pContext || !pTexture || !g_pDevice)
         return {};
     auto* pTex = pTexture->GetDiligentTexture();
     if (!pTex)
         return {};
 
-    Diligent::TextureDesc desc = pTex->GetDesc();
-    const size_t bytesPerPixel = 4;
-    const size_t size         = static_cast<size_t>(desc.Width) * desc.Height * bytesPerPixel;
-    std::vector<uint8_t> data(size, 0);
-    // TODO: wire Diligent texture staging readback.
-    (void)data;
+    const Diligent::TextureDesc& srcDesc = pTex->GetDesc();
+    const auto& fmtAttribs = Diligent::GetTextureFormatAttribs(srcDesc.Format);
+    if (fmtAttribs.ComponentType == Diligent::COMPONENT_TYPE_COMPRESSED)
+    {
+        spdlog::error("readTextureSubresource: compressed format {} not supported", fmtAttribs.Name);
+        return {};
+    }
+    const size_t bytesPerPixel = size_t(fmtAttribs.ComponentSize) * fmtAttribs.NumComponents;
+
+    const uint32_t mip   = subresource % srcDesc.MipLevels;
+    const uint32_t slice = subresource / srcDesc.MipLevels;
+    const uint32_t w     = std::max(1u, uint32_t(srcDesc.Width) >> mip);
+    const uint32_t h     = std::max(1u, uint32_t(srcDesc.Height) >> mip);
+
+    Diligent::TextureDesc stagingDesc;
+    stagingDesc.Name           = "EarthworksFX readback staging";
+    stagingDesc.Type           = Diligent::RESOURCE_DIM_TEX_2D;
+    stagingDesc.Width          = w;
+    stagingDesc.Height         = h;
+    stagingDesc.Format         = srcDesc.Format;
+    stagingDesc.MipLevels      = 1;
+    stagingDesc.Usage          = Diligent::USAGE_STAGING;
+    stagingDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
+    stagingDesc.BindFlags      = Diligent::BIND_NONE;
+
+    Diligent::RefCntAutoPtr<Diligent::ITexture> pStaging;
+    g_pDevice->CreateTexture(stagingDesc, nullptr, &pStaging);
+    if (!pStaging)
+        return {};
+
+    // The source may still be bound as a render target of the tile FBO.
+    m_pContext->SetRenderTargets(0, nullptr, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_NONE);
+
+    Diligent::CopyTextureAttribs copyAttribs;
+    copyAttribs.pSrcTexture              = pTex;
+    copyAttribs.pDstTexture              = pStaging;
+    copyAttribs.SrcMipLevel              = mip;
+    copyAttribs.SrcSlice                 = slice;
+    copyAttribs.SrcTextureTransitionMode = Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+    copyAttribs.DstTextureTransitionMode = Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+    m_pContext->CopyTexture(copyAttribs);
+
+    m_pContext->WaitForIdle();
+
+    Diligent::MappedTextureSubresource mapped;
+    m_pContext->MapTextureSubresource(pStaging, 0, 0, Diligent::MAP_READ,
+                                      Diligent::MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
+    if (!mapped.pData)
+        return {};
+
+    const size_t rowBytes = size_t(w) * bytesPerPixel;
+    std::vector<uint8_t> data(rowBytes * h);
+    for (uint32_t row = 0; row < h; ++row)
+        std::memcpy(data.data() + row * rowBytes,
+                    static_cast<const uint8_t*>(mapped.pData) + row * mapped.Stride,
+                    rowBytes);
+    m_pContext->UnmapTextureSubresource(pStaging, 0, 0);
     return data;
 }
 

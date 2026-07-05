@@ -8,10 +8,14 @@
 #include "cereal/archives/xml.hpp"
 #include <sstream>
 #include <fstream>
+#include <cfloat>
+#include <algorithm>
 #include <iostream>
 #include <filesystem>
 #include "roads_materials.h"
 #include "ots/Log.hpp"
+#include "overthinkingEnv.h"
+#include "StringUtility.h"
 
 //lodTriangleMesh     terrafectorSystem::lod_4_mesh;
 
@@ -66,8 +70,7 @@ void JLogger::close()
         stack.pop();
 }
 
-//#pragma optimize( "", off )
-
+#pragma optimize("", off)
 
 bool forceAllTerrfectorRebuild = false;
 bool terrafectorSystem::needsRefresh = false;
@@ -507,6 +510,31 @@ void lodTriangleMesh_LoadCombiner::loadToGPU(std::string _path, bool _log)
     int vertexData = 0;
     int indexData = 0;
 
+    // TEMP DEBUG (terrafector bring-up, tile-hole): log the vertex-Y range of
+    // this combiner before the CPU copy is released. If the 50_top parking mesh
+    // reports y~0 instead of ~950m the cached geometry itself is flat and the
+    // bake corruption needs no shader explanation.
+    {
+        size_t dbgVerts = 0;
+        float dbgMinY = FLT_MAX, dbgMaxY = -FLT_MAX;
+        float dbgMinX = FLT_MAX, dbgMaxX = -FLT_MAX;
+        float dbgMinZ = FLT_MAX, dbgMaxZ = -FLT_MAX;
+        for (auto& tile : tiles)
+            for (auto& v : tile.verts)
+            {
+                dbgMinY = std::min(dbgMinY, v.pos.y);
+                dbgMaxY = std::max(dbgMaxY, v.pos.y);
+                dbgMinX = std::min(dbgMinX, v.pos.x);
+                dbgMaxX = std::max(dbgMaxX, v.pos.x);
+                dbgMinZ = std::min(dbgMinZ, v.pos.z);
+                dbgMaxZ = std::max(dbgMaxZ, v.pos.z);
+                dbgVerts++;
+            }
+        if (dbgVerts > 0)
+            spdlog::info("TFMESH loadToGPU lod={} '{}': {} verts, y range [{:.1f}, {:.1f}], x range [{:.1f}, {:.1f}], z range [{:.1f}, {:.1f}]",
+                         lod, _path, dbgVerts, dbgMinY, dbgMaxY, dbgMinX, dbgMaxX, dbgMinZ, dbgMaxZ);
+    }
+
     for (auto& tile : tiles)
     {
         tfTile.numVerts = tile.verts.size();
@@ -629,30 +657,30 @@ void materialCache::cleanPath(std::string& _path)
 // only called from lodTriangleMesh_LoadCombiner, for materials in fbx files
 uint materialCache::find_insert_material(const std::string _path, const std::string _name)
 {
+    const std::string filename = _name + ".terrafectorMaterial";
+    const std::filesystem::path path(_path);
+
     logTab++;
-    std::filesystem::path fullPath = _path + _name + ".terrafectorMaterial";
-    if (std::filesystem::exists(fullPath))
+    if (std::filesystem::exists(path / filename))
     {
         logTab--;
-        return find_insert_material(fullPath);
+        return find_insert_material(path / filename);
     }
     else
     {
         // Now we have to seacrh, but use the first one we find
         std::string fullName = _name + ".terrafectorMaterial";
-        std::filesystem::path rootpath = fullPath = terrafectorEditorMaterial::rootFolder + "/terrafectorMaterials";
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(fullPath))
+
+        constexpr bool allow_free_search = true;
+        std::filesystem::path material_file = overthinking::Env::findContentFile(path, filename, allow_free_search);
+        if (std::filesystem::exists(material_file))
         {
-            std::string newPath = entry.path().string();
-            cleanPath(newPath);
-            //replaceAll(newPath, "\\", "/");
-            //replaceAll(newPath, "//", "/"); // remove double slashes
-            if (newPath.find(fullName) != std::string::npos)
-            {
-                logTab--;
-                return find_insert_material(newPath);
-            }
+            logTab--;
+            return find_insert_material(material_file);
         }
+
+        //std::filesystem::path rootpath = terrafectorEditorMaterial::rootFolder + "/terrafectorMaterials";
+        //for (const auto& entry : std::filesystem::recursive_directory_iterator(rootpath))
     }
 
     // we got here, not good
@@ -707,7 +735,7 @@ int materialCache::find_insert_texture(const std::filesystem::path _path, bool i
     logTab++;
     for (uint i = 0; i < textureVector.size(); i++)
     {
-        if (textureVector[i]->getSourcePath().compare(_path) == 0)
+        if (ots::doesRelativePathExistIn(textureVector[i]->getSourcePath(), _path))
         {
             logTab--;
             return i;
@@ -721,20 +749,24 @@ int materialCache::find_insert_texture(const std::filesystem::path _path, bool i
     }
     if (!std::filesystem::exists(ddsFilename))
     {
-        std::string pathOnly = ddsFilename.substr(0, ddsFilename.find_last_of("\\/") + 1);
-        std::string cmdExp = "F:\\terrains\\_resources\\Compressonator\\CompressonatorCLI -miplevels 6 \"" + _path.string() + "\" " + "F:\\terrains\\_resources\\Compressonator\\temp_mip.dds";
+        if (std::filesystem::exists("F:\\terrains\\_resources\\Compressonator")) {
+            std::string pathOnly = ddsFilename.substr(0, ddsFilename.find_last_of("\\/") + 1);
+            std::string cmdExp = "F:\\terrains\\_resources\\Compressonator\\CompressonatorCLI -miplevels 6 \"" + _path.string() + "\" " + "F:\\terrains\\_resources\\Compressonator\\temp_mip.dds";
 
-        spdlog::info("{}", cmdExp.c_str());
-        system(cmdExp.c_str());
-        if (isSRGB)
-        {
-            std::string cmdExp2 = "F:\\terrains\\_resources\\Compressonator\\CompressonatorCLI -fd BC6H  F:\\terrains\\_resources\\Compressonator\\temp_mip.dds \"" + ddsFilename + "\"";
-            system(cmdExp2.c_str());
-        }
-        else
-        {
-            std::string cmdExp2 = "F:\\terrains\\_resources\\Compressonator\\CompressonatorCLI -fd BC7 -Quality 0.01 F:\\terrains\\_resources\\Compressonator\\temp_mip.dds " + ddsFilename + "\"";
-            system(cmdExp2.c_str());
+            spdlog::info("{}", cmdExp.c_str());
+            system(cmdExp.c_str());
+            if (isSRGB)
+            {
+                std::string cmdExp2 = "F:\\terrains\\_resources\\Compressonator\\CompressonatorCLI -fd BC6H  F:\\terrains\\_resources\\Compressonator\\temp_mip.dds \"" + ddsFilename + "\"";
+                system(cmdExp2.c_str());
+            }
+            else
+            {
+                std::string cmdExp2 = "F:\\terrains\\_resources\\Compressonator\\CompressonatorCLI -fd BC7 -Quality 0.01 F:\\terrains\\_resources\\Compressonator\\temp_mip.dds " + ddsFilename + "\"";
+                system(cmdExp2.c_str());
+            }
+        } else {
+            spdlog::error("Compressonator not found, cannot compress texture {}", _path.string().c_str());
         }
     }
     Texture::SharedPtr tex = Texture::createFromFile(ddsFilename, true, isSRGB);
@@ -1532,6 +1564,10 @@ uint32_t terrafectorEditorMaterial::blendHash() {
 
 void terrafectorEditorMaterial::import(std::filesystem::path  _path, bool _replacePath) {
 
+
+    if (_path == L"C:\\dev\\git\\os\\gameroot_dev/terrains/switserland_Steg/terrafectors\\20_base\\LOD2/forests.terrafectorMaterial")
+        return;
+
     //_path += "_xml";
     std::ifstream is(_path);
     if (is.fail()) {
@@ -2104,16 +2140,24 @@ bool terrafectorEditorMaterial::renderGUI(Gui* _gui)
 
 void terrafectorEditorMaterial::rebuildConstantbufferData()
 {
+    // PORT NOTE: a missing/unassigned texture leaves textureIndex at -1, which
+    // became gmyTextures_T[0xFFFFFFFF] in the shader - an out-of-bounds
+    // descriptor read. Falcor returned 0 from its null descriptor there;
+    // Diligent reads garbage (NaN elevation -> holes in baked tiles). Remap to
+    // the last array slot, which the compat layer pads with a dummy (zero)
+    // texture, restoring the old "missing texture samples 0" behaviour.
+    auto safeIndex = [](int idx) -> uint { return idx >= 0 ? (uint)idx : 4095u; };
+
     // rework the indicis
-    _constData.baseAlphaTexture = textureIndex[baseAlpha];
-    _constData.detailAlphaTexture = textureIndex[detailAlpha];
-    _constData.baseElevationTexture = textureIndex[baseElevation];
-    _constData.detailElevationTexture = textureIndex[detailElevation];
-    _constData.baseAlbedoTexture = textureIndex[baseAlbedo];
-    _constData.detailAlbedoTexture = textureIndex[detailAlbedo];
-    _constData.baseRoughnessTexture = textureIndex[baseRoughness];
-    _constData.detailRoughnessTexture = textureIndex[detailRoughness];
-    _constData.ecotopeTexture = textureIndex[ecotope];
+    _constData.baseAlphaTexture = safeIndex(textureIndex[baseAlpha]);
+    _constData.detailAlphaTexture = safeIndex(textureIndex[detailAlpha]);
+    _constData.baseElevationTexture = safeIndex(textureIndex[baseElevation]);
+    _constData.detailElevationTexture = safeIndex(textureIndex[detailElevation]);
+    _constData.baseAlbedoTexture = safeIndex(textureIndex[baseAlbedo]);
+    _constData.detailAlbedoTexture = safeIndex(textureIndex[detailAlbedo]);
+    _constData.baseRoughnessTexture = safeIndex(textureIndex[baseRoughness]);
+    _constData.detailRoughnessTexture = safeIndex(textureIndex[detailRoughness]);
+    _constData.ecotopeTexture = safeIndex(textureIndex[ecotope]);
 }
 
 void terrafectorEditorMaterial::rebuildConstantbuffer()

@@ -31,6 +31,10 @@
 #include "imgui.h"
 #include <imgui_internal.h>
 #include <random>
+#include <cfloat>
+#include <climits>  // TEMP DEBUG (tile-hole tagged-shape bbox)
+#include <cmath>
+#include <set>      // TEMP DEBUG (tile-hole poison detector)
 //#include "Utils/UI/TextRenderer.h"
 #include "assimp/Exporter.hpp"
 #include "overthinkingEnv.h"
@@ -726,6 +730,8 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
             }
         }
     }
+
+    overthinking::Env::setContentPaths(lastfile.terrain, std::filesystem::path(settings.dirRoot) / "terrains", settings.dirResource);
 
 
     terrafectorSystem::pEcotopes = &mEcosystem;
@@ -1545,6 +1551,12 @@ void terrainManager::init_TopdownRender()
     //??? hoekom het ek dit gedoen
     blendDesc.setRtParams(0, BlendState::BlendOp::Add, BlendState::BlendOp::Add, BlendState::BlendFunc::One, BlendState::BlendFunc::OneMinusSrcAlpha, BlendState::BlendFunc::One, BlendState::BlendFunc::OneMinusSrcAlpha);
     split.blendstateRoadsCombined = BlendState::create(blendDesc);
+
+    // DEBUG (terrafector bring-up): identical state but RT0 blend disabled, for
+    // A/B-testing whether the R32F elevation blend causes the tile hole.
+    blendDesc.setRtBlend(0, false);
+    split.blendstateRoadsCombined_noElevBlend = BlendState::create(blendDesc);
+    blendDesc.setRtBlend(0, true);
 
     blendDesc.setIndependentBlend(true);
     for (int i = 0; i < 8; i++)
@@ -4127,6 +4139,64 @@ bool terrainManager::update(RenderContext* _renderContext)
                     tile->boundingSphere.y = split.tileCenters[tile->index].x;
                 }
             }
+
+            // TEMP DEBUG (terrafector bring-up, tile-hole): "poison detector" v2.
+            // Compare every leaf's bounding-sphere height against the static
+            // CPU ground-truth heightfield (shadowEdges.height, root4096.bil,
+            // same texel-centre mapping as the draped debug grid). A big
+            // mismatch means testForSplit tests a sphere far from the real
+            // terrain -> pitch-dependent never-splits. For each offender also
+            // replay the main-camera frustum test with the actual sphere vs a
+            // ground-truth-corrected sphere: if only the corrected one passes,
+            // that's the hole mechanism confirmed, no manual A/B needed.
+            {
+                static std::set<uint64_t> dbgPoisonSeen;
+                static uint32_t dbgPoisonFrame = 0;
+                dbgPoisonFrame++;
+                int leafCount = 0, badCount = 0;
+                float worstDiff = 0; int worstLod = -1, worstX = 0, worstY = 0;
+                const auto& mainCam = cameraViews[CameraType_Main_Center];
+                for (auto& tile : m_used)
+                {
+                    if (tile->child[0]) continue;       // leaves only - inner tiles are not rendered
+                    leafCount++;
+                    const float cx = tile->origin.x + tile->size * 0.5f;
+                    const float cz = tile->origin.z + tile->size * 0.5f;
+                    int px = (int)std::floor(cx / 9.765625f + 2048.0f);     // 40000m / 4096px
+                    int py = (int)std::floor(cz / 9.765625f + 2048.0f);
+                    px = std::min(std::max(px, 0), 4095);
+                    py = std::min(std::max(py, 0), 4095);
+                    const float groundH = shadowEdges.height[py][px];
+                    const float diff = tile->boundingSphere.y - groundH;
+                    if (std::abs(diff) > worstDiff) { worstDiff = std::abs(diff); worstLod = tile->lod; worstX = tile->x; worstY = tile->y; }
+                    if (std::abs(diff) > 150.0f)
+                    {
+                        badCount++;
+                        const uint64_t key = ((uint64_t)tile->index << 40) | ((uint64_t)tile->lod << 32) | ((uint64_t)tile->y << 16) | (uint64_t)tile->x;
+                        if (dbgPoisonSeen.insert(key).second && mainCam.bUse)
+                        {
+                            // replicate testForSplit's main-camera test
+                            const float bss = tile->size * 0.9f;
+                            float4 sph = tile->boundingSphere;
+                            float4 viewBS = mainCam.view * sph;
+                            const bool inFrust = all(saturate(viewBS * mainCam.frustumMatrix + float4(bss, bss, bss, bss)));
+                            sph.y = groundH;
+                            float4 viewBS_GT = mainCam.view * sph;
+                            const bool inFrustGT = all(saturate(viewBS_GT * mainCam.frustumMatrix + float4(bss, bss, bss, bss)));
+                            viewBS.w = 0;
+                            const float distance = glm::length(float3(viewBS)) + 0.01f;
+                            const float lodPix = tile->size / distance * (mainCam.resolution * glm::length(mainCam.proj[0]) / 4.0f);
+                            spdlog::warn("TILECENTER stale-sphere: leaf idx={} lod={} x={} y={} sphereY={:.1f} groundH={:.1f} diff={:.1f} center={:.1f} shouldSplit={} inFrust={} inFrustIfCorrected={} lodPix={:.0f}",
+                                         tile->index, tile->lod, tile->x, tile->y,
+                                         tile->boundingSphere.y, groundH, diff, split.tileCenters[tile->index].x,
+                                         tile->main_ShouldSplit, inFrust, inFrustGT, lodPix);
+                        }
+                    }
+                }
+                if ((dbgPoisonFrame % 600) == 0)
+                    spdlog::info("TILECENTER summary: {}/{} leaves sphere-vs-ground mismatch >150m; worst {:.0f}m at lod={} x={} y={}",
+                                 badCount, leafCount, worstDiff, worstLod, worstX, worstY);
+            }
         }
 
         split.compute_tileClear.dispatch(_renderContext, 1, 1);
@@ -4429,19 +4499,32 @@ void terrainManager::splitOne(RenderContext* _renderContext)
         if (tile->forSplit)
         {
             bool dataReady = true;
+            bool elevReady = true, imgReady = true;
             {
                 //FALCOR_PROFILE("hashAndCache");
                 hasChanged = true;
-                dataReady &= hashAndCache(tile);
+                elevReady = hashAndCache(tile);
+                dataReady &= elevReady;
             }
 
             {
                 //FALCOR_PROFILE("hashAndCacheImages");
-                dataReady &= hashAndCacheImages(tile);
+                imgReady = hashAndCacheImages(tile);
+                dataReady &= imgReady;
             }
 
             if (!dataReady)
+            {
                 ew::gDebug.live.splitBlockedData++;
+                // TEMP DEBUG (terrafector bring-up, tile-hole): a tile that stays
+                // blocked here forever is exactly the "hole" symptom. Log which
+                // loader blocks it, throttled to every 64th event to avoid spam.
+                static uint32_t dbgBlockEvents = 0;
+                if ((dbgBlockEvents++ & 63u) == 0)
+                    spdlog::warn("SPLITBLOCK #{} tile lod={} x={} y={}: elevReady={} imgReady={} elevHash={:#x} imgHash={:#x}",
+                                 dbgBlockEvents, tile->lod, tile->x, tile->y,
+                                 elevReady, imgReady, tile->elevationHash, tile->imageHash);
+            }
 
             if (dataReady)
             {
@@ -4561,11 +4644,32 @@ void terrainManager::splitChild(quadtree_tile* _tile, RenderContext* _renderCont
 
     {
         //FALCOR_PROFILE("bicubic");
+
+        // TEMP DEBUG (terrafector bring-up, tile-hole): "birth certificate".
+        // This block writes the tile's mesh heights and tileCenters entry
+        // exactly ONCE in the tile's life. If the elevation inputs are broken
+        // for this one split, the tile is born flat at y=0 and never heals.
+        // NOTE: the check must run BEFORE the operator[] below - a missing
+        // hash would silently insert a zero-filled heightMap (hgt_scale=0 ->
+        // bicubic writes exactly 0 -> the precise hole symptom).
+        if (elevationTileHashmap.find(_tile->elevationHash) == elevationTileHashmap.end())
+            spdlog::error("SPLITCHILD BAD BIRTH idx={} lod={} x={} y={}: elevationHash={:#x} NOT in elevationTileHashmap - operator[] creates zeroed heightMap, tile will be FLAT",
+                          _tile->index, _tile->lod, _tile->x, _tile->y, _tile->elevationHash);
+
         heightMap& elevationMap = elevationTileHashmap[_tile->elevationHash];
 
         float2 bicubicOffset = (origin - elevationMap.origin) / elevationMap.size;
         float S = pixelSize / elevationMap.size;
         float2 bicubicSize = float2(S, S);
+
+        spdlog::info("SPLITCHILD birth idx={} lod={} x={} y={} elevHash={:#x} imgHash={:#x} hgt_scale={} hgt_offset={} bicubicOffset=({},{}) S={}",
+                     _tile->index, _tile->lod, _tile->x, _tile->y,
+                     _tile->elevationHash, _tile->imageHash,
+                     elevationMap.hgt_scale, elevationMap.hgt_offset,
+                     bicubicOffset.x, bicubicOffset.y, S);
+        if (_tile->elevationHash != 0 && elevationMap.hgt_scale == 0.0f)
+            spdlog::error("SPLITCHILD BAD BIRTH idx={} lod={} x={} y={}: hgt_scale==0 -> bicubic writes flat 0 heights",
+                          _tile->index, _tile->lod, _tile->x, _tile->y);
 
         if (_tile->elevationHash == 0)
         {
@@ -4586,6 +4690,12 @@ void terrainManager::splitChild(quadtree_tile* _tile, RenderContext* _renderCont
         //heightMap& imageMap = imageDirectory.tileHash
 
         std::map<uint32_t, uint2>::iterator itH = imageDirectory.tileHash.find(_tile->imageHash);
+        // TEMP DEBUG (terrafector bring-up): the dereference below is UB when
+        // the hash is missing (end iterator) - log it so we notice instead of
+        // silently reading garbage file/tile indices.
+        if (itH == imageDirectory.tileHash.end())
+            spdlog::error("SPLITCHILD idx={} lod={} x={} y={}: imageHash={:#x} NOT in imageDirectory.tileHash - dereferencing end() (UB, garbage albedo offsets)",
+                          _tile->index, _tile->lod, _tile->x, _tile->y, _tile->imageHash);
         //jp2File& file = imageDirectory.files[itH->second.x];
         jp2Map& mapTile = imageDirectory.files[itH->second.x].tiles[itH->second.y];
 
@@ -4597,7 +4707,72 @@ void terrainManager::splitChild(quadtree_tile* _tile, RenderContext* _renderCont
     }
 
     {
+        // TEMP DEBUG (terrafector bring-up, tile-hole): "bake incrimination".
+        // Read RT0's centre BEFORE the terrafector bake (pure bicubic result)
+        // and min/max/centre AFTER it, and compare against the CPU ground-truth
+        // heightfield. Distinguishes "bicubic wrote wrong heights" from "the
+        // bake blend destroyed them". Synchronous readbacks (WaitForIdle) -
+        // slow, debug only. NB if the corruption is a timing race, this sync
+        // can suppress it - the hole disappearing with this code active is
+        // itself a diagnostic result.
+        float dbgGroundH = 0, dbgBefore = 0;
+        {
+            const float cx = _tile->origin.x + _tile->size * 0.5f;
+            const float cz = _tile->origin.z + _tile->size * 0.5f;
+            int px = (int)std::floor(cx / 9.765625f + 2048.0f);
+            int py = (int)std::floor(cz / 9.765625f + 2048.0f);
+            px = std::min(std::max(px, 0), 4095);
+            py = std::min(std::max(py, 0), 4095);
+            dbgGroundH = shadowEdges.height[py][px];
+
+            std::vector<uint8_t> data = _renderContext->readTextureSubresource(split.tileFbo->getColorTexture(0).get(), 0);
+            if (data.size() >= tile_numPixels * tile_numPixels * sizeof(float))
+                dbgBefore = ((const float*)data.data())[(tile_numPixels / 2) * tile_numPixels + (tile_numPixels / 2)];
+        }
+
         splitRenderTopdown(_tile, _renderContext);
+
+        {
+            float dbgAfter = 0, dbgMin = FLT_MAX, dbgMax = -FLT_MAX;
+            // shape of the corrupted region: pixels tagged by dbgTagSuspicious
+            // (elevation < -999 means "full-alpha ~zero-elevation write", see
+            // render_meshTerrafector.hlsl). Their count + bbox tells a thin
+            // gutter strip apart from a full-triangle / full-tile smear.
+            uint32_t dbgTagCount = 0;
+            int dbgTagMinX = INT_MAX, dbgTagMaxX = -1, dbgTagMinY = INT_MAX, dbgTagMaxY = -1;
+            std::vector<uint8_t> data = _renderContext->readTextureSubresource(split.tileFbo->getColorTexture(0).get(), 0);
+            if (data.size() >= tile_numPixels * tile_numPixels * sizeof(float))
+            {
+                const float* pF = (const float*)data.data();
+                dbgAfter = pF[(tile_numPixels / 2) * tile_numPixels + (tile_numPixels / 2)];
+                for (uint32_t i = 0; i < tile_numPixels * tile_numPixels; i++)
+                {
+                    dbgMin = std::min(dbgMin, pF[i]);
+                    dbgMax = std::max(dbgMax, pF[i]);
+                    if (pF[i] < -999.0f)
+                    {
+                        dbgTagCount++;
+                        const int tx = (int)(i % tile_numPixels), ty = (int)(i / tile_numPixels);
+                        dbgTagMinX = std::min(dbgTagMinX, tx); dbgTagMaxX = std::max(dbgTagMaxX, tx);
+                        dbgTagMinY = std::min(dbgTagMinY, ty); dbgTagMaxY = std::max(dbgTagMaxY, ty);
+                    }
+                }
+            }
+            const bool beforeBad = std::abs(dbgBefore - dbgGroundH) > 150.0f;
+            const bool afterBad  = std::abs(dbgAfter - dbgGroundH) > 150.0f;
+            const bool bakeMoved = std::abs(dbgAfter - dbgBefore) > 20.0f;
+            if (beforeBad || afterBad || bakeMoved)
+                spdlog::warn("TFBAKE incriminate idx={} lod={} x={} y={}: ground={:.1f} beforeBake={:.1f} afterBake={:.1f} min={:.1f} max={:.1f}  [{}{}{}]",
+                             _tile->index, _tile->lod, _tile->x, _tile->y,
+                             dbgGroundH, dbgBefore, dbgAfter, dbgMin, dbgMax,
+                             beforeBad ? "BICUBIC-BAD " : "", afterBad ? "AFTER-BAD " : "", bakeMoved ? "BAKE-MOVED" : "");
+            if (dbgTagCount > 0)
+                spdlog::warn("TFBAKE tagged-shape idx={} lod={} x={} y={}: {} of {} px tagged, bbox x[{}..{}] y[{}..{}] of {}x{}",
+                             _tile->index, _tile->lod, _tile->x, _tile->y,
+                             dbgTagCount, tile_numPixels * tile_numPixels,
+                             dbgTagMinX, dbgTagMaxX, dbgTagMinY, dbgTagMaxY, tile_numPixels, tile_numPixels);
+        }
+
         _renderContext->copySubresource(height_Array.get(), _tile->index, split.tileFbo->getColorTexture(0).get(), 0);  // for picking only
     }
 
@@ -4777,6 +4952,55 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
 {
     //FALCOR_PROFILE("renderTopdown");
 
+    // TEMP DEBUG (terrafector bring-up): log the first few tile bakes - which
+    // combiner tiles exist, their block counts, and the road spline counts.
+    static int dbgBakeLogsLeft = 12;
+    const bool dbgLog = dbgBakeLogsLeft > 0;
+    if (dbgLog)
+    {
+        dbgBakeLogsLeft--;
+        auto blocks = [](gpuTileTerrafector* t) { return t ? (int)t->numBlocks : -1; };
+        gpuTileTerrafector* t4L = _pTile->lod >= 4 ? terrafectorSystem::loadCombine_LOD4_bakeLow.getTile((_pTile->y >> (_pTile->lod - 4)) * 16 + (_pTile->x >> (_pTile->lod - 4))) : nullptr;
+        gpuTileTerrafector* t4H = _pTile->lod >= 4 ? terrafectorSystem::loadCombine_LOD4_bakeHigh.getTile((_pTile->y >> (_pTile->lod - 4)) * 16 + (_pTile->x >> (_pTile->lod - 4))) : nullptr;
+        gpuTileTerrafector* t6  = _pTile->lod >= 6 ? terrafectorSystem::loadCombine_LOD6.getTile((_pTile->y >> (_pTile->lod - 6)) * 64 + (_pTile->x >> (_pTile->lod - 6))) : nullptr;
+        gpuTileTerrafector* t4  = _pTile->lod >= 4 ? terrafectorSystem::loadCombine_LOD4.getTile((_pTile->y >> (_pTile->lod - 4)) * 16 + (_pTile->x >> (_pTile->lod - 4))) : nullptr;
+        gpuTileTerrafector* t2  = _pTile->lod >= 2 ? terrafectorSystem::loadCombine_LOD2.getTile((_pTile->y >> (_pTile->lod - 2)) * 4 + (_pTile->x >> (_pTile->lod - 2))) : nullptr;
+        spdlog::info("TFBAKE tile lod={} x={} y={}: blocks bakeLow4={} bakeHigh4={} lod6={} lod4={} lod2={} | roads: bSpline={} bakeOnlyIdx={} bakeBakeOnly={}",
+                     _pTile->lod, _pTile->x, _pTile->y,
+                     blocks(t4L), blocks(t4H), blocks(t6), blocks(t4), blocks(t2),
+                     bSplineAsTerrafector, splines.numStaticSplinesBakeOnlyIndex, gis_overlay.bakeBakeOnlyData);
+    }
+
+    // TEMP DEBUG (terrafector bring-up, tile-hole): per-pass elevation trace.
+    // The bake of the tile containing world pos (-7676, -10488) is known to
+    // destroy the baked elevation (TFBAKE incriminate: bicubic 949.9 -> after
+    // bake 0.0). Trace RT0's centre texel after every bake pass for exactly
+    // those tiles to identify the offending draw. Synchronous readbacks, but
+    // only for this one tile lineage - negligible.
+    const bool dbgTrace =
+        (_pTile->origin.x <= -7676.0f) && (-7676.0f < _pTile->origin.x + _pTile->size) &&
+        (_pTile->origin.z <= -10488.0f) && (-10488.0f < _pTile->origin.z + _pTile->size);
+    float dbgPrev = 0.0f;
+    auto dbgCenter = [&]() -> float
+    {
+        std::vector<uint8_t> d = _renderContext->readTextureSubresource(split.tileFbo->getColorTexture(0).get(), 0);
+        if (d.size() < tile_numPixels * tile_numPixels * sizeof(float)) return -99999.0f;
+        return ((const float*)d.data())[(tile_numPixels / 2) * tile_numPixels + (tile_numPixels / 2)];
+    };
+    auto dbgStep = [&](const char* pass)
+    {
+        if (!dbgTrace) return;
+        const float v = dbgCenter();
+        if (std::abs(v - dbgPrev) > 2.0f)
+            spdlog::warn("TFBAKE trace lod={} x={} y={}: pass '{}' moved centre {:.1f} -> {:.1f}", _pTile->lod, _pTile->x, _pTile->y, pass, dbgPrev, v);
+        dbgPrev = v;
+    };
+    if (dbgTrace)
+    {
+        dbgPrev = dbgCenter();
+        spdlog::info("TFBAKE trace lod={} x={} y={}: start (post-bicubic) centre={:.1f}", _pTile->lod, _pTile->x, _pTile->y, dbgPrev);
+    }
+
     // set up the camera -----------------------
     float s = _pTile->size / 2.0f;
     float x = _pTile->origin.x + s;
@@ -4793,12 +5017,17 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
     //viewproj = view * proj;
     VP = P * V;    //??? order
 
+    // PORT NOTE: in the original, rmcv::mat4 is ROW-major and this [j][i]->[j][i]
+    // element copy from column-major glm was an implicit transpose into the
+    // layout mul(pos, viewproj) expects. In the port rmcv::mat4 == glm::mat4,
+    // so the copy must swap indices to keep that transpose - otherwise every
+    // terrafector/road bake vertex leaves clip space and the bake is empty.
     rmcv::mat4 view, proj, viewproj;
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
-            view[j][i] = V[j][i];
-            proj[j][i] = P[j][i];
-            viewproj[j][i] = VP[j][i];
+            view[j][i] = V[i][j];
+            proj[j][i] = P[i][j];
+            viewproj[j][i] = VP[i][j];
         }
     }
 
@@ -4806,7 +5035,7 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
     {
         split.shader_meshTerrafector.State()->setFbo(split.tileFbo);
         split.shader_meshTerrafector.State()->setRasterizerState(split.rasterstateSplines);
-        split.shader_meshTerrafector.State()->setBlendState(split.blendstateRoadsCombined);
+        split.shader_meshTerrafector.State()->setBlendState(ew::gDebug.toggles.tfBakeNoElevationBlend ? split.blendstateRoadsCombined_noElevBlend : split.blendstateRoadsCombined);
         split.shader_meshTerrafector.State()->setDepthStencilState(split.depthstateAll);
 
         split.shader_meshTerrafector.Vars()["gConstantBuffer"]["viewproj"] = viewproj;
@@ -4821,7 +5050,7 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
         split.shader_splineTerrafector.State()->setFbo(split.tileFbo);
         split.shader_splineTerrafector.State()->setRasterizerState(split.rasterstateSplines);
         split.shader_splineTerrafector.State()->setDepthStencilState(split.depthstateAll);
-        split.shader_splineTerrafector.State()->setBlendState(split.blendstateRoadsCombined);
+        split.shader_splineTerrafector.State()->setBlendState(ew::gDebug.toggles.tfBakeNoElevationBlend ? split.blendstateRoadsCombined_noElevBlend : split.blendstateRoadsCombined);
 
         split.shader_splineTerrafector.Vars()["gConstantBuffer"]["viewproj"] = viewproj;
         split.shader_splineTerrafector.Vars()["gConstantBuffer"]["startOffset"] = 0;
@@ -4850,12 +5079,14 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
                 }
             }
         }
+        dbgStep("bakeLow mesh (LOD4_bakeLow)");
 
         if (bSplineAsTerrafector)           // Now render the roadNetwork
         {
             split.shader_splineTerrafector.Vars()->setBuffer("indexData", splines.indexDataBakeOnly);
             split.shader_splineTerrafector.drawIndexedInstanced(_renderContext, 64 * 6, splines.numStaticSplinesBakeOnlyIndex);
         }
+        dbgStep("bakeOnly roads (indexDataBakeOnly)");
 
         if (_pTile->lod >= 4)
         {
@@ -4870,6 +5101,7 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
                 }
             }
         }
+        dbgStep("bakeHigh mesh (LOD4_bakeHigh)");
     }
 
 
@@ -4916,6 +5148,7 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
             }
         }
     }
+    dbgStep("combiner mesh (LOD6/4/2)");
 
 
     // OVER:AY ######################################################
@@ -4934,6 +5167,7 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
                 }
             }
         }
+    dbgStep("overlay mesh (LOD4_overlay)");
 
 
     //??? should probably be in the roadnetwork code, but look at the optimize step first
@@ -4964,6 +5198,7 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
             split.shader_splineTerrafector.drawIndexedInstanced(_renderContext, 64 * 6, splines.numIndex_LOD4[P4->y][P4->x]);
         }
     }
+    dbgStep("roads splines (LOD8/6/4)");
 
 
     // STAMPS #################################################################################################################
@@ -4980,6 +5215,7 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
             }
         }
     }
+    dbgStep("stamps (LOD7_stamps)");
 
 
 
@@ -5008,6 +5244,40 @@ void terrainManager::splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _r
                 split.shader_meshTerrafector.Vars()->setBuffer("indexData", tile->index);
                 split.shader_meshTerrafector.drawInstanced(_renderContext, 128 * 3, tile->numBlocks);
             }
+        }
+    }
+    dbgStep("top mesh (LOD6/4_top)");
+    if (dbgTrace)
+        spdlog::info("TFBAKE trace lod={} x={} y={}: end centre={:.1f}", _pTile->lod, _pTile->x, _pTile->y, dbgPrev);
+
+    // DEBUG (terrafector bring-up): read back the elevation RT (color 0, R32F)
+    // after the terrafector/road bake and log value stats. Enabled from the GUI
+    // (tfBakeElevationStatsLeft); slow - synchronous GPU readback per bake.
+    if (ew::gDebug.toggles.tfBakeElevationStatsLeft > 0)
+    {
+        ew::gDebug.toggles.tfBakeElevationStatsLeft--;
+        auto data = _renderContext->readTextureSubresource(split.tileFbo->getColorTexture(0).get(), 0);
+        if (data.size() >= sizeof(float))
+        {
+            const float* px = reinterpret_cast<const float*>(data.data());
+            const size_t n = data.size() / sizeof(float);
+            float mn = FLT_MAX, mx = -FLT_MAX;
+            size_t nans = 0, extremes = 0;
+            for (size_t i = 0; i < n; i++)
+            {
+                const float v = px[i];
+                if (std::isnan(v) || std::isinf(v)) { nans++; continue; }
+                if (fabsf(v) > 20000.0f) extremes++;
+                mn = std::min(mn, v);
+                mx = std::max(mx, v);
+            }
+            spdlog::info("TFBAKE elev stats lod={} x={} y={}: min={} max={} nan/inf={} |v|>20km={} of {} px (noElevBlend={})",
+                         _pTile->lod, _pTile->x, _pTile->y, mn, mx, nans, extremes, n,
+                         ew::gDebug.toggles.tfBakeNoElevationBlend);
+        }
+        else
+        {
+            spdlog::warn("TFBAKE elev stats lod={} x={} y={}: readback failed", _pTile->lod, _pTile->x, _pTile->y);
         }
     }
 }
@@ -5179,9 +5449,10 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
 
         rmcv::mat4 clipPlanes;
         //rmcv::mat4 view, clip;
+        // PORT NOTE: index swap = transpose, see splitRenderTopdown.
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                clipPlanes[j][i] = cameraViews[CameraType_Main_Center].frustumMatrix[j][i];
+                clipPlanes[j][i] = cameraViews[CameraType_Main_Center].frustumMatrix[i][j];
             }
         }
 
@@ -5278,10 +5549,11 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
     {
         FALCOR_PROFILE("PLANTS_clip_lod");
         rmcv::mat4 view, clip;
+        // PORT NOTE: index swap = transpose, see splitRenderTopdown.
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                view[j][i] = cameraViews[1].view[j][i];
-                clip[j][i] = cameraViews[1].frustumMatrix[j][i];
+                view[j][i] = cameraViews[1].view[i][j];
+                clip[j][i] = cameraViews[1].frustumMatrix[i][j];
             }
         }
 
@@ -5368,9 +5640,10 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
     {
         rmcv::mat4 clip;
         //rmcv::mat4 view, clip;
+        // PORT NOTE: index swap = transpose, see splitRenderTopdown.
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                clip[j][i] = cameraViews[CameraType_Main_Center].frustumMatrix[j][i];
+                clip[j][i] = cameraViews[CameraType_Main_Center].frustumMatrix[i][j];
             }
         }
         float fovscale = glm::length(cameraViews[CameraType_Main_Center].proj[1]);
@@ -6034,12 +6307,13 @@ void terrainManager::bake_RenderTopdown(float _size, uint _lod, uint _y, uint _x
     //viewproj = view * proj;
     VP = P * V;    //??? order
 
+    // PORT NOTE: index swap = transpose, see splitRenderTopdown.
     rmcv::mat4 view, proj, viewproj;
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
-            view[j][i] = V[j][i];
-            proj[j][i] = P[j][i];
-            viewproj[j][i] = VP[j][i];
+            view[j][i] = V[i][j];
+            proj[j][i] = P[i][j];
+            viewproj[j][i] = VP[i][j];
         }
     }
 

@@ -32,6 +32,8 @@
 //#include "Core/Platform/MonitorInfo.h"
 #include <filesystem>
 #include <iostream>
+#include <algorithm>
+#include <cmath>
 
  //#pragma optimize("", off)
 
@@ -392,6 +394,12 @@ void Earthworks_4::onLoad(RenderContext* _renderContext)
         debugGridVars->setBuffer("tileRects", debugTileRectBuffer);
         debugTileRects.reserve(kMaxDebugTileRects);
 
+        // Per-tile terrain height (sampled CPU-side from shadowEdges.height)
+        // so the grid drapes over the terrain instead of drawing at y=0.
+        debugTileHeightBuffer = Buffer::createStructured(sizeof(float), kMaxDebugTileRects);
+        debugGridVars->setBuffer("tileHeights", debugTileHeightBuffer);
+        debugTileHeights.reserve(kMaxDebugTileRects);
+
         // Line list with no index buffer -> the compat layer takes the non-indexed
         // Draw() path and the vertex shader builds the geometry from SV_VertexID.
         VertexLayout::SharedPtr gridLayout = VertexLayout::create();
@@ -667,6 +675,36 @@ void Earthworks_4::renderDebugGroundGrid(RenderContext* _renderContext, const Fb
     if (debugTileRects.size() > kMaxDebugTileRects)
         debugTileRects.resize(kMaxDebugTileRects);
     debugTileRectBuffer->setBlob(debugTileRects.data(), 0, debugTileRects.size() * sizeof(float4));
+
+    // Drape each tile rect onto the terrain: sample the CPU-side 4096^2
+    // shadow-solver heightfield (terrain + buildings, static after load) at the
+    // tile centre and corners and take the max, so the outline sits on top of
+    // the terrain under it instead of at sea level. Same texel-centre mapping
+    // as buildingsRenderer::overlayShadowHeights: px = pos / mpp + dim/2.
+    {
+        const float mpp  = 9.765625f;   // 40000 m / 4096 px
+        const float half = 2048.0f;
+        auto sampleH = [&](float wx, float wz) -> float
+        {
+            int px = (int)std::floor(wx / mpp + half);
+            int py = (int)std::floor(wz / mpp + half);
+            px = std::min(std::max(px, 0), 4095);
+            py = std::min(std::max(py, 0), 4095);
+            return terrain.shadowEdges.height[py][px];
+        };
+        debugTileHeights.resize(debugTileRects.size());
+        for (size_t i = 0; i < debugTileRects.size(); i++)
+        {
+            const float4& r = debugTileRects[i];
+            float h = sampleH(r.x + r.z * 0.5f, r.y + r.z * 0.5f);
+            h = std::max(h, sampleH(r.x,       r.y));
+            h = std::max(h, sampleH(r.x + r.z, r.y));
+            h = std::max(h, sampleH(r.x,       r.y + r.z));
+            h = std::max(h, sampleH(r.x + r.z, r.y + r.z));
+            debugTileHeights[i] = h;
+        }
+        debugTileHeightBuffer->setBlob(debugTileHeights.data(), 0, debugTileHeights.size() * sizeof(float));
+    }
 
     debugGridState->setFbo(pTargetFbo);
     debugGridState->setViewport(0, viewport3d, true);
