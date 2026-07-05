@@ -50,7 +50,7 @@ void Earthworks_4::onGuiMenubar(Gui* _gui)
     case _terrainMode::roads:           style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.005f, 0.005f, 0.005f, 1.0f);   break;
     case _terrainMode::glider:          style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.04f, 0.04f, 0.04f, 1.0f);   break;
     case _terrainMode::terrainBuilder:  style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.01f, 0.01f, 0.01f, 1.0f);   break;
-    case _terrainMode::textureTool:     style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.01f, 0.04f, 0.04f, 1.0f);   break;
+    case _terrainMode::textureTool_mode:     style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.01f, 0.04f, 0.04f, 1.0f);   break;
     }
 
     if (ImGui::BeginMainMenuBar())

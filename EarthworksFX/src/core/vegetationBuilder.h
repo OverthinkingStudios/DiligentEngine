@@ -1588,9 +1588,9 @@ class recentFiles
 CEREAL_CLASS_VERSION(recentFiles, 100);
 
 
-
-
-/*  This is a single "rectangle", can be curved*/
+// JOHAN-DEPRECATED - removing this because it belongs
+/*
+//  This is a single "rectangle", can be curved
 class oneTexture
 {
 public:
@@ -1675,7 +1675,7 @@ public:
 CEREAL_CLASS_VERSION(largeTexture, 100);
 
 
-
+*/
 
 
 
@@ -1690,10 +1690,12 @@ public:
     void renderGui_other(Gui* _gui);
     void renderGui_rightPanel(Gui* _gui);
 
-    void initTextureTool();
-    void GenerateATexture(uint _idx, bool toSRGB);
-    void exportTextures();
-    void renderGui_textureTool(Gui* _gui, int _header, float2 _screen, Gui::Window &_hud);
+    // JOHAN-DEPRECATED - texture tool
+    //void initTextureTool();
+    //void GenerateATexture(uint _idx, bool toSRGB);
+    //void exportTextures();
+    //void renderGui_textureTool(Gui* _gui, int _header, float2 _screen, Gui::Window &_hud);
+
     void renderGui_HUD(Gui* _gui, int _header, float2 _screen);
     void renderGui_load(Gui* _gui);
     void renderGui(Gui* _gui, int _header, float2 _screen);
@@ -1832,7 +1834,7 @@ public:
     float m_halfAngle_to_Pixels;
 
 
-    largeTexture textureToolData;
+    //largeTexture textureToolData;
     
 
     //bool showDebugInShader = false;

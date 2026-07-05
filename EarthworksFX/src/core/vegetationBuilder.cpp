@@ -4840,7 +4840,7 @@ void _rootPlant::renderGui_Baking(Gui* _gui)
     ImGui::PopFont();
 }
 
-
+/*
 ImVec2 toIMVec2(float2 V)
 {
     return ImVec2(V.x, V.y);
@@ -5356,7 +5356,7 @@ void _rootPlant::renderGui_textureTool(Gui* _gui, int _header, float2 _screen, G
 
     textureToolData.changed |= changed;
 }
-
+*/
 ImVec2 toImVec2(float2 f) { return ImVec2(f.x, f.y); }
 
 void _rootPlant::renderGui_HUD(Gui* _gui, int _header, float2 _screen)
@@ -5392,12 +5392,13 @@ void _rootPlant::renderGui_HUD(Gui* _gui, int _header, float2 _screen)
         }
         ImGui::PopFont();
 
-        if (textureTool)
-        {
-            renderGui_textureTool(_gui, _header, _screen, hud);
-        }
+        //if (textureTool)
+        //{
+         //   renderGui_textureTool(_gui, _header, _screen, hud);
+        //}
 
-        else if (root && bakingView)
+        //else 
+            if (root && bakingView)
         {
 
 
