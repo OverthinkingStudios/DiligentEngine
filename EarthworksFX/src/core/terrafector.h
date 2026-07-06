@@ -537,7 +537,7 @@ public:
     static void logTimeX()
     {
         auto a = high_resolution_clock::now();
-        float delta_ms = (float)duration_cast<microseconds>(a - terrafectorSystem::logStartTime).count() / 1000.;
+        float delta_ms = (float)(duration_cast<microseconds>(a - terrafectorSystem::logStartTime).count() / 1000.);
         spdlog::info("{:.3f}ms    :", delta_ms);
     }
     /*

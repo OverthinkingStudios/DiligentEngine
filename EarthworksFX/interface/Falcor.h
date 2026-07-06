@@ -689,8 +689,8 @@ public:
     Diligent::ITextureView* getRenderTargetView(uint32_t slot) const;
     Diligent::ITextureView* getDepthStencilView() const;
             
-    float getWidth() const { return m_Width; }
-    float getHeight() const { return m_Height; }
+    float getWidth() const { return (float)m_Width; }
+    float getHeight() const { return (float)m_Height; }
     bool  isSwapChainProxy() const { return m_IsSwapChainProxy; }
     Diligent::ISwapChain* getSwapChain() const { return m_pSwapChain; }
 
@@ -755,19 +755,35 @@ class BlendState
 public:
     using SharedPtr = Falcor::SharedPtr<BlendState>;
 
-    enum class BlendOp
-    {
-        Add,
-        Subtract,
+    // JOHAN - I replaced these two with their original falcor full descriptions since these map directly to DX12 and VULCAN hardware
+     enum class BlendOp {
+        Add,              ///< Add src1 and src2
+        Subtract,         ///< Subtract src1 from src2
+        ReverseSubtract,  ///< Subtract src2 from src1
+        Min,              ///< Find the minimum between the sources (per-channel)
+        Max               ///< Find the maximum between the sources (per-channel)
     };
 
-    enum class BlendFunc
-    {
-        Zero,
-        One,
-        SrcAlpha,
-        OneMinusSrcAlpha,
-        SrcAlphaSaturate,
+    /** Defines how to modulate the fragment-shader and render-target pixel values
+     */
+    enum class BlendFunc {
+        Zero,                 ///< (0, 0, 0, 0)
+        One,                  ///< (1, 1, 1, 1)
+        SrcColor,             ///< The fragment-shader output color
+        OneMinusSrcColor,     ///< One minus the fragment-shader output color
+        DstColor,             ///< The render-target color
+        OneMinusDstColor,     ///< One minus the render-target color
+        SrcAlpha,             ///< The fragment-shader output alpha value
+        OneMinusSrcAlpha,     ///< One minus the fragment-shader output alpha value
+        DstAlpha,             ///< The render-target alpha value
+        OneMinusDstAlpha,     ///< One minus the render-target alpha value
+        BlendFactor,          ///< Constant color, set using Desc#SetBlendFactor()
+        OneMinusBlendFactor,  ///< One minus constant color, set using Desc#SetBlendFactor()
+        SrcAlphaSaturate,  ///< (f, f, f, 1), where f = min(fragment shader output alpha, 1 - render-target pixel alpha)
+        Src1Color,         ///< Fragment-shader output color 1
+        OneMinusSrc1Color,  ///< One minus fragment-shader output color 1
+        Src1Alpha,          ///< Fragment-shader output alpha 1
+        OneMinusSrc1Alpha   ///< One minus fragment-shader output alpha 1
     };
 
     class Desc

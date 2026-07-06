@@ -69,8 +69,8 @@ struct ribbonBuilder
     void lightBasic(float2 extents, float plantDepth, float yOffset);
     void lightBranch(uint from, uint to, float3 root, float3 tip, float plantDepth, float yOffset, float rootAO);
     
-    uint numPacked() { return packed.size(); }
-    uint numVerts() { return ribbons.size(); }
+    uint numPacked() { return (uint)packed.size(); }
+    uint numVerts() { return (uint)ribbons.size(); }
 
     void finalizeAndFillLastBlock();
     void pack();
@@ -88,7 +88,7 @@ struct ribbonBuilder
 
     static float V_MAX;
 
-    int numPivots() { return pivotPoints.size(); }
+    int numPivots() { return (int)pivotPoints.size(); }
     std::vector<_plant_anim_pivot>   pivotPoints;
     std::map<int, int> pivotMap;
 

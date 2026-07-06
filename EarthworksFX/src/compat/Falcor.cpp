@@ -1,107 +1,92 @@
 #include "Falcor.h"
-#include "FalcorGpuInternal.hpp"
-
-#include "GraphicsAccessories.hpp"
-#include "TextureUtilities.h"
-
-#include "imgui.h"
 
 #include <algorithm>
-#include <cmath>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <unordered_set>
+
+#include "FalcorGpuInternal.hpp"
+#include "GraphicsAccessories.hpp"
+#include "TextureUtilities.h"
+#include "imgui.h"
 #include "ots/Log.hpp"
 #include "terrafector.h"
 
-namespace Falcor
-{
+namespace Falcor {
 
 std::vector<std::filesystem::path> g_DataDirectories;
 
-namespace
-{
+namespace {
 
-Diligent::IRenderDevice*  g_pDevice     = nullptr;
-Diligent::IDeviceContext* g_pContext    = nullptr;
-Diligent::ISwapChain*     g_pSwapChain  = nullptr;
-bool                      g_VSync       = true;
+Diligent::IRenderDevice* g_pDevice = nullptr;
+Diligent::IDeviceContext* g_pContext = nullptr;
+Diligent::ISwapChain* g_pSwapChain = nullptr;
+bool g_VSync = true;
 
-FrameworkInterface                 g_DefaultFramework;
-DeviceInterface                    g_DefaultDevice;
+FrameworkInterface g_DefaultFramework;
+DeviceInterface g_DefaultDevice;
 
 void EFX_LOG_STUB(const char* msg) {
     static std::unordered_set<std::string> s_Logged;
-    if (s_Logged.insert(msg).second)
-        spdlog::debug(msg);
+    if (s_Logged.insert(msg).second) spdlog::debug(msg);
 }
 
 TEXTURE_FORMAT ToDiligentFormat(Falcor::ResourceFormat fmt) {
     const TEXTURE_FORMAT d = (TEXTURE_FORMAT)fmt;
-    switch (d)
-    {
-        // 3-component 96-bit formats are valid on D3D12 (DXGI) but are NOT
-        // supported as sampled/optimal-tiling images on Vulkan (e.g.
-        // VK_FORMAT_R32G32B32_SFLOAT -> VK_ERROR_FORMAT_NOT_SUPPORTED), which
-        // is why this only tripped Vulkan validation. Promote to the
-        // 4-component equivalent. When init data is supplied it is repacked
-        // from the tight 3-component layout to the 4-component layout in
-        // BuildTextureInitData(); shaders that sample float3 just read .rgb and
-        // ignore the added alpha channel.
-      case Diligent::TEX_FORMAT_RGB32_FLOAT:
-        return Diligent::TEX_FORMAT_RGBA32_FLOAT;
-      case Diligent::TEX_FORMAT_RGB32_UINT:
-        return Diligent::TEX_FORMAT_RGBA32_UINT;
-      case Diligent::TEX_FORMAT_RGB32_SINT:
-        return Diligent::TEX_FORMAT_RGBA32_SINT;
-        default:                     
+    switch (d) {
+            // 3-component 96-bit formats are valid on D3D12 (DXGI) but are NOT
+            // supported as sampled/optimal-tiling images on Vulkan (e.g.
+            // VK_FORMAT_R32G32B32_SFLOAT -> VK_ERROR_FORMAT_NOT_SUPPORTED), which
+            // is why this only tripped Vulkan validation. Promote to the
+            // 4-component equivalent. When init data is supplied it is repacked
+            // from the tight 3-component layout to the 4-component layout in
+            // BuildTextureInitData(); shaders that sample float3 just read .rgb and
+            // ignore the added alpha channel.
+        case Diligent::TEX_FORMAT_RGB32_FLOAT:
+            return Diligent::TEX_FORMAT_RGBA32_FLOAT;
+        case Diligent::TEX_FORMAT_RGB32_UINT:
+            return Diligent::TEX_FORMAT_RGBA32_UINT;
+        case Diligent::TEX_FORMAT_RGB32_SINT:
+            return Diligent::TEX_FORMAT_RGBA32_SINT;
+        default:
             return d;
     }
 }
 
-Falcor::ResourceFormat FromDiligentFormat(TEXTURE_FORMAT fmt) {
-    return (Falcor::ResourceFormat)fmt;
-}
+Falcor::ResourceFormat FromDiligentFormat(TEXTURE_FORMAT fmt) { return (Falcor::ResourceFormat)fmt; }
 
-void CreateTextureView(Diligent::ITexture* pTex, Diligent::TEXTURE_VIEW_TYPE viewType, Diligent::RefCntAutoPtr<Diligent::ITextureView>& outView)
-{
-    if (!pTex)
-        return;
+void CreateTextureView(Diligent::ITexture* pTex, Diligent::TEXTURE_VIEW_TYPE viewType,
+                       Diligent::RefCntAutoPtr<Diligent::ITextureView>& outView) {
+    if (!pTex) return;
     Diligent::TextureViewDesc viewDesc;
     viewDesc.ViewType = viewType;
     pTex->CreateView(viewDesc, &outView);
 }
 
-} // namespace
+}  // namespace
 
-DeviceInterface*    gpDevice    = &g_DefaultDevice;
+DeviceInterface* gpDevice = &g_DefaultDevice;
 FrameworkInterface* gpFramework = &g_DefaultFramework;
 
-void SetFalcorDevice(Diligent::IRenderDevice* pDevice, Diligent::IDeviceContext* pContext, Diligent::ISwapChain* pSwapChain,
-                     Diligent::IEngineFactory* pFactory)
-{
-    g_pDevice    = pDevice;
-    g_pContext   = pContext;
+void SetFalcorDevice(Diligent::IRenderDevice* pDevice, Diligent::IDeviceContext* pContext,
+                     Diligent::ISwapChain* pSwapChain, Diligent::IEngineFactory* pFactory) {
+    g_pDevice = pDevice;
+    g_pContext = pContext;
     g_pSwapChain = pSwapChain;
     Gpu::OnSetFalcorDevice(pDevice, pContext, pSwapChain, pFactory);
 }
 
-void SetFalcorFramework(FrameworkInterface* pFramework)
-{
-    gpFramework = pFramework ? pFramework : &g_DefaultFramework;
-}
+void SetFalcorFramework(FrameworkInterface* pFramework) { gpFramework = pFramework ? pFramework : &g_DefaultFramework; }
 
-std::vector<MonitorInfo::Desc> MonitorInfo::getMonitorDescs()
-{
+std::vector<MonitorInfo::Desc> MonitorInfo::getMonitorDescs() {
     Desc desc;
-    if (g_pSwapChain)
-    {
+    if (g_pSwapChain) {
         const auto& scDesc = g_pSwapChain->GetDesc();
-        desc.resolution    = glm::float2(static_cast<float>(scDesc.Width), static_cast<float>(scDesc.Height));
+        desc.resolution = glm::float2(static_cast<float>(scDesc.Width), static_cast<float>(scDesc.Height));
     }
 #if defined(_WIN32) || defined(PLATFORM_WIN32)
-    else
-    {
+    else {
         desc.resolution = glm::float2(static_cast<float>(GetSystemMetrics(SM_CXSCREEN)),
                                       static_cast<float>(GetSystemMetrics(SM_CYSCREEN)));
     }
@@ -109,8 +94,7 @@ std::vector<MonitorInfo::Desc> MonitorInfo::getMonitorDescs()
     return {desc};
 }
 
-void addDataDirectory(const std::filesystem::path& path, bool prepend)
-{
+void addDataDirectory(const std::filesystem::path& path, bool prepend) {
     if (prepend)
         g_DataDirectories.insert(g_DataDirectories.begin(), path);
     else
@@ -118,71 +102,55 @@ void addDataDirectory(const std::filesystem::path& path, bool prepend)
     Gpu::RebuildShaderSearchPaths();
 }
 
-std::filesystem::path RemapShaderPath(const std::filesystem::path& falcorPath)
-{
+std::filesystem::path RemapShaderPath(const std::filesystem::path& falcorPath) {
     std::string s = falcorPath.generic_string();
     const std::string kOldPrefix = "Samples/Earthworks_4/";
-    if (s.rfind(kOldPrefix, 0) == 0)
-        return std::filesystem::path(s.substr(kOldPrefix.size()));
+    if (s.rfind(kOldPrefix, 0) == 0) return std::filesystem::path(s.substr(kOldPrefix.size()));
 
     const std::string kOldPrefix2 = "Samples/Earthworks_4";
-    if (s.rfind(kOldPrefix2, 0) == 0)
-    {
+    if (s.rfind(kOldPrefix2, 0) == 0) {
         auto rem = s.substr(kOldPrefix2.size());
-        if (!rem.empty() && rem.front() == '/')
-            rem.erase(rem.begin());
+        if (!rem.empty() && rem.front() == '/') rem.erase(rem.begin());
         return std::filesystem::path(rem);
     }
 
     return falcorPath;
 }
 
-bool openFileDialog(const FileDialogFilterVec& filters, std::filesystem::path& selectedPath)
-{
+bool openFileDialog(const FileDialogFilterVec& filters, std::filesystem::path& selectedPath) {
     (void)filters;
     (void)selectedPath;
     return false;
 }
 
-bool saveFileDialog(const FileDialogFilterVec& filters, std::filesystem::path& selectedPath)
-{
+bool saveFileDialog(const FileDialogFilterVec& filters, std::filesystem::path& selectedPath) {
     (void)filters;
     (void)selectedPath;
     return false;
 }
 
-double FrameRate::getAverageFrameTime() const
-{
-    if (gpFramework)
-        return gpFramework->getAverageFrameTimeMs();
+double FrameRate::getAverageFrameTime() const {
+    if (gpFramework) return gpFramework->getAverageFrameTimeMs();
     return 16.0;
 }
 
-void WindowInterface::shutdown()
-{
+void WindowInterface::shutdown() {
     // TODO: request SampleBase / AppBase shutdown.
 }
 
-FrameRate FrameworkInterface::getFrameRate() const
-{
-    return FrameRate{};
-}
+FrameRate FrameworkInterface::getFrameRate() const { return FrameRate{}; }
 
-WindowInterface* FrameworkInterface::getWindow()
-{
+WindowInterface* FrameworkInterface::getWindow() {
     static WindowInterface s_Window;
     return &s_Window;
 }
 
-void DeviceInterface::toggleVSync(bool enabled)
-{
+void DeviceInterface::toggleVSync(bool enabled) {
     g_VSync = enabled;
-    if (g_pSwapChain)
-        g_pSwapChain->SetMaximumFrameLatency(enabled ? 1 : 2);
+    if (g_pSwapChain) g_pSwapChain->SetMaximumFrameLatency(enabled ? 1 : 2);
 }
 
-RenderContext* DeviceInterface::getRenderContext()
-{
+RenderContext* DeviceInterface::getRenderContext() {
     static RenderContext s_Context(nullptr);
     s_Context.attach(g_pContext);
     return &s_Context;
@@ -190,54 +158,31 @@ RenderContext* DeviceInterface::getRenderContext()
 
 // --- Camera ------------------------------------------------------------------
 
-Camera::SharedPtr Camera::create()
-{
-    return std::make_shared<Camera>();
-}
+Camera::SharedPtr Camera::create() { return std::make_shared<Camera>(); }
 
-void Camera::setDepthRange(float zNear, float zFar)
-{
+void Camera::setDepthRange(float zNear, float zFar) {
     m_Data.NearPlane = zNear;
-    m_Data.FarPlane  = zFar;
+    m_Data.FarPlane = zFar;
 }
 
-void Camera::setAspectRatio(float aspect)
-{
-    m_Data.AspectRatio = aspect;
-}
+void Camera::setAspectRatio(float aspect) { m_Data.AspectRatio = aspect; }
 
-void Camera::setFocalLength(float focalMm)
-{
-    m_Data.FocalLength = focalMm;
-}
+void Camera::setFocalLength(float focalMm) { m_Data.FocalLength = focalMm; }
 
-void Camera::setPosition(const float3& pos)
-{
-    m_Data.Position = pos;
-}
+void Camera::setPosition(const float3& pos) { m_Data.Position = pos; }
 
-void Camera::setTarget(const float3& target)
-{
-    m_Target = target;
-}
+void Camera::setTarget(const float3& target) { m_Target = target; }
 
-void Camera::setUpVector(const float3& up)
-{
+void Camera::setUpVector(const float3& up) {
     (void)up;
     // View matrix is rebuilt from position/target; up is implicit in getViewMatrix().
 }
 
-void Camera::setFarPlane(float zFar)
-{
-    m_Data.FarPlane = zFar;
-}
+void Camera::setFarPlane(float zFar) { m_Data.FarPlane = zFar; }
 
-void Camera::setNearPlane(float zNear) {
-    m_Data.NearPlane = zNear;
-}
+void Camera::setNearPlane(float zNear) { m_Data.NearPlane = zNear; }
 
-float4x4 Camera::getViewMatrix() const
-{
+float4x4 Camera::getViewMatrix() const {
     // RIGHT-HANDED view matrix (F20). This is exactly glm::lookAt (what the
     // original Falcor camera used) laid out for Diligent row-vector math:
     // zAxis = BACKWARD (position - target), so toGLM(getViewMatrix()) equals
@@ -252,23 +197,22 @@ float4x4 Camera::getViewMatrix() const
     const float3 yAxis = glm::cross(zAxis, xAxis);
 
     float4x4 view = float4x4::Identity();
-    view._11        = xAxis.x;
-    view._12        = yAxis.x;
-    view._13        = zAxis.x;
-    view._21        = xAxis.y;
-    view._22        = yAxis.y;
-    view._23        = zAxis.y;
-    view._31        = xAxis.z;
-    view._32        = yAxis.z;
-    view._33        = zAxis.z;
-    view._41        = -glm::dot(xAxis, m_Data.Position);
-    view._42        = -glm::dot(yAxis, m_Data.Position);
-    view._43        = -glm::dot(zAxis, m_Data.Position);
+    view._11 = xAxis.x;
+    view._12 = yAxis.x;
+    view._13 = zAxis.x;
+    view._21 = xAxis.y;
+    view._22 = yAxis.y;
+    view._23 = zAxis.y;
+    view._31 = xAxis.z;
+    view._32 = yAxis.z;
+    view._33 = zAxis.z;
+    view._41 = -glm::dot(xAxis, m_Data.Position);
+    view._42 = -glm::dot(yAxis, m_Data.Position);
+    view._43 = -glm::dot(zAxis, m_Data.Position);
     return view;
 }
 
-float4x4 Camera::getProjMatrix() const
-{
+float4x4 Camera::getProjMatrix() const {
     // Falcor convention (focalLengthToFovY): FrameHeight is the film-back
     // height in millimetres (24mm default), NOT a screen height in pixels.
     // fovY = 2*atan(0.5*frameHeight/focalLength) -> ~77.3 deg at 15mm.
@@ -290,149 +234,94 @@ float4x4 Camera::getProjMatrix() const
     return proj;
 }
 
-float4x4 Camera::getViewProjMatrix() const
-{
-    return getViewMatrix() * getProjMatrix();
-}
+float4x4 Camera::getViewProjMatrix() const { return getViewMatrix() * getProjMatrix(); }
 
-float3 Camera::getPosition() const
-{
-    return m_Data.Position;
-}
+float3 Camera::getPosition() const { return m_Data.Position; }
 
-bool Camera::isObjectCulled(const AABB&) const
-{
-    return false;
-}
+bool Camera::isObjectCulled(const AABB&) const { return false; }
 
 // --- ShaderVar / vars --------------------------------------------------------
 
 ShaderVar::ShaderVar(std::shared_ptr<Node> node) : m_pNode(std::move(node)) {}
 
-ShaderVar ShaderVar::operator[](const char* name)
-{
-    if (!m_pNode)
-        m_pNode = std::make_shared<Node>();
+ShaderVar ShaderVar::operator[](const char* name) {
+    if (!m_pNode) m_pNode = std::make_shared<Node>();
     auto& child = m_pNode->Children[name];
-    if (!child)
-        child = std::make_shared<Node>();
+    if (!child) child = std::make_shared<Node>();
     child->Name = name;
     return ShaderVar(child);
 }
 
-ShaderVar ShaderVar::operator[](const char* name) const
-{
-    return const_cast<ShaderVar*>(this)->operator[](name);
-}
+ShaderVar ShaderVar::operator[](const char* name) const { return const_cast<ShaderVar*>(this)->operator[](name); }
 
-ShaderVar ShaderVar::operator[](size_t index)
-{
+ShaderVar ShaderVar::operator[](size_t index) {
     const std::string key = std::to_string(index);
     return (*this)[key.c_str()];
 }
 
-ShaderVar ShaderVar::operator[](size_t index) const
-{
-    return const_cast<ShaderVar*>(this)->operator[](index);
-}
+ShaderVar ShaderVar::operator[](size_t index) const { return const_cast<ShaderVar*>(this)->operator[](index); }
 
-ShaderVar& ShaderVar::operator=(const Falcor::SharedPtr<Texture>& tex)
-{
-    if (!m_pNode)
-        m_pNode = std::make_shared<Node>();
+ShaderVar& ShaderVar::operator=(const Falcor::SharedPtr<Texture>& tex) {
+    if (!m_pNode) m_pNode = std::make_shared<Node>();
     m_pNode->TextureValue = tex;
-    m_pNode->BufferValue  = nullptr;
+    m_pNode->BufferValue = nullptr;
     m_pNode->ScalarData.clear();
     return *this;
 }
 
-ShaderVar& ShaderVar::operator=(const Falcor::SharedPtr<Buffer>& buf)
-{
-    if (!m_pNode)
-        m_pNode = std::make_shared<Node>();
-    m_pNode->BufferValue  = buf;
+ShaderVar& ShaderVar::operator=(const Falcor::SharedPtr<Buffer>& buf) {
+    if (!m_pNode) m_pNode = std::make_shared<Node>();
+    m_pNode->BufferValue = buf;
     m_pNode->TextureValue = nullptr;
     m_pNode->ScalarData.clear();
     return *this;
 }
 
-ShaderVar& ShaderVar::assignScalar(const void* data, size_t size)
-{
-    if (!data || size == 0)
-        return *this;
-    if (!m_pNode)
-        m_pNode = std::make_shared<Node>();
+ShaderVar& ShaderVar::assignScalar(const void* data, size_t size) {
+    if (!data || size == 0) return *this;
+    if (!m_pNode) m_pNode = std::make_shared<Node>();
     m_pNode->TextureValue = nullptr;
-    m_pNode->BufferValue  = nullptr;
+    m_pNode->BufferValue = nullptr;
     m_pNode->ScalarData.resize(size);
     std::memcpy(m_pNode->ScalarData.data(), data, size);
     return *this;
 }
 
-ShaderVar::operator Falcor::SharedPtr<Texture>() const
-{
-    return m_pNode ? m_pNode->TextureValue : nullptr;
-}
+ShaderVar::operator Falcor::SharedPtr<Texture>() const { return m_pNode ? m_pNode->TextureValue : nullptr; }
 
-ShaderVar::operator Falcor::SharedPtr<Buffer>() const
-{
-    return m_pNode ? m_pNode->BufferValue : nullptr;
-}
+ShaderVar::operator Falcor::SharedPtr<Buffer>() const { return m_pNode ? m_pNode->BufferValue : nullptr; }
 
-ComputeVars::SharedPtr ComputeVars::create(ComputeProgram*)
-{
-    return std::make_shared<ComputeVars>();
-}
+ComputeVars::SharedPtr ComputeVars::create(ComputeProgram*) { return std::make_shared<ComputeVars>(); }
 
-ShaderVar ComputeVars::getRootVar()
-{
-    if (!m_pData)
-        m_pData = std::make_shared<ComputeVarsData>();
+ShaderVar ComputeVars::getRootVar() {
+    if (!m_pData) m_pData = std::make_shared<ComputeVarsData>();
     return ShaderVar(m_pBlockRoot ? m_pBlockRoot : m_pData->Root);
 }
 
-ShaderVar ComputeVars::getRootVar() const
-{
-    return const_cast<ComputeVars*>(this)->getRootVar();
-}
+ShaderVar ComputeVars::getRootVar() const { return const_cast<ComputeVars*>(this)->getRootVar(); }
 
-ShaderVar ComputeVars::operator[](const char* name)
-{
-    return getRootVar()[name];
-}
+ShaderVar ComputeVars::operator[](const char* name) { return getRootVar()[name]; }
 
-ShaderVar ComputeVars::operator[](const char* name) const
-{
-    return const_cast<ComputeVars*>(this)->operator[](name);
-}
+ShaderVar ComputeVars::operator[](const char* name) const { return const_cast<ComputeVars*>(this)->operator[](name); }
 
-void ComputeVars::setTexture(const char* name, const Falcor::SharedPtr<Texture>& pTex)
-{
-    if (!m_pData)
-        m_pData = std::make_shared<ComputeVarsData>();
+void ComputeVars::setTexture(const char* name, const Falcor::SharedPtr<Texture>& pTex) {
+    if (!m_pData) m_pData = std::make_shared<ComputeVarsData>();
     m_pData->Textures[name] = pTex;
 }
 
-void ComputeVars::setSampler(const char* name, const Falcor::SharedPtr<Sampler>& pSampler)
-{
-    if (!m_pData)
-        m_pData = std::make_shared<ComputeVarsData>();
+void ComputeVars::setSampler(const char* name, const Falcor::SharedPtr<Sampler>& pSampler) {
+    if (!m_pData) m_pData = std::make_shared<ComputeVarsData>();
     m_pData->Samplers[name] = pSampler;
 }
 
-void ComputeVars::setBuffer(const char* name, const Falcor::SharedPtr<Buffer>& pBuffer)
-{
-    if (!m_pData)
-        m_pData = std::make_shared<ComputeVarsData>();
+void ComputeVars::setBuffer(const char* name, const Falcor::SharedPtr<Buffer>& pBuffer) {
+    if (!m_pData) m_pData = std::make_shared<ComputeVarsData>();
     m_pData->Buffers[name] = pBuffer;
 }
 
-void ComputeVars::setBlob(const void* pData, size_t offset, size_t size)
-{
-    if (!pData || size == 0)
-        return;
-    if (!m_pData)
-        m_pData = std::make_shared<ComputeVarsData>();
+void ComputeVars::setBlob(const void* pData, size_t offset, size_t size) {
+    if (!pData || size == 0) return;
+    if (!m_pData) m_pData = std::make_shared<ComputeVarsData>();
     // Key the bytes by the parameter block (cbuffer) this vars object was
     // created for. Previously all raw blobs landed in ONE shared vector whose
     // target cbuffer was unknown at bind time, so BindComputeVars silently
@@ -441,178 +330,129 @@ void ComputeVars::setBlob(const void* pData, size_t offset, size_t size)
     const std::string blockName = m_pBlockRoot ? m_pBlockRoot->Name : std::string();
     if (blockName.empty())
         spdlog::warn("ComputeVars::setBlob without a parameter block - data will not reach any cbuffer");
-    auto&        blob = m_pData->Blobs[blockName];
-    const size_t end  = offset + size;
-    if (blob.size() < end)
-        blob.resize(end);
+    auto& blob = m_pData->Blobs[blockName];
+    const size_t end = offset + size;
+    if (blob.size() < end) blob.resize(end);
     std::memcpy(blob.data() + offset, pData, size);
 }
 
-ComputeVars::SharedPtr ComputeVars::getParameterBlock(const char* name)
-{
+ComputeVars::SharedPtr ComputeVars::getParameterBlock(const char* name) {
     const ShaderVar blockNode = getRootVar()[name];
-    auto          block       = std::make_shared<ComputeVars>();
-    block->m_pData            = m_pData;
-    block->m_pBlockRoot       = blockNode.m_pNode;
+    auto block = std::make_shared<ComputeVars>();
+    block->m_pData = m_pData;
+    block->m_pBlockRoot = blockNode.m_pNode;
     return block;
 }
 
-ShaderVar ComputeVars::findMember(const char* name)
-{
-    return getRootVar()[name];
-}
+ShaderVar ComputeVars::findMember(const char* name) { return getRootVar()[name]; }
 
-ShaderVar ComputeVars::findMember(const char* name) const
-{
-    return const_cast<ComputeVars*>(this)->findMember(name);
-}
+ShaderVar ComputeVars::findMember(const char* name) const { return const_cast<ComputeVars*>(this)->findMember(name); }
 
-GraphicsVars::SharedPtr GraphicsVars::create(const ProgramReflection*)
-{
-    return std::make_shared<GraphicsVars>();
-}
+GraphicsVars::SharedPtr GraphicsVars::create(const ProgramReflection*) { return std::make_shared<GraphicsVars>(); }
 
-GraphicsVars::SharedPtr GraphicsVars::create(ProgramReflection::SharedConstPtr pReflection)
-{
+GraphicsVars::SharedPtr GraphicsVars::create(ProgramReflection::SharedConstPtr pReflection) {
     return create(pReflection.get());
 }
 
-ShaderVar GraphicsVars::getRootVar()
-{
-    if (!m_pData)
-        m_pData = std::make_shared<GraphicsVarsData>();
+ShaderVar GraphicsVars::getRootVar() {
+    if (!m_pData) m_pData = std::make_shared<GraphicsVarsData>();
     return ShaderVar(m_pBlockRoot ? m_pBlockRoot : m_pData->Root);
 }
 
-ShaderVar GraphicsVars::getRootVar() const
-{
-    return const_cast<GraphicsVars*>(this)->getRootVar();
-}
+ShaderVar GraphicsVars::getRootVar() const { return const_cast<GraphicsVars*>(this)->getRootVar(); }
 
-ShaderVar GraphicsVars::operator[](const char* name)
-{
-    return getRootVar()[name];
-}
+ShaderVar GraphicsVars::operator[](const char* name) { return getRootVar()[name]; }
 
-ShaderVar GraphicsVars::operator[](const char* name) const
-{
-    return const_cast<GraphicsVars*>(this)->operator[](name);
-}
+ShaderVar GraphicsVars::operator[](const char* name) const { return const_cast<GraphicsVars*>(this)->operator[](name); }
 
-void GraphicsVars::setTexture(const char* name, const Falcor::SharedPtr<Texture>& pTex)
-{
-    if (!m_pData)
-        m_pData = std::make_shared<GraphicsVarsData>();
+void GraphicsVars::setTexture(const char* name, const Falcor::SharedPtr<Texture>& pTex) {
+    if (!m_pData) m_pData = std::make_shared<GraphicsVarsData>();
     m_pData->Textures[name] = pTex;
 }
 
-void GraphicsVars::setSampler(const char* name, const Falcor::SharedPtr<Sampler>& pSampler)
-{
-    if (!m_pData)
-        m_pData = std::make_shared<GraphicsVarsData>();
+void GraphicsVars::setSampler(const char* name, const Falcor::SharedPtr<Sampler>& pSampler) {
+    if (!m_pData) m_pData = std::make_shared<GraphicsVarsData>();
     m_pData->Samplers[name] = pSampler;
 }
 
-void GraphicsVars::setBuffer(const char* name, const Falcor::SharedPtr<Buffer>& pBuffer)
-{
-    if (!m_pData)
-        m_pData = std::make_shared<GraphicsVarsData>();
+void GraphicsVars::setBuffer(const char* name, const Falcor::SharedPtr<Buffer>& pBuffer) {
+    if (!m_pData) m_pData = std::make_shared<GraphicsVarsData>();
     m_pData->Buffers[name] = pBuffer;
 }
 
-GraphicsVars::SharedPtr GraphicsVars::getParameterBlock(const char* name)
-{
+GraphicsVars::SharedPtr GraphicsVars::getParameterBlock(const char* name) {
     const ShaderVar blockNode = getRootVar()[name];
-    auto          block       = std::make_shared<GraphicsVars>();
-    block->m_pData            = m_pData;
-    block->m_pBlockRoot       = blockNode.m_pNode;
+    auto block = std::make_shared<GraphicsVars>();
+    block->m_pData = m_pData;
+    block->m_pBlockRoot = blockNode.m_pNode;
     return block;
 }
 
-ShaderVar GraphicsVars::findMember(const char* name)
-{
-    return getRootVar()[name];
-}
+ShaderVar GraphicsVars::findMember(const char* name) { return getRootVar()[name]; }
 
-ShaderVar GraphicsVars::findMember(const char* name) const
-{
-    return const_cast<GraphicsVars*>(this)->findMember(name);
-}
+ShaderVar GraphicsVars::findMember(const char* name) const { return const_cast<GraphicsVars*>(this)->findMember(name); }
 
 // --- Resources ---------------------------------------------------------------
 
-namespace
-{
+namespace {
 // Builds single-subresource (mip 0, slice 0) init data for a texture being
 // created with CreateTexture(). When the requested format was promoted by
 // ToDiligentFormat() (e.g. RGB32 -> RGBA32), the tightly-packed source texels
 // are repacked into the wider destination layout in 'repackStorage'; otherwise
 // the source pointer is used directly. Returns false when there is nothing to
 // upload (null data or unknown/zero pixel size).
-bool BuildTextureInitData(Falcor::ResourceFormat       srcFormat,
-                          Diligent::TEXTURE_FORMAT      dstFormat,
-                          uint32_t                      width,
-                          uint32_t                      height,
-                          uint32_t                      depth,
-                          const void*                   pData,
-                          std::vector<uint8_t>&         repackStorage,
-                          Diligent::TextureSubResData&  subres)
-{
-    if (!pData)
-        return false;
+bool BuildTextureInitData(Falcor::ResourceFormat srcFormat, Diligent::TEXTURE_FORMAT dstFormat, uint32_t width,
+                          uint32_t height, uint32_t depth, const void* pData, std::vector<uint8_t>& repackStorage,
+                          Diligent::TextureSubResData& subres) {
+    if (!pData) return false;
 
     const Diligent::TEXTURE_FORMAT srcDiligent = static_cast<Diligent::TEXTURE_FORMAT>(srcFormat);
 
-    const auto&    dstAttribs   = Diligent::GetTextureFormatAttribs(dstFormat);
+    const auto& dstAttribs = Diligent::GetTextureFormatAttribs(dstFormat);
     const uint32_t dstPixelSize = uint32_t(dstAttribs.ComponentSize) * uint32_t(dstAttribs.NumComponents);
-    if (dstPixelSize == 0)
-        return false; // compressed / unknown layout - not handled here
+    if (dstPixelSize == 0) return false;  // compressed / unknown layout - not handled here
 
     const void* uploadPtr = pData;
 
-    if (srcDiligent != dstFormat)
-    {
+    if (srcDiligent != dstFormat) {
         // Format was promoted: repack each texel from the tight source layout
         // into the wider destination layout, zero-filling the extra channel.
-        const auto&    srcAttribs   = Diligent::GetTextureFormatAttribs(srcDiligent);
+        const auto& srcAttribs = Diligent::GetTextureFormatAttribs(srcDiligent);
         const uint32_t srcPixelSize = uint32_t(srcAttribs.ComponentSize) * uint32_t(srcAttribs.NumComponents);
-        if (srcPixelSize == 0)
-            return false;
+        if (srcPixelSize == 0) return false;
 
-        const uint32_t copyBytes  = std::min(srcPixelSize, dstPixelSize);
-        const size_t   texelCount = size_t(width) * size_t(height) * size_t(std::max<uint32_t>(depth, 1u));
+        const uint32_t copyBytes = std::min(srcPixelSize, dstPixelSize);
+        const size_t texelCount = size_t(width) * size_t(height) * size_t(std::max<uint32_t>(depth, 1u));
 
         repackStorage.assign(texelCount * dstPixelSize, uint8_t{0});
         const uint8_t* src = static_cast<const uint8_t*>(pData);
-        uint8_t*       dst = repackStorage.data();
-        for (size_t i = 0; i < texelCount; ++i)
-            std::memcpy(dst + i * dstPixelSize, src + i * srcPixelSize, copyBytes);
+        uint8_t* dst = repackStorage.data();
+        for (size_t i = 0; i < texelCount; ++i) std::memcpy(dst + i * dstPixelSize, src + i * srcPixelSize, copyBytes);
 
         uploadPtr = repackStorage.data();
     }
 
-    subres.pData       = uploadPtr;
-    subres.Stride      = uint64_t(width) * dstPixelSize;
+    subres.pData = uploadPtr;
+    subres.Stride = uint64_t(width) * dstPixelSize;
     subres.DepthStride = uint64_t(width) * uint64_t(height) * dstPixelSize;
     return true;
 }
-} // namespace
+}  // namespace
 
-Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, TEXTURE_FORMAT format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags)
-{
+Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, TEXTURE_FORMAT format, uint32_t arraySize,
+                                     uint32_t mipLevels, const void* pData, uint32_t bindFlags) {
     return create2D(width, height, static_cast<ResourceFormat>(format), arraySize, mipLevels, pData, bindFlags);
 }
 
-Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, Falcor::ResourceFormat format, uint32_t arraySize, uint32_t mipLevels, const void* pData, uint32_t bindFlags)
-{
+Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, Falcor::ResourceFormat format, uint32_t arraySize,
+                                     uint32_t mipLevels, const void* pData, uint32_t bindFlags) {
     (void)mipLevels;
-    auto tex     = std::make_shared<Texture>();
+    auto tex = std::make_shared<Texture>();
     tex->m_Width = width;
     tex->m_Height = height;
     tex->m_Format = ToDiligentFormat(format);
     tex->m_MipCount = 1;
-    if (!g_pDevice)
-    {
+    if (!g_pDevice) {
         EFX_LOG_STUB("Texture::create2D without device");
         return tex;
     }
@@ -624,35 +464,32 @@ Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, Falcor::Re
     // tile sampled the SAME image and each tile split overwrote it ("one
     // texture on everything, changing as the camera moves").
     Diligent::TextureDesc desc;
-    desc.Type      = arraySize > 1 ? Diligent::RESOURCE_DIM_TEX_2D_ARRAY : Diligent::RESOURCE_DIM_TEX_2D;
+    desc.Type = arraySize > 1 ? Diligent::RESOURCE_DIM_TEX_2D_ARRAY : Diligent::RESOURCE_DIM_TEX_2D;
     desc.ArraySize = std::max(arraySize, 1u);
-    desc.Width     = width;
-    desc.Height    = height;
-    desc.Format    = ToDiligentFormat(format);
+    desc.Width = width;
+    desc.Height = height;
+    desc.Format = ToDiligentFormat(format);
     desc.BindFlags = static_cast<Diligent::BIND_FLAGS>(bindFlags);
     desc.MipLevels = 1;
 
-    std::vector<uint8_t>         initStorage;
-    Diligent::TextureSubResData  subres;
-    Diligent::TextureData        initData;
-    Diligent::TextureData*       pInitData = nullptr;
-    if (arraySize > 1)
-    {
+    std::vector<uint8_t> initStorage;
+    Diligent::TextureSubResData subres;
+    Diligent::TextureData initData;
+    Diligent::TextureData* pInitData = nullptr;
+    if (arraySize > 1) {
         // Diligent requires init data for EVERY subresource; no current caller
         // creates an array with initial contents, so just flag it if one appears.
         if (pData)
-            spdlog::error("Texture::create2D: init data for texture arrays not implemented ({} slices) - created empty", arraySize);
-    }
-    else if (BuildTextureInitData(format, desc.Format, width, height, 1, pData, initStorage, subres))
-    {
-        initData.pSubResources   = &subres;
+            spdlog::error("Texture::create2D: init data for texture arrays not implemented ({} slices) - created empty",
+                          arraySize);
+    } else if (BuildTextureInitData(format, desc.Format, width, height, 1, pData, initStorage, subres)) {
+        initData.pSubResources = &subres;
         initData.NumSubresources = 1;
-        initData.pContext        = g_pContext;
-        pInitData                = &initData;
+        initData.pContext = g_pContext;
+        pInitData = &initData;
     }
     g_pDevice->CreateTexture(desc, pInitData, &tex->m_pTexture);
-    if (tex->m_pTexture)
-    {
+    if (tex->m_pTexture) {
         if (bindFlags & Resource::BindFlags::ShaderResource)
             CreateTextureView(tex->m_pTexture, Diligent::TEXTURE_VIEW_SHADER_RESOURCE, tex->m_SRV);
         if (bindFlags & Resource::BindFlags::RenderTarget)
@@ -665,35 +502,33 @@ Texture::SharedPtr Texture::create2D(uint32_t width, uint32_t height, Falcor::Re
     return tex;
 }
 
-Texture::SharedPtr Texture::create3D(uint32_t width, uint32_t height, uint32_t depth, Falcor::ResourceFormat format, uint32_t, const void* pData, uint32_t bindFlags)
-{
-    auto tex     = std::make_shared<Texture>();
+Texture::SharedPtr Texture::create3D(uint32_t width, uint32_t height, uint32_t depth, Falcor::ResourceFormat format,
+                                     uint32_t, const void* pData, uint32_t bindFlags) {
+    auto tex = std::make_shared<Texture>();
     tex->m_Width = width;
     tex->m_Height = height;
     tex->m_Format = ToDiligentFormat(format);
     tex->m_MipCount = 1;
-    if (!g_pDevice)
-        return tex;
+    if (!g_pDevice) return tex;
 
     Diligent::TextureDesc desc;
-    desc.Type      = Diligent::RESOURCE_DIM_TEX_3D;
-    desc.Width     = width;
-    desc.Height    = height;
-    desc.Depth     = depth;
-    desc.Format    = ToDiligentFormat(format);
+    desc.Type = Diligent::RESOURCE_DIM_TEX_3D;
+    desc.Width = width;
+    desc.Height = height;
+    desc.Depth = depth;
+    desc.Format = ToDiligentFormat(format);
     desc.BindFlags = static_cast<Diligent::BIND_FLAGS>(bindFlags);
     desc.MipLevels = 1;
 
-    std::vector<uint8_t>         initStorage;
-    Diligent::TextureSubResData  subres;
-    Diligent::TextureData        initData;
-    Diligent::TextureData*       pInitData = nullptr;
-    if (BuildTextureInitData(format, desc.Format, width, height, depth, pData, initStorage, subres))
-    {
-        initData.pSubResources   = &subres;
+    std::vector<uint8_t> initStorage;
+    Diligent::TextureSubResData subres;
+    Diligent::TextureData initData;
+    Diligent::TextureData* pInitData = nullptr;
+    if (BuildTextureInitData(format, desc.Format, width, height, depth, pData, initStorage, subres)) {
+        initData.pSubResources = &subres;
         initData.NumSubresources = 1;
-        initData.pContext        = g_pContext;
-        pInitData                = &initData;
+        initData.pContext = g_pContext;
+        pInitData = &initData;
     }
     g_pDevice->CreateTexture(desc, pInitData, &tex->m_pTexture);
     if (tex->m_pTexture && (bindFlags & Resource::BindFlags::ShaderResource))
@@ -703,22 +538,20 @@ Texture::SharedPtr Texture::create3D(uint32_t width, uint32_t height, uint32_t d
     return tex;
 }
 
-Texture::SharedPtr Texture::createCube(uint32_t size, Falcor::ResourceFormat format, uint32_t bindFlags)
-{
-    auto tex      = std::make_shared<Texture>();
-    tex->m_Width  = size;
+Texture::SharedPtr Texture::createCube(uint32_t size, Falcor::ResourceFormat format, uint32_t bindFlags) {
+    auto tex = std::make_shared<Texture>();
+    tex->m_Width = size;
     tex->m_Height = size;
     tex->m_Format = ToDiligentFormat(format);
     tex->m_MipCount = 1;
-    if (!g_pDevice)
-        return tex;
+    if (!g_pDevice) return tex;
 
     Diligent::TextureDesc desc;
-    desc.Type      = Diligent::RESOURCE_DIM_TEX_CUBE;
-    desc.Width     = size;
-    desc.Height    = size;
+    desc.Type = Diligent::RESOURCE_DIM_TEX_CUBE;
+    desc.Width = size;
+    desc.Height = size;
     desc.ArraySize = 6;
-    desc.Format    = ToDiligentFormat(format);
+    desc.Format = ToDiligentFormat(format);
     desc.BindFlags = static_cast<Diligent::BIND_FLAGS>(bindFlags);
     desc.MipLevels = 1;
     g_pDevice->CreateTexture(desc, nullptr, &tex->m_pTexture);
@@ -729,59 +562,50 @@ Texture::SharedPtr Texture::createCube(uint32_t size, Falcor::ResourceFormat for
     return tex;
 }
 
-Texture::SharedPtr Texture::createFromFile(const char* path, bool generateMipLevels, bool loadAsSrgb, Resource::BindFlags bind_flags)
-{
+Texture::SharedPtr Texture::createFromFile(const char* path, bool generateMipLevels, bool loadAsSrgb,
+                                           Resource::BindFlags bind_flags) {
     return createFromFile(std::filesystem::path(path ? path : ""), generateMipLevels, loadAsSrgb, bind_flags);
 }
 
-Texture::SharedPtr Texture::createFromFile(const std::filesystem::path& path, bool generateMipLevels, bool loadAsSrgb, Resource::BindFlags bind_flags)
-{
+Texture::SharedPtr Texture::createFromFile(const std::filesystem::path& path, bool generateMipLevels, bool loadAsSrgb,
+                                           Resource::BindFlags bind_flags) {
     std::filesystem::path resolved = path;
-    if (!std::filesystem::exists(resolved))
-    {
-        for (const auto& dir : g_DataDirectories)
-        {
+    if (!std::filesystem::exists(resolved)) {
+        for (const auto& dir : g_DataDirectories) {
             std::filesystem::path candidate = dir / path;
-            if (std::filesystem::exists(candidate))
-            {
+            if (std::filesystem::exists(candidate)) {
                 resolved = std::move(candidate);
                 break;
             }
         }
     }
 
-    if (!g_pDevice)
-    {
+    if (!g_pDevice) {
         EFX_LOG_STUB("Texture::createFromFile without device");
-    }
-    else if (!std::filesystem::exists(resolved) || std::filesystem::is_directory(resolved))
-    {
+    } else if (!std::filesystem::exists(resolved) || std::filesystem::is_directory(resolved)) {
         spdlog::warn("Texture::createFromFile: file not found '{}'", path.string());
-    }
-    else
-    {
+    } else {
         const std::string resolvedStr = resolved.string();
-        const std::string name        = resolved.filename().string();
+        const std::string name = resolved.filename().string();
 
         Diligent::TextureLoadInfo loadInfo;
-        loadInfo.Name         = name.c_str();
-        loadInfo.IsSRGB       = loadAsSrgb;
+        loadInfo.Name = name.c_str();
+        loadInfo.IsSRGB = loadAsSrgb;
         loadInfo.GenerateMips = generateMipLevels;
-        loadInfo.BindFlags    = static_cast<Diligent::BIND_FLAGS>(bind_flags);
+        loadInfo.BindFlags = static_cast<Diligent::BIND_FLAGS>(bind_flags);
 
         Diligent::RefCntAutoPtr<Diligent::ITexture> pDiligentTex;
         Diligent::CreateTextureFromFile(resolvedStr.c_str(), loadInfo, g_pDevice, &pDiligentTex);
-        if (pDiligentTex)
-        {
+        if (pDiligentTex) {
             const Diligent::TextureDesc& desc = pDiligentTex->GetDesc();
 
-            auto tex          = std::make_shared<Texture>();
-            tex->m_pTexture   = pDiligentTex;
-            tex->m_Width      = desc.Width;
-            tex->m_Height     = desc.Height;
-            tex->m_Format     = desc.Format;
-            tex->m_MipCount   = desc.MipLevels;
-            tex->m_Name       = name;
+            auto tex = std::make_shared<Texture>();
+            tex->m_pTexture = pDiligentTex;
+            tex->m_Width = desc.Width;
+            tex->m_Height = desc.Height;
+            tex->m_Format = desc.Format;
+            tex->m_MipCount = desc.MipLevels;
+            tex->m_Name = name;
             tex->m_SourcePath = path;
             if (bind_flags & Resource::BindFlags::ShaderResource)
                 CreateTextureView(tex->m_pTexture, Diligent::TEXTURE_VIEW_SHADER_RESOURCE, tex->m_SRV);
@@ -797,8 +621,8 @@ Texture::SharedPtr Texture::createFromFile(const std::filesystem::path& path, bo
     // Fallback: 1x1 fully TRANSPARENT black so alpha-blended consumers
     // (terrafector bake!) never paint solid garbage from a missing texture.
     const uint32_t zeroTexel = 0;
-    auto           tex       = create2D(1, 1, ResourceFormat::RGBA8Unorm, 1, 1, &zeroTexel, (uint32_t)bind_flags);
-    tex->m_SourcePath        = path;
+    auto tex = create2D(1, 1, ResourceFormat::RGBA8Unorm, 1, 1, &zeroTexel, (uint32_t)bind_flags);
+    tex->m_SourcePath = path;
     return tex;
 }
 
@@ -810,100 +634,82 @@ Diligent::ITextureView* Texture::getRTV() const { return m_RTV; }
 Diligent::ITextureView* Texture::getDSV() const { return m_DSV; }
 Diligent::ITextureView* Texture::getUAV(uint32_t) const { return m_UAV; }
 
-void Texture::generateMips(RenderContext* pContext)
-{
+void Texture::generateMips(RenderContext* pContext) {
     (void)pContext;
     EFX_LOG_STUB("Texture::generateMips stub");
 }
 
-void Texture::captureToFile(uint32_t mipLevel, uint32_t slice, const std::string& path)
-{
+void Texture::captureToFile(uint32_t mipLevel, uint32_t slice, const std::string& path) {
     (void)mipLevel;
     (void)slice;
     (void)path;
     EFX_LOG_STUB("Texture::captureToFile stub");
 }
 
-void Texture::captureToFile(uint32_t mipLevel, uint32_t slice, const std::string& path, Bitmap::FileFormat format, Bitmap::ExportFlags flags)
-{
+void Texture::captureToFile(uint32_t mipLevel, uint32_t slice, const std::string& path, Bitmap::FileFormat format,
+                            Bitmap::ExportFlags flags) {
     (void)format;
     (void)flags;
     captureToFile(mipLevel, slice, path);
 }
 
-uint32_t Texture::getSubresourceIndex(uint32_t mipLevel, uint32_t arraySlice) const
-{
+uint32_t Texture::getSubresourceIndex(uint32_t mipLevel, uint32_t arraySlice) const {
     return mipLevel + arraySlice * m_MipCount;
 }
 
-namespace
-{
-Diligent::USAGE GetBufferUsage(Buffer::CpuAccess cpuAccess)
-{
-    if (cpuAccess == Buffer::CpuAccess::Read)
-        return Diligent::USAGE_STAGING;
-    if (cpuAccess == Buffer::CpuAccess::Write)
-        return Diligent::USAGE_DYNAMIC;
+namespace {
+Diligent::USAGE GetBufferUsage(Buffer::CpuAccess cpuAccess) {
+    if (cpuAccess == Buffer::CpuAccess::Read) return Diligent::USAGE_STAGING;
+    if (cpuAccess == Buffer::CpuAccess::Write) return Diligent::USAGE_DYNAMIC;
     return Diligent::USAGE_DEFAULT;
 }
 
-Diligent::CPU_ACCESS_FLAGS GetCpuAccessFlags(Buffer::CpuAccess cpuAccess)
-{
-    if (cpuAccess == Buffer::CpuAccess::Read)
-        return Diligent::CPU_ACCESS_READ;
-    if (cpuAccess == Buffer::CpuAccess::Write)
-        return Diligent::CPU_ACCESS_WRITE;
+Diligent::CPU_ACCESS_FLAGS GetCpuAccessFlags(Buffer::CpuAccess cpuAccess) {
+    if (cpuAccess == Buffer::CpuAccess::Read) return Diligent::CPU_ACCESS_READ;
+    if (cpuAccess == Buffer::CpuAccess::Write) return Diligent::CPU_ACCESS_WRITE;
     return Diligent::CPU_ACCESS_NONE;
 }
-} // namespace
-Falcor::SharedPtr<Buffer> CreateFalcorBuffer(size_t size, Diligent::BIND_FLAGS bindFlags, Buffer::CpuAccess cpuAccess, const void* pInitData, bool structured, uint32_t structStride)
-{
+}  // namespace
+Falcor::SharedPtr<Buffer> CreateFalcorBuffer(size_t size, Diligent::BIND_FLAGS bindFlags, Buffer::CpuAccess cpuAccess,
+                                             const void* pInitData, bool structured, uint32_t structStride) {
     auto buf = std::make_shared<Buffer>();
     buf->m_Size = size;
     if (pInitData && size > 0)
         buf->m_CpuShadow.assign(static_cast<const uint8_t*>(pInitData), static_cast<const uint8_t*>(pInitData) + size);
 
-    if (!g_pDevice)
-    {
+    if (!g_pDevice) {
         EFX_LOG_STUB("CreateFalcorBuffer without device");
         return buf;
     }
 
     Diligent::BufferDesc desc;
-    desc.Size           = size;
-    desc.BindFlags      = bindFlags;
-    desc.Usage          = GetBufferUsage(cpuAccess);
+    desc.Size = size;
+    desc.BindFlags = bindFlags;
+    desc.Usage = GetBufferUsage(cpuAccess);
     desc.CPUAccessFlags = GetCpuAccessFlags(cpuAccess);
-    if (structured)
-    {
-        desc.Mode              = Diligent::BUFFER_MODE_STRUCTURED;
+    if (structured) {
+        desc.Mode = Diligent::BUFFER_MODE_STRUCTURED;
         desc.ElementByteStride = structStride;
     }
 
     Diligent::BufferData init{};
-    const bool           uploadViaInit = pInitData &&
-        desc.Usage != Diligent::USAGE_STAGING &&
-        desc.Usage != Diligent::USAGE_DYNAMIC;
-    if (uploadViaInit)
-    {
-        init.pData    = pInitData;
+    const bool uploadViaInit =
+        pInitData && desc.Usage != Diligent::USAGE_STAGING && desc.Usage != Diligent::USAGE_DYNAMIC;
+    if (uploadViaInit) {
+        init.pData = pInitData;
         init.DataSize = size;
     }
 
     g_pDevice->CreateBuffer(desc, uploadViaInit ? &init : nullptr, &buf->m_pBuffer);
 
-    if (pInitData && buf->m_pBuffer && g_pContext)
-    {
-        if (desc.Usage == Diligent::USAGE_STAGING)
-        {
-            g_pContext->UpdateBuffer(buf->m_pBuffer, 0, static_cast<Diligent::Uint64>(size), pInitData, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        }
-        else if (desc.Usage == Diligent::USAGE_DYNAMIC)
-        {
+    if (pInitData && buf->m_pBuffer && g_pContext) {
+        if (desc.Usage == Diligent::USAGE_STAGING) {
+            g_pContext->UpdateBuffer(buf->m_pBuffer, 0, static_cast<Diligent::Uint64>(size), pInitData,
+                                     Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        } else if (desc.Usage == Diligent::USAGE_DYNAMIC) {
             void* pMapped = nullptr;
             g_pContext->MapBuffer(buf->m_pBuffer, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, pMapped);
-            if (pMapped)
-            {
+            if (pMapped) {
                 std::memcpy(pMapped, pInitData, size);
                 g_pContext->UnmapBuffer(buf->m_pBuffer, Diligent::MAP_WRITE);
             }
@@ -912,58 +718,52 @@ Falcor::SharedPtr<Buffer> CreateFalcorBuffer(size_t size, Diligent::BIND_FLAGS b
     return buf;
 }
 
-Buffer::SharedPtr Buffer::create(size_t size, BindFlags bindFlags, CpuAccess cpuAccess, const void* pInitData)
-{
+Buffer::SharedPtr Buffer::create(size_t size, BindFlags bindFlags, CpuAccess cpuAccess, const void* pInitData) {
     return CreateFalcorBuffer(size, static_cast<Diligent::BIND_FLAGS>(bindFlags), cpuAccess, pInitData, false, 0);
 }
 
-Buffer::SharedPtr Buffer::create(size_t size, Resource::BindFlags bindFlags, CpuAccess cpuAccess, const void* pInitData)
-{
+Buffer::SharedPtr Buffer::create(size_t size, Resource::BindFlags bindFlags, CpuAccess cpuAccess,
+                                 const void* pInitData) {
     return CreateFalcorBuffer(size, static_cast<Diligent::BIND_FLAGS>(bindFlags), cpuAccess, pInitData, false, 0);
 }
 
-Buffer::SharedPtr Buffer::createStructured(size_t structSize, size_t elementCount)
-{
-    return createStructured(structSize, elementCount, static_cast<Resource::BindFlags>(Resource::BindFlags::UnorderedAccess | Resource::BindFlags::ShaderResource));
+Buffer::SharedPtr Buffer::createStructured(size_t structSize, size_t elementCount) {
+    return createStructured(
+        structSize, elementCount,
+        static_cast<Resource::BindFlags>(Resource::BindFlags::UnorderedAccess | Resource::BindFlags::ShaderResource));
 }
 
-Buffer::SharedPtr Buffer::createStructured(size_t structSize, size_t elementCount, Resource::BindFlags bindFlags)
-{
+Buffer::SharedPtr Buffer::createStructured(size_t structSize, size_t elementCount, Resource::BindFlags bindFlags) {
     const size_t size = structSize * elementCount;
-    return CreateFalcorBuffer(size, static_cast<Diligent::BIND_FLAGS>(bindFlags), CpuAccess::None, nullptr, true, static_cast<uint32_t>(structSize));
+    return CreateFalcorBuffer(size, static_cast<Diligent::BIND_FLAGS>(bindFlags), CpuAccess::None, nullptr, true,
+                              static_cast<uint32_t>(structSize));
 }
 
-Buffer::SharedPtr Buffer::createStructured(size_t structSize, size_t elementCount, uint32_t bindFlags)
-{
+Buffer::SharedPtr Buffer::createStructured(size_t structSize, size_t elementCount, uint32_t bindFlags) {
     return createStructured(structSize, elementCount, static_cast<Resource::BindFlags>(bindFlags));
 }
 
-Buffer::SharedPtr Buffer::createStructured(size_t structSize, size_t elementCount, Resource::BindFlags bindFlags, CpuAccess cpuAccess, const void* pInitData)
-{
+Buffer::SharedPtr Buffer::createStructured(size_t structSize, size_t elementCount, Resource::BindFlags bindFlags,
+                                           CpuAccess cpuAccess, const void* pInitData) {
     const size_t size = structSize * elementCount;
-    return CreateFalcorBuffer(size, static_cast<Diligent::BIND_FLAGS>(bindFlags), cpuAccess, pInitData, true, static_cast<uint32_t>(structSize));
+    return CreateFalcorBuffer(size, static_cast<Diligent::BIND_FLAGS>(bindFlags), cpuAccess, pInitData, true,
+                              static_cast<uint32_t>(structSize));
 }
 
-Buffer::SharedPtr Buffer::createTyped(Falcor::ResourceFormat format, size_t sizeInBytes, Resource::BindFlags bindFlags)
-{
+Buffer::SharedPtr Buffer::createTyped(Falcor::ResourceFormat format, size_t sizeInBytes,
+                                      Resource::BindFlags bindFlags) {
     (void)format;
-    return CreateFalcorBuffer(sizeInBytes, static_cast<Diligent::BIND_FLAGS>(bindFlags), CpuAccess::None, nullptr, false, 0);
+    return CreateFalcorBuffer(sizeInBytes, static_cast<Diligent::BIND_FLAGS>(bindFlags), CpuAccess::None, nullptr,
+                              false, 0);
 }
 
-
-
-void Buffer::ensureCpuShadow(size_t size)
-{
-    if (m_CpuShadow.size() < size)
-        m_CpuShadow.resize(size);
+void Buffer::ensureCpuShadow(size_t size) {
+    if (m_CpuShadow.size() < size) m_CpuShadow.resize(size);
 }
 
-void Buffer::uploadShadowRange(size_t offset, size_t size)
-{
-    if (!g_pContext || !m_pBuffer || size == 0)
-        return;
-    if (offset + size > m_CpuShadow.size())
-        return;
+void Buffer::uploadShadowRange(size_t offset, size_t size) {
+    if (!g_pContext || !m_pBuffer || size == 0) return;
+    if (offset + size > m_CpuShadow.size()) return;
 
     // USAGE_DYNAMIC buffers live in an upload heap (GENERIC_READ) and CANNOT be
     // updated with UpdateBuffer: on D3D12 that turns into a CopyBufferRegion into
@@ -972,13 +772,11 @@ void Buffer::uploadShadowRange(size_t offset, size_t size)
     // contents, so we re-upload the whole buffer from the full CPU shadow copy
     // (which always holds the complete intended contents). Vulkan tolerated the
     // illegal UpdateBuffer, which is why this only crashed on D3D12.
-    if (m_pBuffer->GetDesc().Usage == Diligent::USAGE_DYNAMIC)
-    {
+    if (m_pBuffer->GetDesc().Usage == Diligent::USAGE_DYNAMIC) {
         void* pMapped = nullptr;
         g_pContext->MapBuffer(m_pBuffer, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, pMapped);
-        if (pMapped)
-        {
-            const size_t bufSize  = static_cast<size_t>(m_pBuffer->GetDesc().Size);
+        if (pMapped) {
+            const size_t bufSize = static_cast<size_t>(m_pBuffer->GetDesc().Size);
             const size_t copySize = m_CpuShadow.size() < bufSize ? m_CpuShadow.size() : bufSize;
             std::memcpy(pMapped, m_CpuShadow.data(), copySize);
             g_pContext->UnmapBuffer(m_pBuffer, Diligent::MAP_WRITE);
@@ -986,39 +784,32 @@ void Buffer::uploadShadowRange(size_t offset, size_t size)
         return;
     }
 
-    g_pContext->UpdateBuffer(m_pBuffer, offset, static_cast<Diligent::Uint64>(size), m_CpuShadow.data() + offset, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    g_pContext->UpdateBuffer(m_pBuffer, offset, static_cast<Diligent::Uint64>(size), m_CpuShadow.data() + offset,
+                             Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 }
 
-void Buffer::setBlob(const void* pData, size_t offset, size_t size)
-{
-    if (!pData || size == 0)
-        return;
+void Buffer::setBlob(const void* pData, size_t offset, size_t size) {
+    if (!pData || size == 0) return;
     ensureCpuShadow(offset + size);
     std::memcpy(m_CpuShadow.data() + offset, pData, size);
     uploadShadowRange(offset, size);
 }
 
-void Buffer::setBlob(const void* pData, size_t offset, size_t size, size_t count)
-{
+void Buffer::setBlob(const void* pData, size_t offset, size_t size, size_t count) {
     (void)count;
     setBlob(pData, offset, size);
 }
 
-void Buffer::uploadToGPU(size_t offset, size_t size)
-{
-    if (size == 0)
-        size = m_CpuShadow.size() - offset;
+void Buffer::uploadToGPU(size_t offset, size_t size) {
+    if (size == 0) size = m_CpuShadow.size() - offset;
     uploadShadowRange(offset, size);
 }
 
-void* Buffer::map(MapType type)
-{
+void* Buffer::map(MapType type) {
     m_LastMapType = type;
-    if (m_pBuffer && g_pContext)
-    {
+    if (m_pBuffer && g_pContext) {
         void* pData = nullptr;
-        if (type == MapType::Read)
-        {
+        if (type == MapType::Read) {
             // Diligent's D3D12/Vulkan backends do NOT auto-synchronize CPU readback:
             // MapBuffer(MAP_READ) returns immediately with whatever currently sits in
             // the staging buffer and logs a warning on every call. The Earthworks
@@ -1046,73 +837,55 @@ void* Buffer::map(MapType type)
     return m_CpuShadow.data();
 }
 
-void Buffer::unmap()
-{
+void Buffer::unmap() {
     if (m_pBuffer && g_pContext)
         g_pContext->UnmapBuffer(m_pBuffer, m_LastMapType == MapType::Read ? Diligent::MAP_READ : Diligent::MAP_WRITE);
 }
 
-Buffer::SharedPtr Buffer::getUAVCounter()
-{
-    if (!m_pUavCounter)
-        m_pUavCounter = createStructured(sizeof(uint32_t), 1, Resource::BindFlags::UnorderedAccess);
+Buffer::SharedPtr Buffer::getUAVCounter() {
+    if (!m_pUavCounter) m_pUavCounter = createStructured(sizeof(uint32_t), 1, Resource::BindFlags::UnorderedAccess);
     return m_pUavCounter;
 }
 
-
-Fbo::Desc& Fbo::Desc::setColorTarget(uint32_t slot, Falcor::ResourceFormat format)
-{
-    if (slot < m_ColorFormats.size())
-        m_ColorFormats[slot] = ToDiligentFormat(format);
+Fbo::Desc& Fbo::Desc::setColorTarget(uint32_t slot, Falcor::ResourceFormat format) {
+    if (slot < m_ColorFormats.size()) m_ColorFormats[slot] = ToDiligentFormat(format);
     return *this;
 }
 
-Fbo::Desc& Fbo::Desc::setColorTarget(uint32_t slot, Diligent::TEXTURE_FORMAT format)
-{
-    if (slot < m_ColorFormats.size())
-        m_ColorFormats[slot] = format;
+Fbo::Desc& Fbo::Desc::setColorTarget(uint32_t slot, Diligent::TEXTURE_FORMAT format) {
+    if (slot < m_ColorFormats.size()) m_ColorFormats[slot] = format;
     return *this;
 }
 
-Fbo::Desc& Fbo::Desc::setColorTarget(uint32_t slot, Falcor::ResourceFormat format, bool)
-{
+Fbo::Desc& Fbo::Desc::setColorTarget(uint32_t slot, Falcor::ResourceFormat format, bool) {
     return setColorTarget(slot, format);
 }
 
-Fbo::Desc& Fbo::Desc::setDepthStencilTarget(Falcor::ResourceFormat falcor_format)
-{
+Fbo::Desc& Fbo::Desc::setDepthStencilTarget(Falcor::ResourceFormat falcor_format) {
     m_DepthFormat = ToDiligentFormat(falcor_format);
-    m_HasDepth    = true;
+    m_HasDepth = true;
     return *this;
 }
 
-Fbo::Desc& Fbo::Desc::setDepthStencilTarget(Diligent::TEXTURE_FORMAT format)
-{
+Fbo::Desc& Fbo::Desc::setDepthStencilTarget(Diligent::TEXTURE_FORMAT format) {
     m_DepthFormat = format;
-    m_HasDepth    = true;
+    m_HasDepth = true;
     return *this;
 }
 
-Falcor::ResourceFormat Fbo::Desc::GetColorFormat(uint32_t slot) const
-{
+Falcor::ResourceFormat Fbo::Desc::GetColorFormat(uint32_t slot) const {
     return FromDiligentFormat(slot < m_ColorFormats.size() ? m_ColorFormats[slot] : TEX_FORMAT_UNKNOWN);
 }
 
-Falcor::ResourceFormat Fbo::Desc::GetDepthFormat() const
-{
-    return  FromDiligentFormat(m_DepthFormat);
-}
+Falcor::ResourceFormat Fbo::Desc::GetDepthFormat() const { return FromDiligentFormat(m_DepthFormat); }
 
-Fbo::SharedPtr Fbo::create2D(uint32_t width, uint32_t height, const Desc& desc)
-{
-    auto fbo     = std::make_shared<Fbo>();
+Fbo::SharedPtr Fbo::create2D(uint32_t width, uint32_t height, const Desc& desc) {
+    auto fbo = std::make_shared<Fbo>();
     fbo->m_Width = width;
     fbo->m_Height = height;
-    for (uint32_t slot = 0; slot < fbo->m_ColorTextures.size(); ++slot)
-    {
+    for (uint32_t slot = 0; slot < fbo->m_ColorTextures.size(); ++slot) {
         const TEXTURE_FORMAT fmt = ToDiligentFormat(desc.GetColorFormat(slot));
-        if (fmt != TEX_FORMAT_UNKNOWN)
-        {
+        if (fmt != TEX_FORMAT_UNKNOWN) {
             // Earthworks binds FBO color targets as compute UAVs too
             // (compute_tileBicubic writes gOutput = tileFbo color0, the tile
             // ecotope/normal passes write colors 1..7). Falcor created FBO
@@ -1126,74 +899,64 @@ Fbo::SharedPtr Fbo::create2D(uint32_t width, uint32_t height, const Desc& desc)
             fbo->m_ColorTextures[slot] = Texture::create2D(width, height, fmt, 1, 1, nullptr, bind);
         }
     }
-    if (desc.GetDepthFormat() != TEX_FORMAT_UNKNOWN)
-    {
+    if (desc.GetDepthFormat() != TEX_FORMAT_UNKNOWN) {
         // BIND_SHADER_RESOURCE in addition to BIND_DEPTH_STENCIL so depth FBOs
         // (e.g. shadow maps) can be sampled in shaders. Diligent automatically
         // creates the texture with a typeless resource format and selects the
         // depth-readable SRV format (R32_FLOAT / R24_UNORM_X8 / ...).
-        fbo->m_DepthTexture = Texture::create2D(
-            width, height, desc.GetDepthFormat(), 1, 1, nullptr,
-            Diligent::BIND_DEPTH_STENCIL | Diligent::BIND_SHADER_RESOURCE);
+        fbo->m_DepthTexture = Texture::create2D(width, height, desc.GetDepthFormat(), 1, 1, nullptr,
+                                                Diligent::BIND_DEPTH_STENCIL | Diligent::BIND_SHADER_RESOURCE);
     }
     return fbo;
 }
 
-Fbo::SharedPtr Fbo::create2D(uint32_t width, uint32_t height, const Desc& desc, uint32_t arraySize, uint32_t sampleCount)
-{
+Fbo::SharedPtr Fbo::create2D(uint32_t width, uint32_t height, const Desc& desc, uint32_t arraySize,
+                             uint32_t sampleCount) {
     (void)arraySize;
     (void)sampleCount;
     return create2D(width, height, desc);
 }
 
-Fbo::SharedPtr Fbo::createFromSwapChain(Diligent::ISwapChain* pSwapChain)
-{
+Fbo::SharedPtr Fbo::createFromSwapChain(Diligent::ISwapChain* pSwapChain) {
     auto fbo = std::make_shared<Fbo>();
-    if (!pSwapChain)
-        return fbo;
+    if (!pSwapChain) return fbo;
 
     const auto& scDesc = pSwapChain->GetDesc();
-    fbo->m_Width           = scDesc.Width;
-    fbo->m_Height          = scDesc.Height;
-    fbo->m_pSwapChain      = pSwapChain;
+    fbo->m_Width = scDesc.Width;
+    fbo->m_Height = scDesc.Height;
+    fbo->m_pSwapChain = pSwapChain;
     fbo->m_IsSwapChainProxy = true;
     return fbo;
 }
 
-Texture::SharedPtr Fbo::getColorTexture(uint32_t slot) const
-{
+Texture::SharedPtr Fbo::getColorTexture(uint32_t slot) const {
     return slot < m_ColorTextures.size() ? m_ColorTextures[slot] : nullptr;
 }
 
-Texture::SharedPtr Fbo::getDepthStencilTexture() const
-{
-    return m_DepthTexture;
-}
+Texture::SharedPtr Fbo::getDepthStencilTexture() const { return m_DepthTexture; }
 
-Diligent::ITextureView* Fbo::getRenderTargetView(uint32_t slot) const
-{
-    if (m_IsSwapChainProxy && m_pSwapChain && slot == 0)
-        return m_pSwapChain->GetCurrentBackBufferRTV();
+Diligent::ITextureView* Fbo::getRenderTargetView(uint32_t slot) const {
+    if (m_IsSwapChainProxy && m_pSwapChain && slot == 0) return m_pSwapChain->GetCurrentBackBufferRTV();
     const auto tex = getColorTexture(slot);
     return tex ? tex->getRTV() : nullptr;
 }
 
-Diligent::ITextureView* Fbo::getDepthStencilView() const
-{
-    if (m_IsSwapChainProxy && m_pSwapChain)
-        return m_pSwapChain->GetDepthBufferDSV();
+Diligent::ITextureView* Fbo::getDepthStencilView() const {
+    if (m_IsSwapChainProxy && m_pSwapChain) return m_pSwapChain->GetDepthBufferDSV();
     return m_DepthTexture ? m_DepthTexture->getDSV() : nullptr;
 }
 
-Sampler::Desc& Sampler::Desc::setAddressingMode(AddressMode u, AddressMode v, AddressMode w)
-{
+Sampler::Desc& Sampler::Desc::setAddressingMode(AddressMode u, AddressMode v, AddressMode w) {
     auto mapMode = [](AddressMode mode) {
-        switch (mode)
-        {
-        case AddressMode::Wrap: return Diligent::TEXTURE_ADDRESS_WRAP;
-        case AddressMode::Mirror: return Diligent::TEXTURE_ADDRESS_MIRROR;
-        case AddressMode::Clamp: return Diligent::TEXTURE_ADDRESS_CLAMP;
-        default: return Diligent::TEXTURE_ADDRESS_BORDER;
+        switch (mode) {
+            case AddressMode::Wrap:
+                return Diligent::TEXTURE_ADDRESS_WRAP;
+            case AddressMode::Mirror:
+                return Diligent::TEXTURE_ADDRESS_MIRROR;
+            case AddressMode::Clamp:
+                return Diligent::TEXTURE_ADDRESS_CLAMP;
+            default:
+                return Diligent::TEXTURE_ADDRESS_BORDER;
         }
     };
     m_Desc.AddressU = mapMode(u);
@@ -1202,27 +965,29 @@ Sampler::Desc& Sampler::Desc::setAddressingMode(AddressMode u, AddressMode v, Ad
     return *this;
 }
 
-Sampler::Desc& Sampler::Desc::setFilterMode(Filter min, Filter mag, Filter mip)
-{
-    auto mapFilter = [](Filter f) { return f == Filter::Linear ? Diligent::FILTER_TYPE_LINEAR : Diligent::FILTER_TYPE_POINT; };
+Sampler::Desc& Sampler::Desc::setFilterMode(Filter min, Filter mag, Filter mip) {
+    auto mapFilter = [](Filter f) {
+        return f == Filter::Linear ? Diligent::FILTER_TYPE_LINEAR : Diligent::FILTER_TYPE_POINT;
+    };
     m_Desc.MinFilter = mapFilter(min);
     m_Desc.MagFilter = mapFilter(mag);
     m_Desc.MipFilter = mapFilter(mip);
     return *this;
 }
 
-Sampler::Desc& Sampler::Desc::setMaxAnisotropy(uint32_t aniso)
-{
+Sampler::Desc& Sampler::Desc::setMaxAnisotropy(uint32_t aniso) {
     m_Desc.MaxAnisotropy = aniso;
     return *this;
 }
 
-Sampler::Desc& Sampler::Desc::setComparisonMode(ComparisonMode mode)
-{
-    switch (mode)
-    {
-    case ComparisonMode::LessEqual: m_Desc.ComparisonFunc = Diligent::COMPARISON_FUNC_LESS_EQUAL; break;
-    default: m_Desc.ComparisonFunc = Diligent::COMPARISON_FUNC_LESS_EQUAL; break;
+Sampler::Desc& Sampler::Desc::setComparisonMode(ComparisonMode mode) {
+    switch (mode) {
+        case ComparisonMode::LessEqual:
+            m_Desc.ComparisonFunc = Diligent::COMPARISON_FUNC_LESS_EQUAL;
+            break;
+        default:
+            m_Desc.ComparisonFunc = Diligent::COMPARISON_FUNC_LESS_EQUAL;
+            break;
     }
     // A comparison sampler (HLSL SamplerComparisonState / SampleCmp) requires the
     // filter type itself to be a COMPARISON filter, otherwise D3D12 ignores the
@@ -1230,13 +995,12 @@ Sampler::Desc& Sampler::Desc::setComparisonMode(ComparisonMode mode)
     // filter was previously selected to its comparison variant. Note this relies
     // on setComparisonMode() being called after setFilterMode().
     auto toComparison = [](Diligent::FILTER_TYPE f) {
-        switch (f)
-        {
-        case Diligent::FILTER_TYPE_POINT:
-        case Diligent::FILTER_TYPE_COMPARISON_POINT:
-            return Diligent::FILTER_TYPE_COMPARISON_POINT;
-        default:
-            return Diligent::FILTER_TYPE_COMPARISON_LINEAR;
+        switch (f) {
+            case Diligent::FILTER_TYPE_POINT:
+            case Diligent::FILTER_TYPE_COMPARISON_POINT:
+                return Diligent::FILTER_TYPE_COMPARISON_POINT;
+            default:
+                return Diligent::FILTER_TYPE_COMPARISON_LINEAR;
         }
     };
     m_Desc.MinFilter = toComparison(m_Desc.MinFilter);
@@ -1245,150 +1009,174 @@ Sampler::Desc& Sampler::Desc::setComparisonMode(ComparisonMode mode)
     return *this;
 }
 
-Sampler::SharedPtr Sampler::create(const Desc& desc)
-{
+Sampler::SharedPtr Sampler::create(const Desc& desc) {
     auto sampler = std::make_shared<Sampler>();
-    if (g_pDevice)
-        g_pDevice->CreateSampler(desc.m_Desc, &sampler->m_pSampler);
+    if (g_pDevice) g_pDevice->CreateSampler(desc.m_Desc, &sampler->m_pSampler);
     return sampler;
 }
 
-BlendState::Desc& BlendState::Desc::setRtBlend(uint32_t rt, bool enable)
-{
-    if (rt < Diligent::MAX_RENDER_TARGETS)
-        m_Desc.RenderTargets[rt].BlendEnable = enable;
+BlendState::Desc& BlendState::Desc::setRtBlend(uint32_t rt, bool enable) {
+    if (rt < Diligent::MAX_RENDER_TARGETS) m_Desc.RenderTargets[rt].BlendEnable = enable;
     return *this;
 }
 
-BlendState::Desc& BlendState::Desc::setRtParams(uint32_t rt, BlendOp, BlendOp, BlendFunc srcColor, BlendFunc dstColor, BlendFunc srcAlpha, BlendFunc dstAlpha)
-{
-    if (rt >= Diligent::MAX_RENDER_TARGETS)
-        return *this;
+BlendState::Desc& BlendState::Desc::setRtParams(uint32_t rt, BlendOp colorOp, BlendOp alphaOp, BlendFunc srcColor,
+                                                BlendFunc dstColor, BlendFunc srcAlpha, BlendFunc dstAlpha) {
+    if (rt >= Diligent::MAX_RENDER_TARGETS) return *this;
     auto& target = m_Desc.RenderTargets[rt];
     auto mapFunc = [](BlendFunc f) {
-        switch (f)
-        {
-        case BlendFunc::Zero: return Diligent::BLEND_FACTOR_ZERO;
-        case BlendFunc::One: return Diligent::BLEND_FACTOR_ONE;
-        case BlendFunc::OneMinusSrcAlpha: return Diligent::BLEND_FACTOR_INV_SRC_ALPHA;
-        case BlendFunc::SrcAlphaSaturate: return Diligent::BLEND_FACTOR_SRC_ALPHA_SAT;
-        default: return Diligent::BLEND_FACTOR_SRC_ALPHA;
+        switch (f) {
+            case BlendFunc::Zero:                return Diligent::BLEND_FACTOR_ZERO;
+            case BlendFunc::One:                 return Diligent::BLEND_FACTOR_ONE;
+            case BlendFunc::SrcColor:            return Diligent::BLEND_FACTOR_SRC_COLOR;
+            case BlendFunc::OneMinusSrcColor:    return Diligent::BLEND_FACTOR_INV_SRC_COLOR;
+            case BlendFunc::DstColor:            return Diligent::BLEND_FACTOR_DEST_COLOR;
+            case BlendFunc::OneMinusDstColor:    return Diligent::BLEND_FACTOR_INV_DEST_COLOR;
+            case BlendFunc::SrcAlpha:            return Diligent::BLEND_FACTOR_SRC_ALPHA;
+            case BlendFunc::OneMinusSrcAlpha:    return Diligent::BLEND_FACTOR_INV_SRC_ALPHA;
+            case BlendFunc::DstAlpha:            return Diligent::BLEND_FACTOR_DEST_ALPHA;
+            case BlendFunc::OneMinusDstAlpha:    return Diligent::BLEND_FACTOR_INV_DEST_ALPHA;
+            case BlendFunc::BlendFactor:         return Diligent::BLEND_FACTOR_BLEND_FACTOR;
+            case BlendFunc::OneMinusBlendFactor: return Diligent::BLEND_FACTOR_INV_BLEND_FACTOR;
+            case BlendFunc::SrcAlphaSaturate:    return Diligent::BLEND_FACTOR_SRC_ALPHA_SAT;
+            case BlendFunc::Src1Color:           return Diligent::BLEND_FACTOR_SRC1_COLOR;
+            case BlendFunc::OneMinusSrc1Color:   return Diligent::BLEND_FACTOR_INV_SRC1_COLOR;
+            case BlendFunc::Src1Alpha:           return Diligent::BLEND_FACTOR_SRC1_ALPHA;
+            case BlendFunc::OneMinusSrc1Alpha:   return Diligent::BLEND_FACTOR_INV_SRC1_ALPHA;
         }
     };
-    target.SrcBlend  = mapFunc(srcColor);
+
+    auto mapFuncBlend = [](BlendOp f) {
+        switch (f) {
+            case BlendOp::Add:                return Diligent::BLEND_OPERATION_ADD;
+            case BlendOp::Subtract:           return Diligent::BLEND_OPERATION_SUBTRACT;
+            case BlendOp::ReverseSubtract:    return Diligent::BLEND_OPERATION_REV_SUBTRACT;
+            case BlendOp::Min:                return Diligent::BLEND_OPERATION_MIN;
+            case BlendOp::Max:                return Diligent::BLEND_OPERATION_MAX;
+        }
+    };
+
+    target.BlendOp = mapFuncBlend(colorOp);
+    target.BlendOpAlpha = mapFuncBlend(alphaOp);
+    target.SrcBlend = mapFunc(srcColor);
     target.DestBlend = mapFunc(dstColor);
     target.SrcBlendAlpha = mapFunc(srcAlpha);
     target.DestBlendAlpha = mapFunc(dstAlpha);
     return *this;
 }
 
-BlendState::Desc& BlendState::Desc::setIndependentBlend(bool enabled)
-{
+BlendState::Desc& BlendState::Desc::setIndependentBlend(bool enabled) {
     m_Desc.IndependentBlendEnable = enabled;
     return *this;
 }
 
-BlendState::Desc& BlendState::Desc::setRenderTargetWriteMask(uint32_t rt, bool red, bool green, bool blue, bool alpha)
-{
-    if (rt < Diligent::MAX_RENDER_TARGETS)
-    {
+BlendState::Desc& BlendState::Desc::setRenderTargetWriteMask(uint32_t rt, bool red, bool green, bool blue, bool alpha) {
+    if (rt < Diligent::MAX_RENDER_TARGETS) {
         auto& target = m_Desc.RenderTargets[rt];
         target.RenderTargetWriteMask = static_cast<Diligent::COLOR_MASK>(
-            (red ? Diligent::COLOR_MASK_RED : 0) |
-            (green ? Diligent::COLOR_MASK_GREEN : 0) |
-            (blue ? Diligent::COLOR_MASK_BLUE : 0) |
-            (alpha ? Diligent::COLOR_MASK_ALPHA : 0));
+            (red ? Diligent::COLOR_MASK_RED : 0) | (green ? Diligent::COLOR_MASK_GREEN : 0) |
+            (blue ? Diligent::COLOR_MASK_BLUE : 0) | (alpha ? Diligent::COLOR_MASK_ALPHA : 0));
     }
     return *this;
 }
 
-BlendState::Desc& BlendState::Desc::setAlphaToCoverage(bool enabled)
-{
-    (void)enabled;
-    spdlog::error("BlendState::Desc::setAlphaToCoverage is not implemented");
+BlendState::Desc& BlendState::Desc::setAlphaToCoverage(bool enabled) {
+    m_Desc.AlphaToCoverageEnable = enabled;
     return *this;
 }
 
-BlendState::SharedPtr BlendState::create(const Desc& desc)
-{
+BlendState::SharedPtr BlendState::create(const Desc& desc) {
     auto state = std::make_shared<BlendState>();
     state->m_Desc = desc;
     return state;
 }
 
-DepthStencilState::Desc& DepthStencilState::Desc::setDepthEnabled(bool enabled)
-{
+DepthStencilState::Desc& DepthStencilState::Desc::setDepthEnabled(bool enabled) {
     m_Desc.DepthEnable = enabled;
     return *this;
 }
 
-DepthStencilState::Desc& DepthStencilState::Desc::setDepthWriteMask(bool enabled)
-{
+DepthStencilState::Desc& DepthStencilState::Desc::setDepthWriteMask(bool enabled) {
     m_Desc.DepthWriteEnable = enabled;
     return *this;
 }
 
-DepthStencilState::Desc& DepthStencilState::Desc::setStencilEnabled(bool enabled)
-{
+DepthStencilState::Desc& DepthStencilState::Desc::setStencilEnabled(bool enabled) {
     m_Desc.StencilEnable = enabled;
     return *this;
 }
 
-DepthStencilState::Desc& DepthStencilState::Desc::setDepthFunc(Func func)
-{
-    switch (func)
-    {
-    case Func::Never:         m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_NEVER; break;
-    case Func::Less:          m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_LESS; break;
-    case Func::Equal:         m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_EQUAL; break;
-    case Func::LessEqual:    m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_LESS_EQUAL; break;
-    case Func::Greater:      m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_GREATER; break;
-    case Func::NotEqual:     m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_NOT_EQUAL; break;
-    case Func::GreaterEqual: m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_GREATER_EQUAL; break;
-    default:                 m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_ALWAYS; break;
+DepthStencilState::Desc& DepthStencilState::Desc::setDepthFunc(Func func) {
+    switch (func) {
+        case Func::Never:
+            m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_NEVER;
+            break;
+        case Func::Less:
+            m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_LESS;
+            break;
+        case Func::Equal:
+            m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_EQUAL;
+            break;
+        case Func::LessEqual:
+            m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_LESS_EQUAL;
+            break;
+        case Func::Greater:
+            m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_GREATER;
+            break;
+        case Func::NotEqual:
+            m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_NOT_EQUAL;
+            break;
+        case Func::GreaterEqual:
+            m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_GREATER_EQUAL;
+            break;
+        default:
+            m_Desc.DepthFunc = Diligent::COMPARISON_FUNC_ALWAYS;
+            break;
     }
     return *this;
 }
 
-DepthStencilState::SharedPtr DepthStencilState::create(const Desc& desc)
-{
+DepthStencilState::SharedPtr DepthStencilState::create(const Desc& desc) {
     auto state = std::make_shared<DepthStencilState>();
     state->m_Desc = desc;
     return state;
 }
 
-RasterizerState::Desc& RasterizerState::Desc::setCullMode(CullMode mode)
-{
-    switch (mode)
-    {
-    case CullMode::None: m_Desc.CullMode = Diligent::CULL_MODE_NONE; break;
-    case CullMode::Front: m_Desc.CullMode = Diligent::CULL_MODE_FRONT; break;
-    default: m_Desc.CullMode = Diligent::CULL_MODE_BACK; break;
+RasterizerState::Desc& RasterizerState::Desc::setCullMode(CullMode mode) {
+    switch (mode) {
+        case CullMode::None:
+            m_Desc.CullMode = Diligent::CULL_MODE_NONE;
+            break;
+        case CullMode::Front:
+            m_Desc.CullMode = Diligent::CULL_MODE_FRONT;
+            break;
+        default:
+            m_Desc.CullMode = Diligent::CULL_MODE_BACK;
+            break;
     }
     return *this;
 }
 
-RasterizerState::Desc& RasterizerState::Desc::setFillMode(FillMode mode)
-{
+RasterizerState::Desc& RasterizerState::Desc::setFillMode(FillMode mode) {
     m_Desc.FillMode = mode == FillMode::Wireframe ? Diligent::FILL_MODE_WIREFRAME : Diligent::FILL_MODE_SOLID;
     return *this;
 }
 
-RasterizerState::SharedPtr RasterizerState::create(const Desc& desc)
-{
+RasterizerState::SharedPtr RasterizerState::create(const Desc& desc) {
     auto state = std::make_shared<RasterizerState>();
     state->m_Desc = desc;
     return state;
 }
 
-Falcor::SharedPtr<GraphicsState> GraphicsState::create()
-{
-    return std::make_shared<GraphicsState>();
-}
+Falcor::SharedPtr<GraphicsState> GraphicsState::create() { return std::make_shared<GraphicsState>(); }
 
 void GraphicsState::setBlendState(const Falcor::SharedPtr<BlendState>& pState) { m_pBlendState = pState; }
-void GraphicsState::setDepthStencilState(const Falcor::SharedPtr<DepthStencilState>& pState) { m_pDepthStencilState = pState; }
-void GraphicsState::setRasterizerState(const Falcor::SharedPtr<RasterizerState>& pState) { m_pRasterizerState = pState; }
+void GraphicsState::setDepthStencilState(const Falcor::SharedPtr<DepthStencilState>& pState) {
+    m_pDepthStencilState = pState;
+}
+void GraphicsState::setRasterizerState(const Falcor::SharedPtr<RasterizerState>& pState) {
+    m_pRasterizerState = pState;
+}
 void GraphicsState::setFbo(const Falcor::SharedPtr<Fbo>& pFbo) { m_pFbo = pFbo; }
 void GraphicsState::setVao(const Falcor::SharedPtr<Vao>& pVao) { m_pVao = pVao; }
 void GraphicsState::setProgram(const Falcor::SharedPtr<GraphicsProgram>& pProgram) { m_pProgram = pProgram; }
@@ -1397,58 +1185,50 @@ void GraphicsState::setViewport(uint32_t, const Viewport& vp, bool) { m_Viewport
 Falcor::SharedPtr<ComputeState> ComputeState::create() { return std::make_shared<ComputeState>(); }
 void ComputeState::setProgram(const Falcor::SharedPtr<ComputeProgram>& pProgram) { m_pProgram = pProgram; }
 
-Program::DefineList& Program::DefineList::add(const std::string& name, const std::string& value)
-{
+Program::DefineList& Program::DefineList::add(const std::string& name, const std::string& value) {
     m_Defines.emplace_back(name, value);
     return *this;
 }
 
-Program::DefineList& Program::DefineList::remove(const std::string& name)
-{
+Program::DefineList& Program::DefineList::remove(const std::string& name) {
     m_Defines.erase(
-        std::remove_if(m_Defines.begin(), m_Defines.end(),
-                       [&name](const auto& p) { return p.first == name; }),
+        std::remove_if(m_Defines.begin(), m_Defines.end(), [&name](const auto& p) { return p.first == name; }),
         m_Defines.end());
     return *this;
 }
 
-
-ComputeProgram::SharedPtr ComputeProgram::createFromFile(const std::filesystem::path& path, const std::string& csEntry, const Program::DefineList& defines)
-{
+ComputeProgram::SharedPtr ComputeProgram::createFromFile(const std::filesystem::path& path, const std::string& csEntry,
+                                                         const Program::DefineList& defines) {
     return Gpu::CompileComputeProgram(path, csEntry, defines);
 }
 
-GraphicsProgram::Desc& GraphicsProgram::Desc::vsEntry(const std::string& entry)
-{
+GraphicsProgram::Desc& GraphicsProgram::Desc::vsEntry(const std::string& entry) {
     m_VsEntry = entry;
     return *this;
 }
 
-GraphicsProgram::Desc& GraphicsProgram::Desc::psEntry(const std::string& entry)
-{
+GraphicsProgram::Desc& GraphicsProgram::Desc::psEntry(const std::string& entry) {
     m_PsEntry = entry;
     return *this;
 }
 
-GraphicsProgram::Desc& GraphicsProgram::Desc::gsEntry(const std::string& entry)
-{
+GraphicsProgram::Desc& GraphicsProgram::Desc::gsEntry(const std::string& entry) {
     m_GsEntry = entry;
     return *this;
 }
 
-GraphicsProgram::Desc& GraphicsProgram::Desc::setShaderModel(const std::string& model)
-{
+GraphicsProgram::Desc& GraphicsProgram::Desc::setShaderModel(const std::string& model) {
     m_ShaderModel = model;
     return *this;
 }
 
-GraphicsProgram::SharedPtr GraphicsProgram::create(const Desc& desc, const Program::DefineList& defines)
-{
+GraphicsProgram::SharedPtr GraphicsProgram::create(const Desc& desc, const Program::DefineList& defines) {
     return Gpu::CompileGraphicsProgram(desc, defines);
 }
 
-GraphicsProgram::SharedPtr GraphicsProgram::createFromFile(const std::filesystem::path& path, const std::string& vsEntry, const std::string& psEntry, const Program::DefineList& defines)
-{
+GraphicsProgram::SharedPtr GraphicsProgram::createFromFile(const std::filesystem::path& path,
+                                                           const std::string& vsEntry, const std::string& psEntry,
+                                                           const Program::DefineList& defines) {
     Desc desc(path);
     desc.vsEntry(vsEntry).psEntry(psEntry);
     return create(desc, defines);
@@ -1456,8 +1236,8 @@ GraphicsProgram::SharedPtr GraphicsProgram::createFromFile(const std::filesystem
 
 VertexLayout::SharedPtr VertexLayout::create() { return std::make_shared<VertexLayout>(); }
 
-Vao::SharedPtr Vao::create(Topology topology, const VertexLayout::SharedPtr&, const BufferVec& vbos, const Buffer::SharedPtr& ib, Falcor::ResourceFormat indexFormat)
-{
+Vao::SharedPtr Vao::create(Topology topology, const VertexLayout::SharedPtr&, const BufferVec& vbos,
+                           const Buffer::SharedPtr& ib, Falcor::ResourceFormat indexFormat) {
     auto vao = std::make_shared<Vao>();
     Gpu::RegisterVao(vao.get(), topology, vbos, ib, indexFormat);
     return vao;
@@ -1465,67 +1245,65 @@ Vao::SharedPtr Vao::create(Topology topology, const VertexLayout::SharedPtr&, co
 
 RenderContext::RenderContext(Diligent::IDeviceContext* pContext) : m_pContext(pContext) {}
 
-void RenderContext::dispatch(ComputeState* pState, ComputeVars* pVars, const uint3& groups)
-{
+void RenderContext::dispatch(ComputeState* pState, ComputeVars* pVars, const uint3& groups) {
     Gpu::Dispatch(m_pContext, pState, pVars, groups);
 }
 
-void RenderContext::dispatchIndirect(ComputeState* pState, ComputeVars* pVars, const Buffer* pArgBuffer, uint64_t argBufferOffset)
-{
+void RenderContext::dispatchIndirect(ComputeState* pState, ComputeVars* pVars, const Buffer* pArgBuffer,
+                                     uint64_t argBufferOffset) {
     Gpu::DispatchIndirect(m_pContext, pState, pVars, pArgBuffer, argBufferOffset);
 }
 
-void RenderContext::drawIndirect(GraphicsState* pState, GraphicsVars* pVars, uint32_t numArgs, Buffer* pArgBuffer, uint64_t argBufferOffset, Buffer* pCountBuffer, uint64_t countBufferOffset)
-{
+void RenderContext::drawIndirect(GraphicsState* pState, GraphicsVars* pVars, uint32_t numArgs, Buffer* pArgBuffer,
+                                 uint64_t argBufferOffset, Buffer* pCountBuffer, uint64_t countBufferOffset) {
     Gpu::DrawIndirect(m_pContext, pState, pVars, numArgs, pArgBuffer, argBufferOffset, pCountBuffer, countBufferOffset);
 }
 
-void RenderContext::drawIndexedInstanced(GraphicsState* pState, GraphicsVars* pVars, uint32_t indexCount, uint32_t instanceCount, uint32_t startIndex, int32_t baseVertex, uint32_t startInstance)
-{
-    Gpu::DrawIndexedInstanced(m_pContext, pState, pVars, indexCount, instanceCount, startIndex, baseVertex, startInstance);
+void RenderContext::drawIndexedInstanced(GraphicsState* pState, GraphicsVars* pVars, uint32_t indexCount,
+                                         uint32_t instanceCount, uint32_t startIndex, int32_t baseVertex,
+                                         uint32_t startInstance) {
+    Gpu::DrawIndexedInstanced(m_pContext, pState, pVars, indexCount, instanceCount, startIndex, baseVertex,
+                              startInstance);
 }
 
-void RenderContext::drawInstanced(GraphicsState* pState, GraphicsVars* pVars, uint32_t vertexCount, uint32_t instanceCount, uint32_t startVertex, uint32_t startInstance)
-{
+void RenderContext::drawInstanced(GraphicsState* pState, GraphicsVars* pVars, uint32_t vertexCount,
+                                  uint32_t instanceCount, uint32_t startVertex, uint32_t startInstance) {
     Gpu::DrawInstanced(m_pContext, pState, pVars, vertexCount, instanceCount, startVertex, startInstance);
 }
 
-void RenderContext::clearFbo(Fbo* pFbo, const float4& color, float depth, uint8_t stencil, FboAttachmentType attachments)
-{
+void RenderContext::clearFbo(Fbo* pFbo, const float4& color, float depth, uint8_t stencil,
+                             FboAttachmentType attachments) {
     Gpu::ClearFbo(m_pContext, pFbo, color, depth, stencil, attachments);
 }
 
-void RenderContext::clearTexture(Texture* tx)
-{
+void RenderContext::clearTexture(Texture* tx) {
     (void)tx;
     EFX_LOG_STUB("RenderContext::clearTexture stub");
 }
 
-void RenderContext::blit(Diligent::ITextureView* pSrc, Diligent::ITextureView* pDst, const glm::vec4& srcRect, const glm::vec4& dstRect, Sampler::Filter filter, BlendState::SharedPtr blend)
-{
+void RenderContext::blit(Diligent::ITextureView* pSrc, Diligent::ITextureView* pDst, const glm::vec4& srcRect,
+                         const glm::vec4& dstRect, Sampler::Filter filter, BlendState::SharedPtr blend) {
     Gpu::Blit(m_pContext, pSrc, pDst, srcRect, dstRect, filter, blend);
 }
 
-void RenderContext::updateTextureData(Texture* pTexture, const void* pData)
-{
+void RenderContext::updateTextureData(Texture* pTexture, const void* pData) {
     // Full-texture upload of mip 0 / slice 0 (Falcor semantics of this call).
     // This was a stub until 2026-07-03 - anything that re-uploads CPU data into
     // an existing texture (terrainShadow solve results! terrainGenerator map
     // tiles, vegetationBuilder RGB_MAP) silently kept the CREATE-time contents.
-    if (!m_pContext || !pTexture || !pData || !pTexture->GetDiligentTexture())
-    {
+    if (!m_pContext || !pTexture || !pData || !pTexture->GetDiligentTexture()) {
         EFX_LOG_STUB("RenderContext::updateTextureData: missing context/texture/data");
         return;
     }
 
-    Diligent::ITexture*          pTex = pTexture->GetDiligentTexture();
+    Diligent::ITexture* pTex = pTexture->GetDiligentTexture();
     const Diligent::TextureDesc& desc = pTex->GetDesc();
 
-    const auto&    attribs   = Diligent::GetTextureFormatAttribs(desc.Format);
+    const auto& attribs = Diligent::GetTextureFormatAttribs(desc.Format);
     const uint32_t pixelSize = uint32_t(attribs.ComponentSize) * uint32_t(attribs.NumComponents);
-    if (attribs.ComponentType == Diligent::COMPONENT_TYPE_COMPRESSED || pixelSize == 0)
-    {
-        spdlog::error("RenderContext::updateTextureData: unsupported format {} on '{}'", int(desc.Format), pTexture->getName());
+    if (attribs.ComponentType == Diligent::COMPONENT_TYPE_COMPRESSED || pixelSize == 0) {
+        spdlog::error("RenderContext::updateTextureData: unsupported format {} on '{}'", int(desc.Format),
+                      pTexture->getName());
         return;
     }
     // NOTE: pData must be laid out in the ACTUAL texture format. If the format
@@ -1539,19 +1317,16 @@ void RenderContext::updateTextureData(Texture* pTexture, const void* pData)
     box.MaxZ = (desc.Type == Diligent::RESOURCE_DIM_TEX_3D) ? desc.Depth : 1;
 
     Diligent::TextureSubResData subres;
-    subres.pData       = pData;
-    subres.Stride      = uint64_t(desc.Width) * pixelSize;
+    subres.pData = pData;
+    subres.Stride = uint64_t(desc.Width) * pixelSize;
     subres.DepthStride = subres.Stride * desc.Height;
 
-    m_pContext->UpdateTexture(pTex, 0, 0, box, subres,
-                              Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+    m_pContext->UpdateTexture(pTex, 0, 0, box, subres, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
                               Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 }
 
-void RenderContext::clearRtv(Diligent::ITextureView* pRtv, const float4& color)
-{
-    if (m_pContext && pRtv)
-    {
+void RenderContext::clearRtv(Diligent::ITextureView* pRtv, const float4& color) {
+    if (m_pContext && pRtv) {
         const float clearColor[4] = {color.x, color.y, color.z, color.w};
         m_pContext->ClearRenderTarget(pRtv, clearColor, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     }
@@ -1562,14 +1337,11 @@ void RenderContext::clearRtv(Diligent::ITextureView* pRtv, const float4& color)
 // a readback (USAGE_STAGING / CPU_ACCESS_READ) buffer lives on a READBACK heap
 // that must stay in COPY_DEST forever, so using it as a copy source transitions
 // it illegally and removes the device (subsequent map() then returns nullptr).
-void RenderContext::copyResource(Texture* pDst, Texture* pSrc)
-{
-    if (!m_pContext || !pSrc || !pDst)
-        return;
+void RenderContext::copyResource(Texture* pDst, Texture* pSrc) {
+    if (!m_pContext || !pSrc || !pDst) return;
     auto* pSrcTex = pSrc->GetDiligentTexture();
     auto* pDstTex = pDst->GetDiligentTexture();
-    if (pSrcTex && pDstTex)
-    {
+    if (pSrcTex && pDstTex) {
         // The source is often an FBO texture that is still bound as render
         // target from the pass that produced it (e.g. tile-split FBOs).
         // CopyTexture's state transition would then implicitly unbind it and
@@ -1583,50 +1355,35 @@ void RenderContext::copyResource(Texture* pDst, Texture* pSrc)
     }
 }
 
-void RenderContext::copyResource(Buffer* pDst, Buffer* pSrc)
-{
-    if (!m_pContext || !pSrc || !pDst)
-        return;
+void RenderContext::copyResource(Buffer* pDst, Buffer* pSrc) {
+    if (!m_pContext || !pSrc || !pDst) return;
     auto* pSrcBuf = pSrc->GetDiligentBuffer();
     auto* pDstBuf = pDst->GetDiligentBuffer();
-    if (!pSrcBuf || !pDstBuf)
-        return;
+    if (!pSrcBuf || !pDstBuf) return;
 
     const auto srcSize = pSrcBuf->GetDesc().Size;
     const auto dstSize = pDstBuf->GetDesc().Size;
-    if (srcSize == 0 || dstSize == 0)
-        return;
+    if (srcSize == 0 || dstSize == 0) return;
 
     const auto copySize = std::min(srcSize, dstSize);
-    m_pContext->CopyBuffer(pSrcBuf,
-                           0,
-                           Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
-                           pDstBuf,
-                           0,
-                           copySize,
+    m_pContext->CopyBuffer(pSrcBuf, 0, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION, pDstBuf, 0, copySize,
                            Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 }
 
-void RenderContext::flush()
-{
-    if (m_pContext)
-        m_pContext->Flush();
+void RenderContext::flush() {
+    if (m_pContext) m_pContext->Flush();
 }
 
-void RenderContext::flush(bool waitForGpu)
-{
+void RenderContext::flush(bool waitForGpu) {
     flush();
     (void)waitForGpu;
 }
 
-void RenderContext::copySubresource(Texture* pDst, uint32_t dstSubresource, Texture* pSrc, uint32_t srcSubresource)
-{
-    if (!m_pContext || !pDst || !pSrc)
-        return;
+void RenderContext::copySubresource(Texture* pDst, uint32_t dstSubresource, Texture* pSrc, uint32_t srcSubresource) {
+    if (!m_pContext || !pDst || !pSrc) return;
     auto* pDstTex = pDst->GetDiligentTexture();
     auto* pSrcTex = pSrc->GetDiligentTexture();
-    if (!pDstTex || !pSrcTex)
-        return;
+    if (!pDstTex || !pSrcTex) return;
 
     // See copyResource(): the source (e.g. split.tileFbo color texture) may
     // still be bound as render target; unbind it explicitly so the copy's
@@ -1634,66 +1391,56 @@ void RenderContext::copySubresource(Texture* pDst, uint32_t dstSubresource, Text
     m_pContext->SetRenderTargets(0, nullptr, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_NONE);
 
     Diligent::CopyTextureAttribs copyAttribs;
-    copyAttribs.pSrcTexture             = pSrcTex;
-    copyAttribs.pDstTexture             = pDstTex;
-    copyAttribs.SrcMipLevel             = 0;
-    copyAttribs.DstMipLevel             = 0;
-    copyAttribs.SrcSlice                = srcSubresource;
-    copyAttribs.DstSlice                = dstSubresource;
+    copyAttribs.pSrcTexture = pSrcTex;
+    copyAttribs.pDstTexture = pDstTex;
+    copyAttribs.SrcMipLevel = 0;
+    copyAttribs.DstMipLevel = 0;
+    copyAttribs.SrcSlice = srcSubresource;
+    copyAttribs.DstSlice = dstSubresource;
     copyAttribs.SrcTextureTransitionMode = Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
     copyAttribs.DstTextureTransitionMode = Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
     m_pContext->CopyTexture(copyAttribs);
 }
 
-void RenderContext::resourceBarrier(Texture* pTexture, Resource::State state)
-{
+void RenderContext::resourceBarrier(Texture* pTexture, Resource::State state) {
     (void)pTexture;
     (void)state;
 }
 
-std::vector<uint8_t> RenderContext::readTextureSubresource(Texture* pTexture, uint32_t subresource)
-{
+std::vector<uint8_t> RenderContext::readTextureSubresource(Texture* pTexture, uint32_t subresource) {
     (void)subresource;
-    if (!m_pContext || !pTexture)
-        return {};
+    if (!m_pContext || !pTexture) return {};
     auto* pTex = pTexture->GetDiligentTexture();
-    if (!pTex)
-        return {};
+    if (!pTex) return {};
 
     Diligent::TextureDesc desc = pTex->GetDesc();
     const size_t bytesPerPixel = 4;
-    const size_t size         = static_cast<size_t>(desc.Width) * desc.Height * bytesPerPixel;
+    const size_t size = static_cast<size_t>(desc.Width) * desc.Height * bytesPerPixel;
     std::vector<uint8_t> data(size, 0);
     // TODO: wire Diligent texture staging readback.
     (void)data;
     return data;
 }
 
-Profiler& Profiler::instance()
-{
+Profiler& Profiler::instance() {
     static Profiler s_Instance;
     return s_Instance;
 }
 
-std::shared_ptr<Profiler::Event> Profiler::getEvent(const char* path)
-{
+std::shared_ptr<Profiler::Event> Profiler::getEvent(const char* path) {
     static std::unordered_map<std::string, std::shared_ptr<Event>> s_Events;
     const std::string key = path ? path : "";
     auto it = s_Events.find(key);
-    if (it != s_Events.end())
-        return it->second;
+    if (it != s_Events.end()) return it->second;
     auto event = std::make_shared<Event>();
     s_Events.emplace(key, event);
     return event;
 }
 
-void TextRenderer::setColor(const float3& color)
-{
-    (void)color;
-}
+void TextRenderer::setColor(const float3& color) { (void)color; }
 
-void TextRenderer::render(RenderContext* pContext, const std::string& text, const Fbo::SharedPtr& pFbo, const float2& pos)
-{
+void TextRenderer::render(RenderContext* pContext, const std::string& text, const Fbo::SharedPtr& pFbo,
+                          const float2& pos) {
     (void)pContext;
     (void)text;
     (void)pFbo;
@@ -1703,10 +1450,8 @@ void TextRenderer::render(RenderContext* pContext, const std::string& text, cons
 
 // --- Gui ---------------------------------------------------------------------
 
-namespace
-{
-ImGuiWindowFlags MapGuiWindowFlags(Gui::WindowFlags flags)
-{
+namespace {
+ImGuiWindowFlags MapGuiWindowFlags(Gui::WindowFlags flags) {
     ImGuiWindowFlags f = 0;
     if (static_cast<uint32_t>(flags) & static_cast<uint32_t>(Gui::WindowFlags::Empty))
         f |= ImGuiWindowFlags_NoDecoration;
@@ -1714,77 +1459,62 @@ ImGuiWindowFlags MapGuiWindowFlags(Gui::WindowFlags flags)
         f |= ImGuiWindowFlags_NoResize;
     return f;
 }
-} // namespace
+}  // namespace
 
 // size/pos use FirstUseEver (not Always): Falcor windows are user-resizable and
 // movable. Forcing the size every frame crammed e.g. the terrain "##debuginfo"
 // panel (3 columns of tile stats) into its 200x200 creation size
 // (AUTHOR_DEBUG_STEPS.md #1). NoDecoration is now only applied for
 // WindowFlags::Empty instead of unconditionally, so windows get a resize grip.
-Gui::Window::Window(Gui*, const char* name, bool show_window, float2 size, float2 pos, WindowFlags flags)
-{
+Gui::Window::Window(Gui*, const char* name, bool show_window, float2 size, float2 pos, WindowFlags flags) {
     m_Open = show_window;
     ImGui::SetNextWindowSize(ImVec2(size.x, size.y), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(pos.x, pos.y), ImGuiCond_FirstUseEver);
     m_Open = ImGui::Begin(name, &m_Open, MapGuiWindowFlags(flags));
 }
 
-Gui::Window::Window(Gui*, const char* name, float2 size, float2 pos, WindowFlags flags)
-{
+Gui::Window::Window(Gui*, const char* name, float2 size, float2 pos, WindowFlags flags) {
     ImGui::SetNextWindowSize(ImVec2(size.x, size.y), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(pos.x, pos.y), ImGuiCond_FirstUseEver);
     m_Open = ImGui::Begin(name, nullptr, MapGuiWindowFlags(flags));
 }
 
-Gui::Window::~Window()
-{
-    release();
-}
+Gui::Window::~Window() { release(); }
 
 // Falcor semantics: release() closes the window early so subsequent ImGui calls
 // target the parent window again. ImGui requires End() for every Begin(),
 // REGARDLESS of Begin()'s return value (the old code skipped End() when Begin
 // returned false -> unbalanced window stack when a window was collapsed).
-void Gui::Window::release()
-{
-    if (!m_Ended)
-    {
+void Gui::Window::release() {
+    if (!m_Ended) {
         ImGui::End();
         m_Ended = true;
     }
 }
 
-void Gui::Window::windowPos(int x, int y)
-{
-    ImGui::SetWindowPos(ImVec2(static_cast<float>(x), static_cast<float>(y)));
-}
+void Gui::Window::windowPos(int x, int y) { ImGui::SetWindowPos(ImVec2(static_cast<float>(x), static_cast<float>(y))); }
 
-void Gui::Window::windowSize(int w, int h)
-{
+void Gui::Window::windowSize(int w, int h) {
     ImGui::SetWindowSize(ImVec2(static_cast<float>(w), static_cast<float>(h)));
 }
 
-void Gui::Window::image(const char* id, const Texture::SharedPtr&, float2 size)
-{
+void Gui::Window::image(const char* id, const Texture::SharedPtr&, float2 size) {
     ImGui::Dummy(ImVec2(size.x, size.y));
     (void)id;
 }
 
-bool Gui::Window::imageButton(const char* id, const Texture::SharedPtr&, float2 size)
-{
+bool Gui::Window::imageButton(const char* id, const Texture::SharedPtr&, float2 size) {
     ImGui::Dummy(ImVec2(size.x, size.y));
     (void)id;
     return false;
 }
 
-ImFont* Gui::getFont(const char* name)
-{
+ImFont* Gui::getFont(const char* name) {
     auto it = m_Fonts.find(name);
     return it != m_Fonts.end() ? it->second : ImGui::GetFont();
 }
 
-void Gui::addFont(const char*, const std::string&, float)
-{
+void Gui::addFont(const char*, const std::string&, float) {
     // TODO: load fonts through ImGuiImplDiligent / SampleBase.
 }
 
@@ -1793,18 +1523,10 @@ EarthworksWrapper::EarthworksWrapper() {
     JLogger::instancePtr()->open("log.cpp");
 }
 
-EarthworksWrapper::~EarthworksWrapper() {
-    JLogger::instancePtr()->close();
-}
+EarthworksWrapper::~EarthworksWrapper() { JLogger::instancePtr()->close(); }
 
-void IRenderer::initGui(Gui* _gui)
-{
-    (void)_gui;
-}
+void IRenderer::initGui(Gui* _gui) { (void)_gui; }
 
-void IRenderer::onGuiMenubar(Gui* _gui)
-{
-    (void)_gui;
-}
+void IRenderer::onGuiMenubar(Gui* _gui) { (void)_gui; }
 
-} // namespace Falcor
+}  // namespace Falcor
