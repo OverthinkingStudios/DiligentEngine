@@ -1,196 +1,73 @@
 # EarthworksFX Migration Guide
 
-This folder contains a **1:1 port** of the original Falcor *Earthworks 4* terrain system from `docs/source_extract_2/`. The C++ algorithms, data layouts, and HLSL shaders are copied verbatim. Only the rendering host API is adapted through `interface/FalcorCompat.hpp` and `src/compat/FalcorCompat.cpp`.
+**1:1 port** of the original Falcor *Earthworks 4* terrain system. C++ algorithms, data layouts, and HLSL shaders are copied verbatim; only the rendering host API is adapted through the compat shim (`interface/Falcor.h`, `src/compat/Falcor.cpp`, `src/compat/FalcorGpu.cpp`).
 
-## Non‑negotiable: preserve the algorithms
+Companion docs: `PROJECT_OVERVIEW.md` (renderer internals, camera/matrix conventions, debug tooling), `BRINGUP_NOTES.md` (living findings log F1–F26+, session history — the authoritative "what broke and why").
 
-The terrain system is **highly sophisticated** — quadtree LOD splitting, GPU tile bake chains, ecotope/vegetation instancing, road networks, terrafector stamping, optional CFD, and more. These paths are hyper‑tuned and interdependent.
+## Non-negotiable: preserve the algorithms
 
-**Do not rewrite, simplify, or “clean up” algorithm code in `src/core/` or `hlsl/`** to fix port issues. Fixes belong in the compat layer (`FalcorCompat`), CMake wiring, or guarded `#if 0` deferrals for subsystems we are not enabling yet. When in doubt, stub the Falcor/Diligent bridge — not the math.
+The terrain system is highly sophisticated — quadtree LOD splitting, GPU tile bake chains, ecotope/vegetation instancing, road networks, terrafector stamping, optional CFD. These paths are hyper-tuned and interdependent.
+
+**Do not rewrite, simplify, or "clean up" algorithm code in `src/core/` or `hlsl/`** to fix port issues. Fixes belong in the compat layer, CMake wiring, or guarded `#if 0` deferrals. When in doubt, stub the Falcor/Diligent bridge — not the math. The bring-up history validates this rule: every major bug so far (F7 dead cbuffer blobs, F10 missing UAV flags, F16 dynamic-IB device loss, F20 handedness, F26 stubbed texture upload) was in the shim, not the core.
 
 ## What was ported
 
-| Area | Source | Destination |
-|------|--------|-------------|
-| Application shell | `Earthworks_4.cpp/.h` | `src/core/` + `EarthworksFXSample.*` |
-| Terrain core | `terrain.cpp/.h` + tile compute/render shaders | `src/core/` + `hlsl/terrain/` |
-| Atmosphere / fog | `atmosphere.cpp/.h` + `hlsl/atmosphere/` | `src/core/` + `hlsl/atmosphere/` |
-| Roads / terrafector / ecotope / vegetation | all `.cpp/.h` from extract | `src/core/` |
-| Shaders (53 files) | `docs/source_extract_2/hlsl/` | `EarthworksFX/hlsl/` |
-| Diligent entry | — | `src/EarthworksFXSample.cpp` |
-| CFD / glider (deferred) | `terrain.cpp` sections, `glider_runtime.cpp` | present but disabled for now |
+| Area | Destination |
+|------|-------------|
+| Application shell (`Earthworks_4.*`) | `src/core/` |
+| Terrain core (`terrain.*` + tile compute/render shaders) | `src/core/` + `hlsl/terrain/` |
+| Atmosphere / volumetric fog | `src/core/` + `hlsl/atmosphere/` |
+| Roads / terrafector / ecotope / vegetation | `src/core/` |
+| Shaders (53 files, Slang→HLSL by hand) | `hlsl/` |
+| Buildings | re-enabled via new delegate `src/core/buildings.*` (edits to core kept to one-line calls) |
+| CFD / glider | present in source, deferred behind `#if 0` (`EARTHWORKSFX_DEFERRED_CFD` / `_GLIDER`) |
 
-## Architecture
+## Current state (2026-07-03)
 
-```
-EarthworksFXSample (Diligent SampleBase)
-    └── Earthworks_4 (original app logic, unchanged)
-            └── terrainManager (quadtree tile pipeline, roads, veg, …)
-                    └── computeShader / pixelShader (Falcor-style wrappers)
-                            └── FalcorCompat → Diligent IRenderDevice / IDeviceContext
-```
+**The port runs and renders.** Vulkan and D3D12 both pass the automated smoke testflight (12 cameras, exit 0). Working end-to-end:
 
-Dependency chain for CPU libraries (no duplicated vendoring in EarthworksFX):
+- Terrain: quadtree split/merge, JP2 streaming (OpenJPH), full GPU tile-bake chain, indirect draws, real relief and per-tile albedo/normal/PBR/height texture arrays
+- Atmosphere + volumetric fog, skydome, tonemapper, CPU-solved terrain shadows
+- Camera is genuinely right-handed (matrices bit-compatible with original Falcor/glm through `toGLM`); world compass NORTH = -Z verified against real maps
+- Terrafector tile bakes, texture loading from file (DDS/KTX/JPG/PNG via Diligent TextureLoader), ImGui editor GUI + `ew::gDebug` debug/metrics panel, testflight automation
+- Buildings pass re-enabled (delegate class; verified in later runs)
 
-```
-EarthworksFX → Earthworks::Earthworks → OTSCommon (cereal, glm, …)
-                                        → openjph / assimp (when enabled)
-```
+⚠ Testflight reference images from before 2026-07-03 are mirrored (pre-F20) and/or have placeholder shadows (pre-F26) — re-baseline before comparing.
 
-## Current state (2025)
+## Remaining compat gaps (checked against source, 2026-07-05)
 
-| Item | Status |
-|------|--------|
-| Core sources copied 1:1 | Done |
-| HLSL copied to `hlsl/` | Done |
-| `FalcorCompat.hpp` API surface | Substantially expanded; many methods still stub GPU work |
-| **cereal** | Real library via OTSCommon (`cereal::cereal`); local `interface/cereal/` stub **removed** |
-| **OpenJPH / Assimp** | Via Earthworks (FetchContent or `extern/`); local `interface/stubs/` **removed**; CMake fails fast if disabled |
-| **`terrain.cpp` compile** | Isolated compile clean (compat fixes only; no algorithm edits) |
-| **`FalcorCompat.cpp` compile** | Clean (`CopyTextureAttribs` uses Diligent field names) |
-| **CFD (`_cfdClipmap`)** | Algorithm preserved in source; active use wrapped in `#if 0 // EARTHWORKSFX_DEFERRED_CFD` |
-| **Glider / `_gliderRuntime`** | Not being ported; paraglider paths wrapped in `#if 0 // EARTHWORKSFX_DEFERRED_GLIDER`; `glider_runtime.cpp` still defer |
-| **Full link / run** | Not yet — GPU draw/dispatch path is still stubbed |
+Still stubbed or incomplete in `src/compat/Falcor.cpp`:
 
-### Compat layer already wired (non‑exhaustive)
+| API | State | Blocks |
+|-----|-------|--------|
+| `RenderContext::readTextureSubresource` | returns zeros | bake height export, tile readback |
+| `Texture::generateMips` | stub | ecotope low-res sampling (`rootElevation` wants 8 mips) |
+| `Texture::captureToFile` | stub | screenshots from core code |
+| `RenderContext::resourceBarrier` | no-op | explicit state transitions (implicit transitions cover today's paths) |
+| `openFileDialog` / `saveFileDialog` | return false | editor load/save flows (roads, terrains) |
+| `TextRenderer::render`, `RenderContext::clearTexture` | stubs | minor |
+| `GraphicsState::setViewport` | ignored (full-FBO viewport always) | sub-viewport rendering |
 
-- `DepthStencilState`, expanded `Input`/`KeyboardEvent`/`MouseEvent`, `Camera` helpers
-- `ComputeVars::setBlob`, `Texture::create2D(ResourceFormat)`, `copyResource`, `copySubresource`, `clearRtv`
-- `DeviceInterface::getRenderContext`, `RenderContext::readTextureSubresource` (returns empty — needs Phase 4)
-- CPU mirrors for `_buildingVertex` / `_gliderwingVertex` in `terrain.h` (HLSL layout match)
+Known open issues (details in BRINGUP_NOTES):
 
-## GPU wiring roadmap (FalcorCompat only)
+- **F24** — `settings.dirResource` resolves empty at runtime → `<dirResource>` assets (skies, color cubes, road materials) missing; data workaround known, code fix pending
+- Sprite `gTex`/`gNorm`/`gTranclucent` load 2D files but shaders declare `Texture2DArray` → dimension guard substitutes dummies
+- Fog RW-target format mismatches beyond the fixed ones (F17 tail); vkCmdCopyImage layout warnings on two tile-copy images (benign on NVIDIA)
+- Dummy-texture dimension is guessed from resource *name* (`GuessResourceDimFromName`) — fragile, exact-match only
 
-All items below are implemented **only** in `src/compat/FalcorCompat.cpp` (guardrail: Diligent links live in `EarthworksFX/CMakeLists.txt` and nowhere else).
+Deferred subsystems: CFD (`_cfdClipmap` port needed), glider mode (out of scope unless revived).
 
-### Phase 1 — Device bootstrap
-
-1. **`SetFalcorDevice`** — call from `EarthworksFXSample` before terrain `onLoad`; verify `g_pDevice` / `g_pContext` are non-null.
-2. **`Texture::create2D/3D` with initial data** — pass `pData` through `CreateTexture` or staging upload (currently ignored).
-3. **`Buffer::setBlob` / CPU shadow** — complete `uploadShadowRange()` → `UpdateBuffer` on real `IBuffer`.
-
-### Phase 2 — Shader pipeline (required before anything draws)
-
-4. **`ComputeProgram::createFromFile`** — compile HLSL via Diligent shader stream factory + `CreateShader`; build compute PSO.
-5. **`GraphicsProgram::create`** — VS/PS/GS + graphics PSO; map `Program::DefineList` to shader macros; use `RemapShaderPath()` (strips `Samples/Earthworks_4/`).
-6. **`ProgramReflection` / binding** — parse reflection or maintain binding maps so `ShaderVar`, `ComputeVars::setTexture/setBuffer/setBlob`, and `getParameterBlock()` reach SRB slots.
-7. **`ComputeVars::setBlob`** — bind constant-buffer blobs through SRB after reflection exists.
-
-### Phase 3 — Draw / dispatch path
-
-8. **`RenderContext::dispatch` / `dispatchIndirect`** — set compute PSO, bind SRB, call `IDeviceContext::Dispatch*`.
-9. **`RenderContext::drawInstanced` / `drawIndexedInstanced` / `drawIndirect`** — set graphics PSO, VB/IB, RTV/DSV from `GraphicsState::Fbo`, bind SRB, `Draw*`.
-10. **`RenderContext::clearFbo`** — clear all FBO color attachments + depth (`clearRtv` works for individual RTVs today).
-11. **`GraphicsState`** — apply rasterizer / blend / depth-stencil descs when committing PSO.
-
-**Checkpoint after Phase 3:** terrain tiles, compute split/clip passes, and vegetation indirect draws should execute on GPU.
-
-### Phase 4 — Resource ops (bake, picking, deferred CFD)
-
-12. **`RenderContext::updateTextureData`** — ✅ DONE 2026-07-03 (F26): full mip-0 upload via `IDeviceContext::UpdateTexture`, 2D + 3D. Was the reason solved terrain shadows never reached the GPU. RGB32→RGBA32-promoted textures would need a repack (no caller today).
-13. **`RenderContext::copySubresource`** — structurally done; verify array-texture tile picking (`height_Array` slice copies) at runtime.
-14. **`RenderContext::resourceBarrier`** — map `Resource::State` → `TransitionResourceStates` before readback/copies.
-15. **`RenderContext::readTextureSubresource`** — staging readback (bake height export, tile readback); currently returns zeros.
-16. **`Texture::captureToFile`** — readback + PNG/write helper.
-17. **`Texture::generateMips`** — `GenerateMips` or compute mip pass.
-
-### Phase 5 — Polish
-
-18. **`RenderContext::blit`** — overlay thumbnails (`Earthworks_4::onRenderOverlay`).
-19. **`Sampler::create`** — real `ISampler` objects bound through SRB.
-20. **FBO mip UAVs** — `getColorTexture(n)->getUAV(mip)` for tile elevation mip chain.
-21. **`TextRenderer::render`**, **`Gui::addFont`** — SampleBase / ImGui font path.
-22. **`openFileDialog` / `saveFileDialog`** — native or SampleBase wrappers for editor UX.
-
-## Runtime configuration (current defaults)
+## Runtime configuration
 
 | Setting | Value |
 |---------|-------|
-| **API** | Vulkan only (`GetDesiredApplicationSettings` → `RENDER_DEVICE_TYPE_VULKAN`) |
-| **Working directory** | Repo root (CMake `VS_DEBUGGER_WORKING_DIRECTORY`) |
-| **Test terrain** | `terrains/switserland_Steg/` (relative to pwd) |
-| **Elevation manifest** | `terrains/switserland_Steg/elevations.txt` |
-| **Tile data** | `terrains/switserland_Steg/elevations/*` (`.bil` LOD0 root, `.jp2` tiles) |
-| **Optional JSON** | `terrains/switserland_Steg/terrainSettings.json` — skipped if missing; folder bootstrap applies |
+| API | Vulkan primary; D3D12 works (`-m d3d12`), used for testflights/comparison |
+| Working directory | gameroot (`ACSMP_GAMEROOT`, e.g. `C:\dev\git\os\gameroot_dev`); `hlsl/` is deployed there at build time (`DeployHLSL.cmake`) — source-tree shader edits need a build/copy to take effect |
+| Test terrain | `terrains/switserland_Steg/` (`elevations.txt` manifest, `.bil` LOD0 root + `.jp2` tiles; optional `terrainSettings.json`) |
+| State files | `lastFile.xml` (last terrain; see F24 for the dirResource trap), `camera.bin` (raw CameraData — delete if the camera starts somewhere insane), `earthworks4_presets.xml` |
 
-There is **no** single `.terrain` file. Optional `terrainSettings.json`; if absent, `terrainManager::onLoad` bootstraps `_terrainSettings` when `elevations.txt` exists.
+Threading active today: JP2 hash/cache paging thread, `_shadowEdges::solveThread` (4096² CPU shadow solve). CFD thread deferred with the CFD port.
 
-Copy `EarthworksFX/assets/lastFile.xml` to pwd (or rely on struct defaults). Place elevation data under `terrains/switserland_Steg/` per `assets/terrains/switserland_Steg/README.md`.
+## Validation
 
-## Assets & data paths
-
-```
-terrains/switserland_Steg/
-  elevations.txt
-  elevations/          # .bil + .jp2
-  terrainSettings.json # optional
-terrains/_resources/   # shared vegetation / color cube assets
-```
-
-- **OpenJPH** — required via Earthworks (`EARTHWORKSFX_ENABLE_OPENJPH=ON`); JP2 decode in `hashAndCache*`.
-- **Assimp** — required via Earthworks (`EARTHWORKSFX_ENABLE_ASSIMP=ON`); mesh export paths in roads/terrafector.
-- **cereal** — binary/JSON/XML saves for presets, roads, ecotopes (real cereal from OTSCommon).
-
-## Threading & background work (enable after GPU baseline)
-
-Original uses detached threads; verify lifetime before enabling:
-
-| Thread | Entry | Purpose | Notes |
-|--------|-------|---------|-------|
-| CFD | `terrainManager::cfdThread` | Fluid clipmap simulation | Source commented; re-enable with `_cfdClipmap` port |
-| Shadow | `_shadowEdges::solveThread` | 4096² sun shadow solve on CPU | |
-| Hash/cache | `hashAndCache_Thread` | JP2 elevation paging | OpenJPH path active |
-
-**TODO:** graceful shutdown (original calls `gpFramework->getWindow()->shutdown()` from terrain UI).
-
-## Input & UI
-
-- Map Diligent `InputController` → `KeyboardEvent` / `MouseEvent` (compat enums expanded; wiring incomplete).
-- Large ImGui surface in `terrain.cpp` — no algorithm changes needed.
-- CFD / glider GUI blocks remain in source but are inside deferred `#if 0` regions.
-
-## Sample integration
-
-1. Register EarthworksFX in top-level `DiligentSamples/CMakeLists.txt` (if not already)
-2. Tutorial / sample executable wiring
-3. Copy runtime assets next to executable (`hlsl/`, terrain data, fonts)
-4. Set VS debugger working directory to gameroot
-
-## Subsystems — enable order (after terrain tiles render)
-
-Enable incrementally; each subsystem’s **algorithm code stays untouched**:
-
-- [ ] Core terrain clipmap + atmosphere bind
-- [ ] Roads (`roadNetwork`, bezier/physics/AI)
-- [ ] Terrafector editor
-- [ ] Vegetation ribbons / billboards
-- [ ] Tonemapper + 33³ color cube LUT
-- [ ] CFD smoke / streamlines (un-`#if 0` + port `_cfdClipmap` from Falcor)
-- [ ] Glider mode — **out of scope** unless explicitly revived
-- [ ] Overlay material thumbnails
-
-## Shader inventory (unchanged)
-
-All shaders copied to `hlsl/`. Key terrain pipeline:
-
-**Compute (tile bake):** `compute_tileClear`, `compute_tileBicubic`, `compute_tileVertices`, `compute_tileNormals`, `compute_tileDelaunay`, `compute_tileJumpFlood`, `compute_tileSplitMerge`, `compute_tileBuildLookup`, `compute_tileGenerate`, `compute_tileEcotopes`, `compute_bc6h`
-
-**Render:** `render_Tiles.hlsl` (main terrain draw), `render_tile_sprite`, vegetation/road/spline variants
-
-**Atmosphere:** `compute_sunlightInAtmosphere`, `compute_volumeFogAtmosphericScatter`, smoke/dust variants
-
-## Validation order
-
-1. Phase 1–3 complete: single compute dispatch and one `drawInstanced` hit the GPU without stub logs
-2. Single tile compute chain produces vertices/normals (capture GPU buffers)
-3. `render_Tiles.hlsl` draws one clipmap level
-4. Atmosphere inscatter textures bound to terrain shader
-5. Shadow thread uploads `terrainShadow` RG32F
-6. Full `terrainManager::update` + `onFrameRender` loop
-7. Tonemapper to swap chain
-
-## Files to defer during first bring-up
-
-- `glider_runtime.cpp` (7.4k lines) — not planned for initial port
-- CFD active paths in `terrain.cpp` — preserved under `#if 0`, revive with `_cfdClipmap` port
-- Backup shader copies (`render_vegetation_ribbons - Copy.hlsl`, etc.)
+`--testflight smoke` (see `TESTFLIGHTS.md`) is the regression gate: 12 cameras across the terrain, per-camera stability check and reference-image comparison, on both APIs. Re-baseline references after any change that legitimately alters output.
