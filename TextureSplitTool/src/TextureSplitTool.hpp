@@ -51,8 +51,8 @@ ImFont* font_H3;
 
 
 
-
-
+// gor printf arguments
+#include <stdarg.h> 
 class gui {
     public:
     gui() { ; }
@@ -70,20 +70,28 @@ class gui {
     ImGui::PopID();    \
     return changed;
 
-    void tooltip(const char* _tooltip) {
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip(_tooltip);
+    void tooltip(const char* _tooltip, ...) {
+        va_list args;
+        va_start(args, _tooltip);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(_tooltip, args);
     }
 
-    void tooltip(ImFont* _font, const char* _tooltip) {
+    void tooltip(ImFont* _font, const char* _tooltip, ...) {
+        va_list args;
+        va_start(args, _tooltip);
         ImGui::PushFont(_font);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip(_tooltip);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(_tooltip, args);
         ImGui::PopFont();
     }
 
-    void text(ImFont* _font, const char* _txt) {
+    void text(ImFont* _font, const char* _fmt, ...) {
+        va_list args;
+        va_start(args, _fmt);
         ImGui::PushFont(_font);
-        ImGui::TextUnformatted(_txt);
+        //ImGui::TextUnformatted(_txt, args);
+        ImGui::TextV(_fmt, args);
         ImGui::PopFont();
+        va_end(args);
     }
 
     void text_centered(ImFont* _font, const char* _txt) {
@@ -177,24 +185,20 @@ CEREAL_CLASS_VERSION(earthworksPaths, 100);
 
 
 
-
-class fbo {
+//??? can we just place FBO inside namepsce Diligent later for cleanyp
+//try to make all my own copde calls into higher levelfunction sin IOTS common and never this lowe level
+class render_target {
     public:
-    void setup(int2 _size, int _numTargets, Diligent::RefCntAutoPtr<Diligent::IRenderDevice> _pDevice);
-    void bind(Diligent::RefCntAutoPtr<Diligent::IDeviceContext> _pImmediateContext);
-    void unbind();
+    void setup(int2 _size, int _numTargets, Diligent::RefCntAutoPtr<Diligent::IRenderDevice> _pDevice,
+               Diligent::RefCntAutoPtr<Diligent::IDeviceContext> _pImmediateContext);
+    int2 getSize() { return size; }
 
-    private:
     int2 size = int2(0, 0);
     int numtargets;
 
-    Diligent::RefCntAutoPtr<Diligent::ITexture> pRenderTarget[8];
+    Diligent::RefCntAutoPtr<Diligent::ITexture> pTexture[8];
     Diligent::ITextureView* pRTV[8];
     Diligent::ITextureView* pSRV[8];
-
-    public:
-    Diligent::RefCntAutoPtr<Diligent::IPipelineState> PSO{};
-    Diligent::RefCntAutoPtr<Diligent::IShaderResourceBinding> SRB{};
 };
 
 
@@ -269,6 +273,7 @@ class textureTool {
     void save();
     void save_as();
     void reloadTextures();
+    void onRender();
 
     void init();
     void renderToTexture(int _slot);
@@ -279,6 +284,7 @@ class textureTool {
     std::array<std::string, 5> texturePaths;
 
     Diligent::RefCntAutoPtr<Diligent::ITexture> tex_input[5];
+    Diligent::ITextureView* pSRV[5];
 
     // Fbo::SharedPtr fbo;
 
@@ -290,6 +296,7 @@ class textureTool {
 
     // material properties
     bool changed = false;
+    bool changed_for_save = false;
     texTypes mainViewType = tex_albedo;
     float zoom = 1.f;
     float2 pan = {0, 0};
@@ -298,14 +305,17 @@ class textureTool {
     bool clickMode = false;  // do we click or dag for entry
     int clickCount = 0;
 
-    fbo FBO;
+    render_target FBO;
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> m_pDevice;  // needed toload texturesa dlgnt_device
     Diligent::RefCntAutoPtr<Diligent::IDeviceContext> m_pImmediateContext;
     Diligent::RefCntAutoPtr<Diligent::ISwapChain> m_pSwapChain;
 
     Diligent::RefCntAutoPtr<Diligent::IShader> VS;
+    Diligent::RefCntAutoPtr<Diligent::IShader> GS;
     Diligent::RefCntAutoPtr<Diligent::IShader> PS;
+    //Diligent::RefCntAutoPtr<Diligent::IPipelineState> PSO;
     Diligent::RefCntAutoPtr<Diligent::IPipelineState> PSO;
+    Diligent::RefCntAutoPtr<Diligent::IShaderResourceBinding> SRB;
 
     template <class Archive>
     void serialize(Archive& archive, unsigned int const _version) {

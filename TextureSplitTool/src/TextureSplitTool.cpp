@@ -1,9 +1,9 @@
 #include "TextureSplitTool.hpp"
 
 #include "imgui.h"
-//#include "GraphicsAccessories.hpp"
+// #include "GraphicsAccessories.hpp"
 #include "FileWrapper.hpp"
-
+#pragma optimize("", off)
 gui _Gui;
 
 earthworksPaths ew_paths;
@@ -53,75 +53,64 @@ void earthworksPaths::clean(std::string& _path) {
 
 void earthworksPaths::to_back_slash(std::string& _path) { replaceAll(_path, "/", "\\"); }
 
-void fbo::setup(int2 _size, int _numTargets, Diligent::RefCntAutoPtr<Diligent::IRenderDevice> _pDevice) {
+void render_target::setup(int2 _size, int _numTargets, Diligent::RefCntAutoPtr<Diligent::IRenderDevice> _pDevice,
+                          Diligent::RefCntAutoPtr<Diligent::IDeviceContext> _pImmediateContext) {
     if (_size != size) {
+
+        // first clear
+        // probably not needed itshould not be bound
+        //m_pContext->SetRenderTargets(1, &pNullRTV, pNullDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION); /
+        _pImmediateContext->Flush();
+        _pDevice->IdleGPU();
+        /*
+        for (int i = 0; i < 8; i++) {
+            if (pTexture[i]) {
+                pRTV[i]->Release();
+                pRTV[i] = nullptr;
+
+                pSRV[i]->Release();
+                pSRV[i] = nullptr;
+
+                pTexture[i]->Release();
+                pTexture[i] = nullptr;
+            }
+        }*/
+
         size = _size;
         numtargets = _numTargets;
 
         Diligent::TextureDesc RTDesc;
+        RTDesc.Name = "render target";
         RTDesc.Type = Diligent::RESOURCE_DIM_TEX_2D;
         RTDesc.Width = size.x;   // Desired width
         RTDesc.Height = size.y;  // Desired height
+        RTDesc.MipLevels = 1;
         RTDesc.Format = Diligent::TEX_FORMAT_RGBA8_UNORM;
         RTDesc.BindFlags = Diligent::BIND_RENDER_TARGET | Diligent::BIND_SHADER_RESOURCE;
-
-        Diligent::GraphicsPipelineStateCreateInfo PSOCreateInfo;
-
-        PSOCreateInfo.GraphicsPipeline.NumRenderTargets = _numTargets;
-        PSOCreateInfo.GraphicsPipeline.DSVFormat = Diligent::TEX_FORMAT_UNKNOWN;  // Or your depth format
+        RTDesc.ClearValue.Format = Diligent::TEX_FORMAT_RGBA8_UNORM;
+        RTDesc.ClearValue.Color[0] = 0.350f;
+        RTDesc.ClearValue.Color[1] = 0.350f;
+        RTDesc.ClearValue.Color[2] = 0.350f;
+        RTDesc.ClearValue.Color[3] = 1.f;
 
         for (int i = 0; i < _numTargets; i++) {
-            _pDevice->CreateTexture(RTDesc, nullptr, &pRenderTarget[i]);
-            pRTV[i] = pRenderTarget[i]->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
-            pSRV[i] = pRenderTarget[i]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
-            PSOCreateInfo.GraphicsPipeline.RTVFormats[i] = RTDesc.Format;
+            _pDevice->CreateTexture(RTDesc, nullptr, &pTexture[i]);
+            pRTV[i] = pTexture[i]->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
+            pSRV[i] = pTexture[i]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
         }
-
-        _pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &PSO);
     }
 }
 
-void fbo::bind(Diligent::RefCntAutoPtr<Diligent::IDeviceContext> _pImmediateContext) {
-    float ClearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
-    for (int i = 0; i < numtargets; i++) {
-        _pImmediateContext->ClearRenderTarget(pRTV[i], ClearColor, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    }
-    // m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.0f, 0); // Clear depth if used
-
-    _pImmediateContext->SetRenderTargets(numtargets, &pRTV[0], nullptr,
-                                         Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-    Diligent::Viewport VP{0, 0, static_cast<float>(size.x), static_cast<float>(size.y), 0.f, 1.f};
-    _pImmediateContext->SetViewports(1, &VP, 0, 0);
-
-    // 4. Issue draw calls
-    _pImmediateContext->SetPipelineState(PSO);
-    _pImmediateContext->CommitShaderResources(SRB, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-    Diligent::DrawAttribs DrawAttrs;
-    DrawAttrs.NumVertices = 4;
-    DrawAttrs.Flags = Diligent::DRAW_FLAG_VERIFY_ALL;  // Verify all states
-    _pImmediateContext->Draw(DrawAttrs);
-
-    _pImmediateContext->SetRenderTargets(0, nullptr, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_NONE);
-}
-
-void fbo::unbind() {}
 
 // RefCntAutoPtr<IShader> VS = CreateShader(m_pDevice, nullptr, "FullScreenTriangleVS.fx", "FullScreenTriangleVS",
 // SHADER_TYPE_VERTEX); ShaderCI.CompileFlags |= SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
 void textureTool::init() {
     Diligent::RefCntAutoPtr<Diligent::IShaderSourceInputStreamFactory> pShaderSourceFactory;
     m_pDevice->GetEngineFactory()->CreateDefaultShaderSourceStreamFactory("shaders", &pShaderSourceFactory);
-    // Create a compound shader source factory that will be able to load DiligentFX shaders.
-    // auto pCompoundShaderSourceFactory =
-    // CreateCompoundShaderSourceFactory({&Diligent::DiligentFXShaderSourceStreamFactory::GetInstance(),
-    // pShaderSourceFactory});
 
     Diligent::ShaderCreateInfo ShaderCI;
-
     ShaderCI.EntryPoint = "vsMain";
-    ShaderCI.FilePath = "extractTextures.hlsl";
+    ShaderCI.FilePath = "textureTool/hlsl/extractTextures.hlsl";
     ShaderCI.Macros = {};
     ShaderCI.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
     ShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
@@ -129,12 +118,49 @@ void textureTool::init() {
     ShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
     ShaderCI.Desc.UseCombinedTextureSamplers = true;
     ShaderCI.CompileFlags = Diligent::SHADER_COMPILE_FLAG_NONE;
-    //    VS = Diligent::RenderDeviceWithCache<false>{m_pDevice, nullptr}.CreateShader(ShaderCI);
+    ShaderCI.ShaderCompiler = Diligent::SHADER_COMPILER_DXC;
+    m_pDevice->CreateShader(ShaderCI, &VS);
+
+    ShaderCI.EntryPoint = "gsMain";
+    ShaderCI.Desc.Name = "gsMain";
+    ShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_GEOMETRY;
+    m_pDevice->CreateShader(ShaderCI, &GS);
 
     ShaderCI.EntryPoint = "psMain";
     ShaderCI.Desc.Name = "psMain";
     ShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
-    //    PS = Diligent::RenderDeviceWithCache<false>{m_pDevice, nullptr}.CreateShader(ShaderCI);
+    m_pDevice->CreateShader(ShaderCI, &PS);
+
+    Diligent::GraphicsPipelineStateCreateInfo PSOCreateInfo;
+
+    PSOCreateInfo.GraphicsPipeline.NumRenderTargets = 5;
+    PSOCreateInfo.GraphicsPipeline.DSVFormat = Diligent::TEX_FORMAT_UNKNOWN;  // Or your depth format
+    PSOCreateInfo.GraphicsPipeline.PrimitiveTopology = Diligent::PRIMITIVE_TOPOLOGY_POINT_LIST;
+    PSOCreateInfo.GraphicsPipeline.RasterizerDesc.CullMode = Diligent::CULL_MODE_NONE;
+    PSOCreateInfo.GraphicsPipeline.RasterizerDesc.DepthClipEnable = false;
+
+    for (int i = 0; i < 5; i++) {
+        PSOCreateInfo.GraphicsPipeline.RTVFormats[i] = Diligent::TEX_FORMAT_RGBA8_UNORM;
+    }
+
+    PSOCreateInfo.pVS = VS;
+    PSOCreateInfo.pGS = GS;
+    PSOCreateInfo.pPS = PS;
+
+    Diligent::ShaderResourceVariableDesc Vars[] = {
+        {Diligent::SHADER_TYPE_PIXEL, "galbedo", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
+        {Diligent::SHADER_TYPE_PIXEL, "galpha", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
+        {Diligent::SHADER_TYPE_PIXEL, "gnormal", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
+        {Diligent::SHADER_TYPE_PIXEL, "gtranslucency", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
+        {Diligent::SHADER_TYPE_PIXEL, "gdisplacement", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}};
+
+    PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
+    PSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars;
+
+    if (PSO) PSO->Release();
+    if (SRB) PSO->Release();
+    m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &PSO);
+    PSO->CreateShaderResourceBinding(&SRB, false);
 }
 
 void textureTool::exportNow() {
@@ -147,60 +173,42 @@ void textureTool::renderToTexture(int _slot) {
     int w = (int)(textures[_slot].texWidth * 4 * pow(2, textures[_slot].numMips));
     int h = (int)(textures[_slot].texHeight * 4 * pow(2, textures[_slot].numMips));
 
-    Diligent::TextureDesc RTDesc;
-    RTDesc.Type = Diligent::RESOURCE_DIM_TEX_2D;
-    RTDesc.Width = w;   // Desired width
-    RTDesc.Height = h;  // Desired height
-    RTDesc.Format = Diligent::TEX_FORMAT_RGBA8_UNORM;
-    RTDesc.BindFlags = Diligent::BIND_RENDER_TARGET | Diligent::BIND_SHADER_RESOURCE;
-
-    Diligent::RefCntAutoPtr<Diligent::ITexture> pRenderTarget[5];
-    Diligent::ITextureView* pRTV[5];
-    Diligent::ITextureView* pSRV[5];
-    Diligent::GraphicsPipelineStateCreateInfo PSOCreateInfo;
-    // ... (Set up shaders, input layout, primitive topology) ...
-
-    PSOCreateInfo.GraphicsPipeline.NumRenderTargets = 5;
-    PSOCreateInfo.GraphicsPipeline.DSVFormat = Diligent::TEX_FORMAT_UNKNOWN;  // Or your depth format
-    //   float ClearColor[]                              = {0.0f, 0.0f, 0.0f, 1.0f};
-
+    
+    FBO.setup(int2(w, h), 5, m_pDevice, m_pImmediateContext);
+    
+    float ClearColor[] = {0.0f, 1.0f, 0.0f, 1.0f};
     for (int i = 0; i < 5; i++) {
-        m_pDevice->CreateTexture(RTDesc, nullptr, &pRenderTarget[i]);
-        pRTV[i] = pRenderTarget[i]->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
-        pSRV[i] = pRenderTarget[i]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);  // not needed here
-        PSOCreateInfo.GraphicsPipeline.RTVFormats[i] = RTDesc.Format;
-        // m_pImmediateContext->ClearRenderTarget(pRTV[i], ClearColor);
-        // Diligent::ShaderResourceVariableX{FBO.SRB, Diligent::SHADER_TYPE_PIXEL,
-        // "g_TextureEnvironmentMap"}.Set(pSRV[i]);
+        m_pImmediateContext->ClearRenderTarget(FBO.pRTV[i], ClearColor,
+         Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     }
-    // m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.0f, 0); // Clear depth if used
-    // mDevice->CreateGraphicsPipelineState(PSOCreateInfo, &mAsteroidsPSO);
-    // m_pDevice.CreateGraphicsPipelineState(PSOCreateInfo, &PSO);
 
-    /*
-    // 2. Bind the offscreen render target (and depth buffer if available)
-    m_pImmediateContext->SetRenderTargets(5, &pRTV, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-    // 3. Update the viewport to match the texture dimensions
-    Diligent::Viewport VP{0, 0, static_cast<float>(RTDesc.Width), static_cast<float>(RTDesc.Height), 0.f, 1.f};
-    m_pImmediateContext->SetViewports(1, &VP, 0, 0);
-
-    // 4. Issue draw calls
+    
+    m_pImmediateContext->SetRenderTargets(5, FBO.pRTV, nullptr,
+                                         Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    
     m_pImmediateContext->SetPipelineState(PSO);
-    //m_pImmediateContext->CommitShaderResources(Diligent::m_pOffscreenSRB,
-    Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    //m_pImmediateContext->Draw(DrawAttrs);
-    */
+
+    if (pSRV[0]) SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "galbedo")->Set(pSRV[0]);
+    if (pSRV[1]) SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "galpha")->Set(pSRV[1]);
+    if (pSRV[2]) SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "gnormal")->Set(pSRV[2]);
+    if (pSRV[3]) SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "gtranslucency")->Set(pSRV[3]);
+    if (pSRV[4]) SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "gdisplacement")->Set(pSRV[4]);
+    m_pImmediateContext->CommitShaderResources(SRB, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    Diligent::DrawAttribs DrawAttrs(1, Diligent::DRAW_FLAG_VERIFY_ALL);
+    m_pImmediateContext->Draw(DrawAttrs);
+    
 }
 
 void textureTool::reloadTextures() {
     for (int i = 0; i < 5; i++) {
         tex_input[i].Release();
         std::string fullPath = ew_paths.get_full(texturePaths[i]);
-        if (std::filesystem::exists(fullPath)) {
+        if (texturePaths[i].length() > 0 && std::filesystem::exists(fullPath)) {
             Diligent::TextureLoadInfo LoadInfo{texNames[i]};
             LoadInfo.Format = Diligent::TEX_FORMAT_RGBA8_UNORM;
             CreateTextureFromFile(fullPath.c_str(), LoadInfo, m_pDevice, &tex_input[i]);
+            pSRV[i] = tex_input[i]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
         }
     }
 }
@@ -232,7 +240,6 @@ void textureTool::save() {
 }
 
 void textureTool::save_as() {
-    
     Diligent::FileDialogAttribs OpenDialogAttribs{Diligent::FILE_DIALOG_TYPE_SAVE};
     OpenDialogAttribs.Title = "texture tool";
     OpenDialogAttribs.Filter = "texture tool files\0*.textureTool\0";
@@ -246,11 +253,9 @@ void textureTool::save_as() {
             save();
         }
     }
-    
 }
 
 void textureTool::load_texture(uint _slot) {
-    
     Diligent::FileDialogAttribs OpenDialogAttribs{Diligent::FILE_DIALOG_TYPE_OPEN};
     OpenDialogAttribs.Title = "Select GLTF file";
     OpenDialogAttribs.Filter = "image files\0*.png;*.tif;*.jpg\0";
@@ -278,11 +283,11 @@ void textureTool::load_texture(uint _slot) {
             };
             tex_input[_slot].Release();
             CreateTextureFromFile(ew_paths.get_full(FileName).c_str(), LoadInfo, m_pDevice, &tex_input[_slot]);
+            pSRV[_slot] = tex_input[_slot]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
         } else {
             // warn no tin poath
         }
     }
-    
 }
 
 void textureTool::clear_texture(uint _slot) {
@@ -336,12 +341,10 @@ void textureTool::renderGui_TEX() {
         static ImVec2 circlePos = {100, 100};
 
         if (tex_input[mainViewType]) {
-            Diligent::ITextureView* pSRV =
-                tex_input[mainViewType]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
             ImVec2 size = {(float)tex_input[mainViewType]->GetDesc().GetWidth(),
                            (float)tex_input[mainViewType]->GetDesc().GetHeight()};
-            ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(pSRV), size * zoom, ImVec2(0, 0), ImVec2(1, 1),
-                               ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+            ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(pSRV[mainViewType]), size * zoom, ImVec2(0, 0),
+                               ImVec2(1, 1), ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
 
             // mouse to imagePixelCoordinates
             ImVec2 mouseRelative = ImGui::GetMousePos() - ImGui::GetWindowPos();
@@ -395,6 +398,7 @@ void textureTool::renderGui_TEX() {
                                 }
                                 clickCount++;
                                 clickMode = false;
+                                changed = true;
                                 break;
                         }
                     }
@@ -421,12 +425,15 @@ void textureTool::renderGui_TEX() {
                             switch (dragSelector) {
                                 case 1:
                                     T.start = imagePixelPos;
+                                    // changed = true;
                                     break;
                                 case 2:
                                     T.stop = imagePixelPos;
+                                    // changed = true;
                                     break;
                                 case 3:
                                     T.bezier = imagePixelPos;
+                                    // changed = true;
                                     break;
                             }
                         } else {
@@ -440,7 +447,7 @@ void textureTool::renderGui_TEX() {
 
             if (ImGui::BeginPopupContextItem("main_texture_context")) {
                 if (ImGui::MenuItem("new")) {
-                    currentTexture = textures.size();
+                    currentTexture = (int)textures.size();
                     textures.emplace_back();
                     clickMode = true;
                     clickCount = 0;
@@ -510,8 +517,7 @@ void textureTool::renderGui_B() {
         ImGui::SameLine(0 + i * 150.f, 0);
 
         if (tex_input[i]) {
-            Diligent::ITextureView* pSRV = tex_input[i]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
-            ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(pSRV), ImVec2(128, 128), ImVec2(0, 0), ImVec2(1, 1),
+            ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(pSRV[i]), ImVec2(128, 128), ImVec2(0, 0), ImVec2(1, 1),
                                ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
         } else {
             ImGui::Button(texNames[i], ImVec2(128, 128));
@@ -537,28 +543,90 @@ void textureTool::renderGui_B() {
 
 void textureTool::renderGui_C() {
     _Gui.text(font_H1, "normal map");
-    changed |= _Gui.checkbox("flip red", &flipRed);
-    changed |= _Gui.checkbox("flip green", &flipGreen);
-    changed |= _Gui.dragFloat("normal scale", &normalScale, 0.01f, 0.1f, 3.f);
+    // changed |= _Gui.checkbox("flip red", &flipRed);
+    // changed |= _Gui.checkbox("flip green", &flipGreen);
+    // changed |= _Gui.dragFloat("normal scale", &normalScale, 0.01f, 0.1f, 3.f);
     ImGui::Separator();
+
+    // ImGui::BeginChildFrame(1002, ImVec2(40 * 8, 40 * 8), 0);
+    {
+        float font_height = ImGui::GetFontSize();
+        if (currentTexture >= 0 && currentTexture < textures.size()) {
+            ImGui::BeginTable("GridSelectableTable", 8, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Borders,
+                              ImVec2(font_height * 8, font_height * 8));
+            {
+                // for (int col = 1; col <= 8; col++) {
+                //    ImGui::TableSetupColumn("Header", ImGuiTableColumnFlags_WidthFixed, 40);
+                //}
+
+                for (int row = 1; row <= 8; row++) {
+                    ImGui::TableNextRow(ImGuiTableRowFlags_None);
+
+                    for (int col = 1; col <= 8; col++) {
+                        ImGui::TableNextColumn();
+                        ImGui::SetNextItemWidth(-FLT_MIN);
+
+                        bool is_highlighted =
+                            (col <= textures[currentTexture].texWidth && row <= textures[currentTexture].texHeight);
+
+                        ImGui::PushStyleColor(ImGuiCol_Header,
+                                              is_highlighted ? IM_COL32(0, 119, 182, 200) : IM_COL32(0, 0, 0, 0));
+
+                        ImGui::PushID(199990 + row * 345 + col);
+                        ImGui::Selectable("##cell", is_highlighted, ImGuiSelectableFlags_None);
+                        ImGui::PopID();
+                        ImGui::PopStyleColor();
+
+                        // Check if this specific cell is active/hovered to set the drag endpoint
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                            textures[currentTexture].texWidth = col;
+                            textures[currentTexture].texHeight = row;
+                        }
+                    }
+                }
+            }
+            ImGui::EndTable();
+
+            ImGui::NewLine();
+            ImGui::SameLine(font_height * 10, 0);
+            ImGui::DragInt("width (blocks)", &textures[currentTexture].texWidth, 0.02f, 1, 16);
+            ImGui::NewLine();
+            ImGui::SameLine(font_height * 10, 0);
+            ImGui::DragInt("height (blocks)", &textures[currentTexture].texHeight, 0.02f, 1, 16);
+            ImGui::NewLine();
+            ImGui::SameLine(font_height * 10, 0);
+            ImGui::DragInt("mips", &textures[currentTexture].numMips, 0.02f, 1, 8);
+
+            ImGui::NewLine();
+            ImGui::SameLine(font_height * 10, 0);
+            int scale = 4 * (int)pow(2, textures[currentTexture].numMips);
+            int W = (int)textures[currentTexture].texWidth * scale;
+            int H = (int)textures[currentTexture].texHeight * scale;
+            _Gui.text(font_H2, "(%d, %d)", W, H);
+        }
+    }
+    // ImGui::EndChildFrame();
 
     ImVec2 space = ImGui::GetContentRegionAvail();
 
     ImGuiStyle& style = ImGui::GetStyle();
     style.Colors[ImGuiCol_FrameBg] = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
-    ImGui::BeginChildFrame(1001, ImVec2(space.x, ImGui::GetFontSize() * 6), 0);
+    // ImGui::BeginChildFrame(1001, ImVec2(space.x, ImGui::GetFontSize() * 16), 0);
     {
         if (currentTexture >= 0 && currentTexture < textures.size()) {
+            ImGui::SetNextItemWidth(8 * 20);
+
             //??? Do vidually instead with a table up to maybe 8x8? Just click in a celland all left top will light
-            ImGui::DragInt("width (blocks)", &textures[currentTexture].texWidth, 0.02f, 1, 16);
-            ImGui::DragInt("height (blocks)", &textures[currentTexture].texHeight, 0.02f, 1, 16);
-            ImGui::DragInt("mips", &textures[currentTexture].numMips, 0.02f, 1, 8);
-            ImGui::Text("(%d, %d)",
-                        (int)(textures[currentTexture].texWidth * 4 * pow(2, textures[currentTexture].numMips)),
-                        (int)(textures[currentTexture].texHeight * 4 * pow(2, textures[currentTexture].numMips)));
+            
         }
     }
-    ImGui::EndChildFrame();
+    // ImGui::EndChildFrame();
+
+    ImGui::Separator();
+
+    // FIXME outputZoom
+    ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(FBO.pSRV[0]), ImVec2(FBO.getSize().x * 2.f, FBO.getSize().y * 2.f),
+                       ImVec2(0, 0), ImVec2(1, 1), ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
 
     ImGui::Separator();
 }
@@ -651,7 +719,7 @@ path.stem().string());
 */
 void textureTool::renderGui_right() {
     ImGuiStyle& style = ImGui::GetStyle();
-    style.Colors[ImGuiCol_FrameBg] = changed ? ImVec4(0.3f, 0.2f, 0.0f, 1.0f) : ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
+    style.Colors[ImGuiCol_FrameBg] = changed_for_save ? ImVec4(0.3f, 0.2f, 0.0f, 1.0f) : ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
     ImGui::BeginChildFrame(200, ImVec2(0, 0), 0);
     {
         ImGui::NewLine();
@@ -673,6 +741,13 @@ void textureTool::renderGui_right() {
         ImGui::PopFont();
     }
     ImGui::EndChildFrame();
+}
+
+void textureTool::onRender() {
+    if (changed && currentTexture >= 0) {
+        renderToTexture(currentTexture);
+        changed = false;
+    }
 }
 
 void textureTool::renderGui() {
@@ -710,6 +785,8 @@ void textureTool::renderGui() {
     }
     ImGui::PopFont();
     // DockSpaceOverViewport
+
+    changed_for_save |= changed;
 }
 
 TextureSplitTool::TextureSplitTool()
@@ -735,11 +812,28 @@ void TextureSplitTool::OnGraphicsReady() {
     font_H1 = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 30.f);
     font_H2 = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 40.f);
     font_H3 = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 50.f);
+
+    texture_tool.m_pDevice = m_pDevice;
+    texture_tool.m_pImmediateContext = m_pImmediateContext;
+    texture_tool.m_pSwapChain = m_pSwapChain;
+    texture_tool.init();
 }
 
-void TextureSplitTool::OnRender() {}
+void TextureSplitTool::OnRender() {
+    
+}
 
-void TextureSplitTool::OnUpdate(double current_time, double elapsed_time, bool do_update_ui) {}
+void TextureSplitTool::OnUpdate(double current_time, double elapsed_time, bool do_update_ui) {
+    //???EarthworksFXApplicationBase::Update(current_time, elapsed_time, do_update_ui);
+
+    texture_tool.onRender();
+
+    Diligent::ITextureView* pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
+    const float Zero[] = {0.0f, 0.0f, 0.0f, 1.0f};  // Clear the default render target
+    m_pImmediateContext->SetRenderTargets(1, &pRTV, m_pSwapChain->GetDepthBufferDSV(),
+                                          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    m_pImmediateContext->ClearRenderTarget(pRTV, Zero, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+}
 
 void TextureSplitTool::OnWindowResized(Diligent::Uint32 width, Diligent::Uint32 height) {}
 
