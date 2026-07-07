@@ -125,6 +125,14 @@ class gui {
         END;
     }
 
+    bool dragInt(const char* _name, int* _data, float _speed, int _min, int _max, const char* _tooltip = "",
+                   const char* _fmt = "%d") {
+        ImGui::PushID(_data);
+        BEGIN;
+        if (ImGui::DragInt("##drag", _data, _speed, _min, _max, _fmt)) changed = true;
+        END;
+    }
+
     private:
     inline static float TEXT_WIDTH = 160;
     inline static float ITEM_WIDTH = 80;
@@ -316,6 +324,7 @@ class textureTool {
     //Diligent::RefCntAutoPtr<Diligent::IPipelineState> PSO;
     Diligent::RefCntAutoPtr<Diligent::IPipelineState> PSO;
     Diligent::RefCntAutoPtr<Diligent::IShaderResourceBinding> SRB;
+    Diligent::RefCntAutoPtr<Diligent::IShaderResourceVariable> rsVARS[10];
 
     template <class Archive>
     void serialize(Archive& archive, unsigned int const _version) {

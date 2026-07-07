@@ -57,25 +57,6 @@ void render_target::setup(int2 _size, int _numTargets, Diligent::RefCntAutoPtr<D
                           Diligent::RefCntAutoPtr<Diligent::IDeviceContext> _pImmediateContext) {
     if (_size != size) {
 
-        // first clear
-        // probably not needed itshould not be bound
-        //m_pContext->SetRenderTargets(1, &pNullRTV, pNullDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION); /
-        _pImmediateContext->Flush();
-        _pDevice->IdleGPU();
-        /*
-        for (int i = 0; i < 8; i++) {
-            if (pTexture[i]) {
-                pRTV[i]->Release();
-                pRTV[i] = nullptr;
-
-                pSRV[i]->Release();
-                pSRV[i] = nullptr;
-
-                pTexture[i]->Release();
-                pTexture[i] = nullptr;
-            }
-        }*/
-
         size = _size;
         numtargets = _numTargets;
 
@@ -94,6 +75,7 @@ void render_target::setup(int2 _size, int _numTargets, Diligent::RefCntAutoPtr<D
         RTDesc.ClearValue.Color[3] = 1.f;
 
         for (int i = 0; i < _numTargets; i++) {
+            pTexture[i].Release();
             _pDevice->CreateTexture(RTDesc, nullptr, &pTexture[i]);
             pRTV[i] = pTexture[i]->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
             pSRV[i] = pTexture[i]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
@@ -157,10 +139,16 @@ void textureTool::init() {
     PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
     PSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars;
 
-    if (PSO) PSO->Release();
-    if (SRB) PSO->Release();
+    PSO.Release();
+    SRB.Release();
     m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &PSO);
     PSO->CreateShaderResourceBinding(&SRB, false);
+
+    rsVARS[0] = SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "galbedo");
+    rsVARS[1] = SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "galpha");
+    rsVARS[2] = SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "gnormal");
+    rsVARS[3] = SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "gtranslucency");
+    rsVARS[4] = SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "gdisplacement");
 }
 
 void textureTool::exportNow() {
@@ -182,18 +170,15 @@ void textureTool::renderToTexture(int _slot) {
          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     }
 
-    
-    m_pImmediateContext->SetRenderTargets(5, FBO.pRTV, nullptr,
-                                         Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    
-    m_pImmediateContext->SetPipelineState(PSO);
-
-    if (pSRV[0]) SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "galbedo")->Set(pSRV[0]);
-    if (pSRV[1]) SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "galpha")->Set(pSRV[1]);
-    if (pSRV[2]) SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "gnormal")->Set(pSRV[2]);
-    if (pSRV[3]) SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "gtranslucency")->Set(pSRV[3]);
-    if (pSRV[4]) SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "gdisplacement")->Set(pSRV[4]);
+    for (int i = 0; i < 5; i++) {
+        //if (pSRV[i] && rsVARS[i]) rsVARS[i]->Set(pSRV[i]);
+        if (rsVARS[i]) rsVARS[i]->Set(pSRV[i]);
+    }
     m_pImmediateContext->CommitShaderResources(SRB, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    
+    m_pImmediateContext->SetRenderTargets(5, FBO.pRTV, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    m_pImmediateContext->SetPipelineState(PSO);
 
     Diligent::DrawAttribs DrawAttrs(1, Diligent::DRAW_FLAG_VERIFY_ALL);
     m_pImmediateContext->Draw(DrawAttrs);
@@ -281,7 +266,7 @@ void textureTool::load_texture(uint _slot) {
                     LoadInfo.Format = Diligent::TEX_FORMAT_RGBA8_UNORM;
                     break;
             };
-            tex_input[_slot].Release();
+            tex_input[_slot].Release();            
             CreateTextureFromFile(ew_paths.get_full(FileName).c_str(), LoadInfo, m_pDevice, &tex_input[_slot]);
             pSRV[_slot] = tex_input[_slot]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
         } else {
@@ -543,9 +528,9 @@ void textureTool::renderGui_B() {
 
 void textureTool::renderGui_C() {
     _Gui.text(font_H1, "normal map");
-    // changed |= _Gui.checkbox("flip red", &flipRed);
-    // changed |= _Gui.checkbox("flip green", &flipGreen);
-    // changed |= _Gui.dragFloat("normal scale", &normalScale, 0.01f, 0.1f, 3.f);
+    changed |= _Gui.checkbox("flip red", &flipRed);
+    changed |= _Gui.checkbox("flip green", &flipGreen);
+    changed |= _Gui.dragFloat("normal scale", &normalScale, 0.01f, 0.1f, 3.f);
     ImGui::Separator();
 
     // ImGui::BeginChildFrame(1002, ImVec2(40 * 8, 40 * 8), 0);
@@ -555,10 +540,6 @@ void textureTool::renderGui_C() {
             ImGui::BeginTable("GridSelectableTable", 8, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Borders,
                               ImVec2(font_height * 8, font_height * 8));
             {
-                // for (int col = 1; col <= 8; col++) {
-                //    ImGui::TableSetupColumn("Header", ImGuiTableColumnFlags_WidthFixed, 40);
-                //}
-
                 for (int row = 1; row <= 8; row++) {
                     ImGui::TableNextRow(ImGuiTableRowFlags_None);
 
@@ -581,6 +562,7 @@ void textureTool::renderGui_C() {
                         if (ImGui::IsItemHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                             textures[currentTexture].texWidth = col;
                             textures[currentTexture].texHeight = row;
+                            changed = true;
                         }
                     }
                 }
@@ -588,17 +570,10 @@ void textureTool::renderGui_C() {
             ImGui::EndTable();
 
             ImGui::NewLine();
-            ImGui::SameLine(font_height * 10, 0);
-            ImGui::DragInt("width (blocks)", &textures[currentTexture].texWidth, 0.02f, 1, 16);
-            ImGui::NewLine();
-            ImGui::SameLine(font_height * 10, 0);
-            ImGui::DragInt("height (blocks)", &textures[currentTexture].texHeight, 0.02f, 1, 16);
-            ImGui::NewLine();
-            ImGui::SameLine(font_height * 10, 0);
-            ImGui::DragInt("mips", &textures[currentTexture].numMips, 0.02f, 1, 8);
+            changed |= _Gui.dragInt("width", &textures[currentTexture].texWidth, 0.1f, 1, 16);
+            changed |= _Gui.dragInt("height", &textures[currentTexture].texHeight, 0.1f, 1, 16);
+            changed |= _Gui.dragInt("mips", &textures[currentTexture].numMips, 0.1f, 0, 7);
 
-            ImGui::NewLine();
-            ImGui::SameLine(font_height * 10, 0);
             int scale = 4 * (int)pow(2, textures[currentTexture].numMips);
             int W = (int)textures[currentTexture].texWidth * scale;
             int H = (int)textures[currentTexture].texHeight * scale;
