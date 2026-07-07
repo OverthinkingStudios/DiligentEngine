@@ -990,6 +990,8 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
         veghumanShader.Vars()->setSampler("gSampler", sampler_ClampAnisotropic);
         veghumanShader.Vars()->setSampler("gSmpLinearClamp", sampler_ClampAnisotropic);
 
+        // JOHAN - remove
+        /*
         {
             LOG_BLOCK("thermalsData", 0);
             thermalsData = Buffer::createStructured(sizeof(float4), numThermals * 100); // just a nice amount for now
@@ -999,8 +1001,10 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
             thermalsShader.Vars()->setBuffer("vertexBuffer", thermalsData);        // WHY BOTH
             thermalsShader.Vars()->setSampler("gSampler", sampler_ClampAnisotropic);
         }
+        */
 
-
+        // JOHAN - remove
+        /*
         std::cout << "      cfd\n";
         {
             LOG_BLOCK("cfd", 0);
@@ -1042,7 +1046,7 @@ void terrainManager::onLoad(RenderContext* pRenderContext, FILE* _logfile)
             cfdSliceShader.Vars()->setTexture("gV_1", cfd.sliceVTexture[1]);
             cfdSliceShader.Vars()->setTexture("gData_1", cfd.sliceDataTexture[1]);
         }
-
+        */
 
 
         vegetation.skyTexture = Texture::createFromFile(settings.dirResource + "/skies/alps_bc.dds", false, true);
@@ -2147,8 +2151,8 @@ void terrainManager::onGuiRender_Right(Gui* _gui, int _header, float2 _screenSiz
         case _terrainMode::ecotope:               onGuiRender_Right_Ecotope(_gui, rightPanel);            break;
         case _terrainMode::terrafector:           onGuiRender_Right_Terrafector(_gui, rightPanel);            break;
         case _terrainMode::roads:                 onGuiRender_Right_Roads(_gui, rightPanel);            break;
-        case _terrainMode::glider:                onGuiRender_Right_Glider(_gui, rightPanel);            break;
-        case _terrainMode::terrainBuilder:        newTerrainBuilder.renderGui_rightPanel(_gui);      break;
+        //case _terrainMode::glider:                onGuiRender_Right_Glider(_gui, rightPanel);            break;
+        //case _terrainMode::terrainBuilder:        newTerrainBuilder.renderGui_rightPanel(_gui);      break;
 
         }
         ImGui::PopFont();
@@ -2256,11 +2260,11 @@ void terrainManager::onGuiRender_Main_Roads(Gui* _gui)
     }
 }
 
-
+/*
 void terrainManager::onGuiRender_Main_Glider(Gui* _gui)
 {
 }
-
+*/
 
 
 void terrainManager::onGuiRender_Main(Gui* _gui, int _header, float2 _screenSize)
@@ -2271,7 +2275,7 @@ void terrainManager::onGuiRender_Main(Gui* _gui, int _header, float2 _screenSize
     case _terrainMode::ecotope:             onGuiRender_Main_Ecotope(_gui);                         break;
     case _terrainMode::terrafector:         onGuiRender_Main_Terrafector(_gui);                     break;
     case _terrainMode::roads:               onGuiRender_Main_Roads(_gui);                           break;
-    case _terrainMode::terrainBuilder:      newTerrainBuilder.onGuiRender(_gui, _header, _screenSize);                    break;
+    //case _terrainMode::terrainBuilder:      newTerrainBuilder.onGuiRender(_gui, _header, _screenSize);                    break;
     }
 }
 
@@ -2373,6 +2377,7 @@ void terrainManager::onGuiRender(Gui* _gui, int _header, float2 _screen, fogAtmo
 
 
 // Fixme input files to a list on disk
+/*
 void terrainManager::writeGdal(jp2Map _map, std::ofstream& _gdal, std::string _input)
 {
     std::string imageName = "img_" + std::to_string(_map.lod) + "_" + std::to_string(_map.y) + "_" + std::to_string(_map.x);
@@ -2394,6 +2399,7 @@ void terrainManager::writeGdalClear(std::ofstream& _gdal)
     _gdal << "del \"../_temp/*.xml\"\n";
     _gdal << "\n\n";
 }
+*/
 
 
 void jp2Map::set(uint _lod, uint _y, uint _x, float _wSize, float _wOffset)
@@ -2602,7 +2608,8 @@ void jp2Dir::loadBinary(std::string _name)
 }
 
 
-
+    // JOHAN - remove all of these as tehy belong to terrainGeneratoRool and have been repalced already
+/*
 void terrainManager::generateGdalPhotos()
 {
     jp2Dir data;
@@ -2669,7 +2676,7 @@ void terrainManager::generateGdalPhotos()
                 writeGdal(_mapElement, of_gdal, inLow);
             }
         }
-        */
+        * /
         writeGdalClear(of_gdal);
 
 
@@ -2754,7 +2761,7 @@ void terrainManager::generateGdalPhotos()
                 }
             }
         }
-        */
+        * /
 
         for (uint ty = 0; ty < 16; ty++)
         {
@@ -2817,7 +2824,7 @@ void terrainManager::generateGdalPhotos()
         if (os.good()) {
             cereal::JSONOutputArchive archive(os);
             jp2.serialize(archive);
-        }*/
+        }* /
     }
 
     return;
@@ -3267,7 +3274,7 @@ void terrainManager::generateGdalPhotos()
 
             ofSummary.close();
         }
-        */
+        * /
 }
 //#pragma optimize("", off)
 void terrainManager::bil_to_jp2Photos()
@@ -3338,7 +3345,7 @@ void terrainManager::bil_to_jp2Photos()
     } while (numread > 0);
 
     fclose(file);
-    */
+    * /
 
 }
 
@@ -3546,7 +3553,7 @@ void terrainManager::bil_to_jp2Photos(std::string file, const uint size, uint _l
 
                     ofs.close();
                 }
-            }*/
+            }* /
         }
 
 
@@ -3557,13 +3564,14 @@ void terrainManager::bil_to_jp2Photos(std::string file, const uint size, uint _l
 
 }
 
+*/
 
 
 
 
 
-
-
+// JOHAN - remove all of these as they belong to terrainGeneratoRool and have been replaced already
+/*
 void terrainManager::bil_to_jp2()
 {
     std::filesystem::path path;
@@ -3683,7 +3691,7 @@ void terrainManager::bil_to_jp2(std::string file, const uint size, FILE* summary
 
     std::fputs(fmt::format("{} {} {} {} {} {} {} {} {} elevation/hgt_{}_{}_{}.jp2\n", _lod, _y, _x, size, _xstart, _ystart, _size, data_min, (data_max - data_min), _lod, _y, _x).c_str(), summary);
 }
-
+*/
 
 void terrainManager::onGuiMenubar(Gui* pGui)
 {
@@ -3708,6 +3716,7 @@ void terrainManager::onGuiMenubar(Gui* pGui)
                 lastfile.terrain = path.string();
             }
         }
+        /*
         if (ImGui::MenuItem("process bil -> jp2"))
         {
             bil_to_jp2();
@@ -3720,6 +3729,7 @@ void terrainManager::onGuiMenubar(Gui* pGui)
         {
             bil_to_jp2Photos();
         }
+        */
         if (ImGui::MenuItem("settings"))
         {
             requestPopupSettings = true;
@@ -3848,7 +3858,8 @@ void terrainManager::markChildrenForRemove(quadtree_tile* _tile)
     }
 }
 
-
+// JOHAN remove
+/*
 uint terrainManager::gisHash(glm::vec3 _position)
 {
     uint z = (uint)floor((_position.z + (settings.size / 2.0f)) * 16.0f / settings.size);
@@ -3881,6 +3892,7 @@ void terrainManager::gisReload(glm::vec3 _position)
         terrainShader.Vars()["PerFrameCB"]["gisBox"] = gis_overlay.box;
     }
 }
+*/
 
 
 void terrainManager::clearCameras()
@@ -4009,7 +4021,7 @@ bool terrainManager::update(RenderContext* _renderContext)
     bake.renderContext = _renderContext;
 
     if ((terrainMode == _terrainMode::vegetation) ||
-        (terrainMode == _terrainMode::glider) ||
+        //(terrainMode == _terrainMode::glider) ||
         (terrainMode == _terrainMode::terrainBuilder) ||
         (terrainMode == _terrainMode::textureTool_mode))
     {
@@ -5042,7 +5054,7 @@ void terrainManager::shadowRender(RenderContext* pRenderContext)
 
 void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::SharedPtr& _fbo, Camera::SharedPtr _camera, GraphicsState::Viewport _viewport)
 {
-    newTerrainBuilder._renderContext = _renderContext;
+    //newTerrainBuilder._renderContext = _renderContext;
 
     rmcv::mat4 view_ribbon, proj_ribbon, viewproj_ribbon;
     rmcv::mat4 view, proj, viewproj;
@@ -5054,7 +5066,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
 
 
 
-        if ((terrainMode == _terrainMode::glider) && requestParaPack == false)
+        // JOHAN if ((terrainMode == _terrainMode::glider) && requestParaPack == false)
             //if ((terrainMode == 4) && AirSim.changed)
         {
             //FALCOR_PROFILE("setBlob");
@@ -5200,6 +5212,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
         return;
     }
 
+    /*
     if (terrainMode == _terrainMode::glider)
     {
 
@@ -5273,6 +5286,7 @@ void terrainManager::onFrameRender(RenderContext* _renderContext, const Fbo::Sha
 
         //return;
     }
+    */
 
     if (ew::gDebug.toggles.plants)
     {
@@ -6680,13 +6694,13 @@ bool terrainManager::onKeyEvent(const KeyboardEvent& keyEvent)
         if (keyPressed && keyEvent.key == Input::Key::Key3) terrainMode = _terrainMode::terrafector;
         if (keyPressed && keyEvent.key == Input::Key::Key4) terrainMode = _terrainMode::roads;
         //if (keyPressed && keyEvent.key == Input::Key::Key5) terrainMode = _terrainMode::glider;
-        if (keyPressed && keyEvent.key == Input::Key::Key6) terrainMode = _terrainMode::terrainBuilder;
-        if (keyPressed && keyEvent.key == Input::Key::Key7) terrainMode = _terrainMode::textureTool_mode;
+        //if (keyPressed && keyEvent.key == Input::Key::Key6) terrainMode = _terrainMode::terrainBuilder;
+        //if (keyPressed && keyEvent.key == Input::Key::Key7) terrainMode = _terrainMode::textureTool_mode;
 
     }
 
 
-
+    /*
     if (terrainMode == _terrainMode::glider)   // Paragliding
     {
         if (keyPressed && keyEvent.key == Input::Key::Escape) {
@@ -6703,7 +6717,7 @@ bool terrainManager::onKeyEvent(const KeyboardEvent& keyEvent)
         }
 
     }
-
+    */
 
 
 
@@ -6719,10 +6733,13 @@ bool terrainManager::onKeyEvent(const KeyboardEvent& keyEvent)
             {
                 debug = !debug;
             }
+            // JOHAN remove
+            /*
             if (keyEvent.key == Input::Key::O)
             {
                 gisReload(split.feedback.tum_Position);
             }
+            */
         }
 
         switch (terrainMode)
@@ -6994,7 +7011,8 @@ bool terrainManager::onKeyEvent(const KeyboardEvent& keyEvent)
 bool terrainManager::onMouseEvent(const MouseEvent& mouseEvent, glm::vec2 _screenSize, glm::vec2 _mouseScale, glm::vec2 _mouseOffset, Camera::SharedPtr _camera)
 {
 
-    if ((terrainMode == _terrainMode::vegetation) || (terrainMode == _terrainMode::glider && !useFreeCamWhileGliding))
+    //if ((terrainMode == _terrainMode::vegetation) || (terrainMode == _terrainMode::glider && !useFreeCamWhileGliding))
+    if (terrainMode == _terrainMode::vegetation)
     {
         glm::vec2 pos = (mouseEvent.pos * _mouseScale) + _mouseOffset;
         glm::vec2 diff;
@@ -7046,10 +7064,11 @@ bool terrainManager::onMouseEvent(const MouseEvent& mouseEvent, glm::vec2 _scree
             _camera->setTarget(glm::vec3(0, 1000.f + mouseVegHeight, 0));
 
         }
+        /*
         if ((terrainMode == _terrainMode::glider))
         {
             //_camera->setTarget(paraRuntime.ROOT);
-        }
+        }*/
         return false;   // needs to ber false for Zoom to work, otherwise we consume the mouse
     }
     else {
@@ -7820,9 +7839,11 @@ void terrainManager::bezierRoadstoLOD(uint _lod)
 //    }
 //}
 
+/*
 void terrainManager::onGuiRender_Right_Glider(Gui* _gui, Gui::Window& _window)
 {
     (void)_gui;
     (void)_window;
     // EARTHWORKSFX_DEFERRED_GLIDER: UI body lives in glider sources not yet linked.
 }
+*/

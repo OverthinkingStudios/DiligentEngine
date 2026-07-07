@@ -25,6 +25,7 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
+/*
 #include "terrainGenerator.h"
 #include "imgui.h"
 #include <imgui_internal.h>
@@ -168,7 +169,7 @@ void terrainGenerator::onGuiRender_Setup(Gui* _gui, Gui::Window& _window)
             if (chooseFolderDialog(folderpath))
             {
                 gis_path = folderpath.string() + "\\";
-            }*/
+            }* /
         }
         TOOLTIP("gis terrain_path");
 
@@ -190,7 +191,7 @@ void terrainGenerator::onGuiRender_Setup(Gui* _gui, Gui::Window& _window)
             if (chooseFolderDialog(folderpath))
             {
                 terrain_path = folderpath.string() + "\\";
-            }*/
+            }* /
         }
         TOOLTIP("terrain terrain_path");
 
@@ -212,7 +213,7 @@ void terrainGenerator::onGuiRender_Setup(Gui* _gui, Gui::Window& _window)
             if (chooseFolderDialog(folderpath))
             {
                 gdal_path = folderpath.string() + "\\";
-            }*/
+            }* /
         }
 
         ImGui::SameLine(0, 30);
@@ -567,22 +568,7 @@ void terrainGenerator::onGuiRender_Map(Gui* _gui, Gui::Window& _window, bool _el
     changed |= clicked;
 }
 
-/*
-try {
-    std::ifstream is("data.json");
-    cereal::JSONInputArchive archive(is);
-    
-    MyClass myObject;
-    archive(myObject); // Deserialization occurs here
-} 
-catch (const cereal::Exception& e) {
-    std::cerr << "Cereal Serialization Error: " << e.what() << '\n';
-    // Handle error (e.g., reset to default values, log telemetry)
-}
-catch (const std::exception& e) {
-    std::cerr << "Standard Exception: " << e.what() << '\n';
-}
-*/
+
 
 void terrainGenerator::onGuiRender_Landcover(Gui* _gui, Gui::Window& _window)
 {
@@ -765,3 +751,4 @@ void terrainGenerator::hgt_tile_gdal(int lod, int y, int x)
 void terrainGenerator::img_to_jpeg2000()
 {
 }
+*/

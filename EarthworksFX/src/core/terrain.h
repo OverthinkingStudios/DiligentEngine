@@ -55,6 +55,7 @@
 
 #include <fstream>
 
+// JOHAN - why does this define exists, what purpose does it serve
 #if defined(EARTHWORKS_WITH_OPENJPH)
 #    if defined(__has_include) && __has_include(<openjph/ojph_codestream.h>)
 #        include <openjph/ojph_arg.h>
@@ -426,21 +427,22 @@ public:
     void onGuiRender_Right_Ecotope(Gui* _gui, Gui::Window& _window);
     void onGuiRender_Right_Terrafector(Gui* _gui, Gui::Window& _window);
     void onGuiRender_Right_Roads(Gui* _gui, Gui::Window& _window);
-    void onGuiRender_Right_Glider(Gui* _gui, Gui::Window& _window); 
+    // JOHAN - remove void onGuiRender_Right_Glider(Gui* _gui, Gui::Window& _window); 
     void onGuiRender_Right(Gui* pGui, int _header, float2 _screen);
 
     void onGuiRender_Main_Ecotope(Gui* _gui);
     void onGuiRender_Main_Terrafector(Gui* _gui);
     void onGuiRender_Main_Roads(Gui* _gui);
-    void onGuiRender_Main_Glider(Gui* _gui);
+    // JOHAN - remove void onGuiRender_Main_Glider(Gui* _gui);
     void onGuiRender_Main(Gui* pGui, int _header, float2 _screen);
 
     void onGuiRender(Gui* pGui, int _header, float2 _screen, fogAtmosphericParams* pAtmosphere);
     void onGuiRender_Debug(Gui* pGui);
-    void onGuiRenderParaglider(Gui::Window& _window, Gui* pGui, float2 _screen, fogAtmosphericParams* pAtmosphere);
-    void onGuiRendercfd(Gui::Window& _window, Gui* pGui, float2 _screen);
-    void onGuiRendercfd_params(Gui::Window& _window, Gui* pGui, float2 _screen);
-    void onGuiRendercfd_skewT(Gui::Window& _window, Gui* pGui, float2 _screen);
+    // JOHAN - remove void onGuiRenderParaglider(Gui::Window& _window, Gui* pGui, float2 _screen, fogAtmosphericParams*
+    // pAtmosphere);
+    // JOHAN - remove void onGuiRendercfd(Gui::Window& _window, Gui* pGui, float2 _screen);
+    // JOHAN - remove void onGuiRendercfd_params(Gui::Window& _window, Gui* pGui, float2 _screen);
+    // JOHAN - remove void onGuiRendercfd_skewT(Gui::Window& _window, Gui* pGui, float2 _screen);
     bool renderGui_Menu = false;
     bool renderGui_Hud = true;
     void onGuiMenubar(Gui* pGui);
@@ -459,6 +461,8 @@ public:
     void loadElevationHash(RenderContext* pRenderContext);
     void loadImageHash(RenderContext* pRenderContext);
 
+    // JOHAN - remove all of these as tehy belong to terrainGeneratoRool and have been repalced already
+    /*
     void bil_to_jp2();
     void bil_to_jp2(std::string file, const uint size, FILE* summary, uint _lod, uint _y, uint _x, float _xstart, float _ystart, float _size);
 
@@ -468,6 +472,7 @@ public:
     void bil_to_jp2Photos();
     void bil_to_jp2Photos(std::string file, const uint size, uint _lod, uint _y, uint _x);
     uint bil_to_jp2PhotosMemory(std::ofstream& _file, std::string filename, const uint size, uint _lod, uint _y, uint _x);
+    */
 
     void clearCameras();
     void setCamera(unsigned int _index, glm::mat4 viewMatrix, glm::mat4 projMatrix, float3 position, bool b_use, float _resolution);
@@ -544,8 +549,9 @@ private:
     void splitChild(quadtree_tile* _pTile, RenderContext* _renderContext);
     void splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _renderContext);
 
-    uint gisHash(glm::vec3 _position);
-    void gisReload(glm::vec3 _position);
+    // JOHAN - remove these two they have been superceded
+    //uint gisHash(glm::vec3 _position);
+    //void gisReload(glm::vec3 _position);
 
     void bake_start(bool _toMAX);
     bool bakeToMax;
@@ -615,23 +621,26 @@ private:
     float ribbonSpacing = 3.0f;             // the size fo the extents
     bool spacingFromExtents = true;
 
-    pixelShader thermalsShader;
-    Buffer::SharedPtr       thermalsData;
-    uint numThermals = 200;
+    // JOHAN remove
+    //pixelShader thermalsShader;
+    //Buffer::SharedPtr       thermalsData;
+    //uint numThermals = 200;
 
-    pixelShader cfdSliceShader;
+    //pixelShader cfdSliceShader;
 
 public:
+    // JOHAN These are the buildings, and shoulkd also moce to its own class and not bve in here, and not like this.
     pixelShader         rappersvilleShader;
     Buffer::SharedPtr   rappersvilleData;
     //Buffer::SharedPtr   drawArgs_rappersville;
     int numrapperstri = 0;
     buildingsRenderer   buildings;     // PORT NOTE: replaces the commented-out rappersville blocks, see buildings.h
 
-    pixelShader         gliderwingShader;
-    uint    wingloadedCnt;
-    Buffer::SharedPtr   gliderwingData[2];
-    RasterizerState::SharedPtr      rasterstateGliderWing;
+    // JOHAN these where already removed in the code
+    //pixelShader         gliderwingShader;
+    //uint    wingloadedCnt;
+    //Buffer::SharedPtr   gliderwingData[2];
+    //RasterizerState::SharedPtr      rasterstateGliderWing;
 
     bool useFreeCamWhileGliding = false;
     bool GliderDebugVisuals = false;
@@ -687,7 +696,7 @@ public:
     float               billboardGpuTime;
 private:
 
-
+    // JOHAN - stamps should really become their own class in their own file
     stampCollection         mRoadStampCollection;   // all of teh terrafector stamps going over roads
     stamp                   mCurrentStamp;
     int                     stampEditPosisiton = 0;
@@ -726,9 +735,10 @@ private:
     bool bMiddelButton = false;
     bool bRightButton = false;
 
+    
     struct {
-        Texture::SharedPtr texture = nullptr;
-        uint hash = 0;
+        //Texture::SharedPtr texture = nullptr;        // JOHAN remove, 
+        //uint hash = 0;
         glm::vec4 box;
         bool show = true;
         float strenght = 0.3f;
@@ -910,10 +920,13 @@ public:
 
     //void cfdStart();
     //void cfdThread();
-    bool requestParaPack = false;
-    float3 paraCamPos;
-    float3 paraEyeLocal;
 
+    // JOHAN - remove bool requestParaPack = false;
+// JOHAN - remove float3 paraCamPos;
+// JOHAN - remove float3 paraEyeLocal;
+
+    // JOHAN - remove, if thei braks teh sky, I want to do the shader chnage there instead, but I doubt it would
+/*
     struct
     {
         //_cfdClipmap clipmap;
@@ -954,8 +967,9 @@ public:
         float sliceTime[6] = { 0, 0, 0, 0, 0, 0 };
         float lodLerp[6] = { 0, 0, 0, 0, 0, 0 };
     } cfd;      // guess this needs to become its own class or move into _cfdClipmap
-
-
+    */
+    // JOHAN - remove its already unused
+    /*
     struct
     {
         bool newGliderLoaded = false;
@@ -969,7 +983,7 @@ public:
         float wingTime[2];
         float postTime[2];
     } glider;
-
+    */
 
     // Zero is not allowed and these are small so stick to 256 maybe
 
@@ -989,6 +1003,6 @@ public:
 
     uint viewMask = main_LEFT | main_CENTER | cascade_0 | cascade_1 | cascade_2 | parabolic_low | parabolic_medium;
 
-
-    terrainGenerator newTerrainBuilder;
+    // JOHAN - remove, separate editor
+    //terrainGenerator newTerrainBuilder;
 };

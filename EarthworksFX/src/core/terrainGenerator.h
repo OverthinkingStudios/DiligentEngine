@@ -1,5 +1,6 @@
 
 #pragma once
+/*
 #include "Falcor.h"
 
 #include <future> // Required for std::async and std::future
@@ -82,7 +83,7 @@ public:
     void bil_to_jp2Photos();
     void bil_to_jp2Photos(std::string file, const uint size, uint _lod, uint _y, uint _x);
     uint bil_to_jp2PhotosMemory(std::ofstream& _file, std::string filename, const uint size, uint _lod, uint _y, uint _x);
-    */
+    * /
 
     bool changed = false;
     int gui_mode = 0;
@@ -148,3 +149,4 @@ public:
 
 };
 CEREAL_CLASS_VERSION(terrainGenerator, 100);
+*/

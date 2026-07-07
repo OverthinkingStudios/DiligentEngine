@@ -511,7 +511,7 @@ void Earthworks_4::onFrameUpdate(RenderContext* _renderContext)
         if (ew::gDebug.toggles.atmosphere)
         {
             //atmosphere.setSmokeTime(terrain.cfd.clipmap.lodOffsets, terrain.cfd.clipmap.lodScales);
-            atmosphere.setSMOKE(terrain.cfd.sliceVolumeTexture);
+            // JOHAN remove, atmosphere.setSMOKE(terrain.cfd.sliceVolumeTexture);
 
             atmosphere.setSunDirection(global_sun_direction);
             atmosphere.getFar().setCamera(camera);

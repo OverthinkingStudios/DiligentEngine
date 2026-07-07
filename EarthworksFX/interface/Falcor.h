@@ -74,12 +74,14 @@ using CHAR = char;
 using UINT = unsigned int;
 #endif
 
+// JOHAN - WHY glm::lerp exists dotn build new maths
 template<typename T>
 inline T lerp(const T& a, const T& b, float t)
 {
     return a + (b - a) * t;
 }
 
+// JOHAN - remove its just glm::clamp just use that
 template<typename T>
 inline T clamp(const T& x, const T& lo, const T& hi)
 {
@@ -100,6 +102,7 @@ namespace Gpu
 class Internal;
 }
 
+// JOHAN - all rmcv has to go, we just use glm matricis and passs them in, and if needed we transpose just before passing in
 namespace rmcv
 {
 using mat4 = glm::mat4;
@@ -119,6 +122,7 @@ using uint   = std::uint32_t;
 using int2   = glm::ivec2;
 using int4   = glm::ivec4;
 
+// JOHAN - mid term these have to fo for their pointers instead, as much as I dislike them I dont want two standards
 template<typename T>
 using SharedPtr = std::shared_ptr<T>;
 
@@ -142,6 +146,7 @@ struct float4x4 : public Diligent::float4x4
     {
         float4x4 r;
         const Diligent::float4x4 t = Transpose();
+        // JOHAN - feels extremely ugly with the memcopy
         std::memcpy(r.Data(), t.Data(), sizeof(float) * 16);
         return r;
     }
@@ -202,6 +207,7 @@ struct CameraData
     float    FrameHeight  = 24.f;
 };
 
+// JOHAN - mid term this also has to go, I am pretty sure diligents FirstPersonCamera is good enough or a derived class
 class Camera
 {
 public:
@@ -239,6 +245,7 @@ private:
     float3     m_Target{};
 };
 
+// JOHAN - replace all of this with diligent only, maps to GPU hardware
 enum ResourceFormat : Diligent::Uint16
 {
     RG32Float       = Diligent::TEX_FORMAT_RG32_FLOAT,
@@ -262,6 +269,7 @@ enum ResourceFormat : Diligent::Uint16
     R8Unorm         = Diligent::TEX_FORMAT_R8_UNORM,
 };
 
+// JOHAN - replace all of this with diligent only, maps to GPU hardware
 namespace Resource
 {
 enum BindFlags : uint32_t
@@ -282,6 +290,7 @@ inline BindFlags operator|(BindFlags a, BindFlags b)
     return static_cast<BindFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
 }
 
+// JOHAN - It seem sunsused since it doenst map to diligent
 enum class State
 {
     Common,
@@ -293,7 +302,8 @@ enum class State
 };
 } // namespace Resource
 
-class Texture;
+// JOHAN - almost all of tehse have to go other than maybe fbo, that at least extends diligent a little
+class Texture;              
 class Fbo;
 class Buffer;
 class Sampler;
@@ -309,6 +319,8 @@ class GraphicsVars;
 class VertexLayout;
 class Vao;
 
+// JOHAN - now this is really interesting and I want to keep and study it.
+// if it actually works it means a proper deep refelction is possible and then I want this in teh project
 class ProgramReflection
 {
 public:
