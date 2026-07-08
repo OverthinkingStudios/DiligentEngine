@@ -174,7 +174,7 @@ void textureTool::renderToTexture(int _slot) {
         //if (pSRV[i] && rsVARS[i]) rsVARS[i]->Set(pSRV[i]);
         if (rsVARS[i]) rsVARS[i]->Set(pSRV[i]);
     }
-    m_pImmediateContext->CommitShaderResources(SRB, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    //m_pImmediateContext->CommitShaderResources(SRB, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     
     m_pImmediateContext->SetRenderTargets(5, FBO.pRTV, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
