@@ -4392,7 +4392,7 @@ void _rootPlant::renderGui_load(Gui* _gui)
                 if (filepath.string().find(".stem") != std::string::npos) { root = new _stemBuilder;  _rootPlant::selectedPart = root; }
                 if (filepath.string().find(".clump") != std::string::npos) { root = new _clumpBuilder;  _rootPlant::selectedPart = root; }
                 if (filepath.string().find(".flower") != std::string::npos) { root = new _flowerBuilder;  _rootPlant::selectedPart = root; }
-                if (filepath.string().find(".tree") != std::string::npos) { root = new _treeBuilder;  _rootPlant::selectedPart = root; }
+                //if (filepath.string().find(".tree") != std::string::npos) { root = new _treeBuilder;  _rootPlant::selectedPart = root; }
 
                 if (root)
                 {
@@ -4432,7 +4432,7 @@ void _rootPlant::renderGui_load(Gui* _gui)
     ImGui::SameLine(0, 10);
     if (ImGui::Button("new Leaf", ImVec2(W * 0.23f, 0))) { if (root) delete root; root = new _leafBuilder;  _rootPlant::selectedPart = root; _rootPlant::selectedMaterial = nullptr; }
 
-    if (ImGui::Button("new Tree", ImVec2(W * 0.23f, 0))) { if (root) delete root; root = new _treeBuilder;  _rootPlant::selectedPart = root; _rootPlant::selectedMaterial = nullptr; }
+    //if (ImGui::Button("new Tree", ImVec2(W * 0.23f, 0))) { if (root) delete root; root = new _treeBuilder;  _rootPlant::selectedPart = root; _rootPlant::selectedMaterial = nullptr; }
 
 
     //ImGui::NewLine();
@@ -6443,7 +6443,6 @@ void _rootPlant::render(RenderContext* _renderContext, const Fbo::SharedPtr& _fb
         _viewport = GraphicsState::Viewport(bakeViewportTL.x, bakeViewportTL.y, bakeViewportSize, bakeViewportSize, 0.f, 1.f);
     }
 
-    FALCOR_PROFILE("vegetation");
     renderContext = _renderContext;
 
     camVector = (float3(0, 1000, 0) + (float3)settings.root[1] * extents.y / 2.f) - camPos;
@@ -6452,13 +6451,11 @@ void _rootPlant::render(RenderContext* _renderContext, const Fbo::SharedPtr& _fb
 
     // kest try alwasy clear
     {
-        FALCOR_PROFILE("compute_veg_clear");
         compute_clearBuffers.dispatch(_renderContext, 1, 1);
     }
 
     if (!terrainMode && _ribbonBuilder.numPacked() > 1 && !displayModeSinglePlant)
     {
-        FALCOR_PROFILE("compute_veg_lods");
         //compute_clearBuffers.dispatch(_renderContext, 1, 1);
 
         compute_calulate_lod.Vars()["gConstantBuffer"]["view"] = _view;
@@ -6477,7 +6474,6 @@ void _rootPlant::render(RenderContext* _renderContext, const Fbo::SharedPtr& _fb
 
 
     {
-        FALCOR_PROFILE("compute_veg_sortCombine");
         if (!displayModeSinglePlant)
         {
             compute_sortCombine.dispatch(_renderContext, 1, 1);
@@ -6574,12 +6570,10 @@ void _rootPlant::render(RenderContext* _renderContext, const Fbo::SharedPtr& _fb
 
         if (terrainMode)
         {
-            FALCOR_PROFILE("ribbonShaderTerrain");
             vegetationShader.renderIndirect(_renderContext, drawArgs_vegetation);
         }
         else
         {
-            FALCOR_PROFILE("ribbonShader");
             if (displayModeSinglePlant)
             {
                 // single plant
@@ -6637,7 +6631,6 @@ void _rootPlant::render(RenderContext* _renderContext, const Fbo::SharedPtr& _fb
 
 
             {
-                FALCOR_PROFILE("billboards");
                 billboardShader.renderIndirect(_renderContext, drawArgs_billboards);
             }
 
@@ -6799,7 +6792,6 @@ void _rootPlant::bakeShadowMap(RenderContext* _renderContext)
 
     // Now render shadow buffer
     {
-        FALCOR_PROFILE("BAKE_SHADOW_2K");
         _renderContext->clearFbo(shadowFbo.get(), float4(0, 0, 0, 1), 1.0f, 0, FboAttachmentType::All);
 
         vegetationShader_DEPTH.State()->setFbo(shadowFbo);

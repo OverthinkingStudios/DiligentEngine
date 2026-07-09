@@ -1,3 +1,4 @@
+/*
 #include "vegetationBuilder.h"
 #include "imgui.h"
 #include "PerlinNoise.hpp"          //https://github.com/Reputeless/PerlinNoise/blob/master/PerlinNoise.hpp
@@ -93,10 +94,6 @@ float3 _cubemap::toVec(int face, int y, int x)
     return glm::normalize(V);
 }
 
-/*
-float3 _cubemap::toVec(glm::int3 c)
-{
-} */
 
 
 float _cubemap::sampleDistance(float3 _v)
@@ -296,7 +293,7 @@ bool _treeBuilder::renderGui()
         }
         if (l == 0) l = 1; // avoid devide by zero
         ImGui::Text("%2.3fHz", 1.f / (rootFrequency() / sqrt(l)));
-        */
+        * /
         //CHECKBOX("hasPivot", &hasPivot, "");
         R_FLOAT("stiffness", ossilation_stiffness, 0.1f, 0.8f, 20.f, "");
         R_FLOAT("sqrt(sway)", ossilation_constant_sqrt, 0.1f, 1.01f, 100.f, "");
@@ -384,7 +381,7 @@ bool _treeBuilder::renderGui()
             }
         }
     }
-    */
+    * /
     changedForSave |= changed;
     //anyChange |= changed;
     bool RET = changed;
@@ -429,7 +426,7 @@ void _treeBuilder::treeView()
             ImGui::Text("tip");
             for (auto& L : tip.data) { if (L.plantPtr) L.plantPtr->treeView(); }
         }
-        */
+        * /
         ImGui::TreePop();
     }
 }
@@ -445,7 +442,7 @@ void _treeBuilder::clear_build_info()
     for (auto& L : branches.branchData)
     {
         if (L.plantPtr)  L.plantPtr->clear_build_info();
-    } */
+    } * /
 }
 
 
@@ -535,7 +532,7 @@ void _treeBuilder::build_BRANCH(uint _idx, buildSetting _settings, bool bottom)
         _settings.pivotDepth += 1;
         numPivots++;
     }
-    */
+    * /
     //_ribbonBuilder.pushPivot(_settings.seed, p);  loop
 
     for (int i = 0; i < BRANCH.numPivots; i++)
@@ -770,7 +767,7 @@ glm::mat4 _treeBuilder::build(buildSetting _settings, bool _addVerts)
                 {
                     build_one_branch(sorted[theOneToDraw].index, B.all_twigs[j], _settings, false);
                 }
-                */
+                * /
             }
             else
             {
@@ -1120,7 +1117,7 @@ void _treeBuilder::load_obj()
                     endLeaves.emplace_back();
                     endLeaves.back().pos = center;
                     endLeaves.back().dir = nodeDir;
-                    */
+                    * /
                 }
                 else if (numVerts == 5) {
                     numDeadEnds++;
@@ -1180,7 +1177,7 @@ void _treeBuilder::load_obj()
             {
                 currentBranch->isDead = true;
             }
-            */
+            * /
 
 
             verts[0] = verts[numVerts - 1];
@@ -1305,7 +1302,7 @@ void _treeBuilder::calcSubTwigs()
         B.numLeavesSmall = 0;
     }
     smallestRadius *= 1.3f;
-    */
+    * /
     allDroppedTwigs.clear();
 
     for (int i = 0; i < numBranches; i++)
@@ -1322,7 +1319,7 @@ void _treeBuilder::calcSubTwigs()
                 if (B.nodes[j].radius > smallestRadius) B.start_node = j;
             }
             if (B.start_node < 5) B.start_node = 0;
-            */
+            * /
 
             for (uint k = 0; k < branches.size(); k++)
             {
@@ -1536,7 +1533,7 @@ void _treeBuilder::buildTreeRootAndBranches()
 
                         BRANCH.numPivots++;
                     }
-                    */
+                    * /
                 }
 
                 // now search for parent
@@ -1556,7 +1553,7 @@ void _treeBuilder::buildTreeRootAndBranches()
                         }
                     }
                     //need to save a temp pivot abovemthen read from parent herte,thren combine
-                }*/
+                }* /
 
                 BRANCH.stats.rootPitch = acos(B.nodes[B.start_node].dir.y);
                 BRANCH.stats.rootRadius = B.nodes[B.start_node].radius;
@@ -1639,3 +1636,4 @@ float _branchCollection::compare(_branchStats _stats, _branchStats* closest)
     }
     return lowest;
 }
+*/

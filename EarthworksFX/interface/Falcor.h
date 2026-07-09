@@ -132,7 +132,6 @@ using SharedConstPtr = std::shared_ptr<const T>;
 template<typename T>
 using UniquePtr = std::unique_ptr<T>;
 
-#define FALCOR_PROFILE(name) do { } while (0)
 
 struct float4x4 : public Diligent::float4x4
 {

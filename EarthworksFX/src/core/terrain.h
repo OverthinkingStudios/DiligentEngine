@@ -79,7 +79,6 @@
 #include "vegetationBuilder.h"
  
 
-//#include "cfd.h"
 #include <future> // Required for std::async and std::future
 #include <thread> // Required for std::this_thread::sleep_for
 #include <memory>
@@ -423,26 +422,18 @@ public:
 
     void onLoad(RenderContext* _renderContext, FILE* _logfile);
     void onShutdown();
-//    void onGuiRender_Veg(Gui* _gui, int _header, int _left, int _right, int _bottom);
     void onGuiRender_Right_Ecotope(Gui* _gui, Gui::Window& _window);
     void onGuiRender_Right_Terrafector(Gui* _gui, Gui::Window& _window);
     void onGuiRender_Right_Roads(Gui* _gui, Gui::Window& _window);
-    // JOHAN - remove void onGuiRender_Right_Glider(Gui* _gui, Gui::Window& _window); 
     void onGuiRender_Right(Gui* pGui, int _header, float2 _screen);
 
     void onGuiRender_Main_Ecotope(Gui* _gui);
     void onGuiRender_Main_Terrafector(Gui* _gui);
     void onGuiRender_Main_Roads(Gui* _gui);
-    // JOHAN - remove void onGuiRender_Main_Glider(Gui* _gui);
     void onGuiRender_Main(Gui* pGui, int _header, float2 _screen);
 
     void onGuiRender(Gui* pGui, int _header, float2 _screen, fogAtmosphericParams* pAtmosphere);
     void onGuiRender_Debug(Gui* pGui);
-    // JOHAN - remove void onGuiRenderParaglider(Gui::Window& _window, Gui* pGui, float2 _screen, fogAtmosphericParams*
-    // pAtmosphere);
-    // JOHAN - remove void onGuiRendercfd(Gui::Window& _window, Gui* pGui, float2 _screen);
-    // JOHAN - remove void onGuiRendercfd_params(Gui::Window& _window, Gui* pGui, float2 _screen);
-    // JOHAN - remove void onGuiRendercfd_skewT(Gui::Window& _window, Gui* pGui, float2 _screen);
     bool renderGui_Menu = false;
     bool renderGui_Hud = true;
     void onGuiMenubar(Gui* pGui);
@@ -460,19 +451,6 @@ public:
     void reset(bool _fullReset = false);
     void loadElevationHash(RenderContext* pRenderContext);
     void loadImageHash(RenderContext* pRenderContext);
-
-    // JOHAN - remove all of these as tehy belong to terrainGeneratoRool and have been repalced already
-    /*
-    void bil_to_jp2();
-    void bil_to_jp2(std::string file, const uint size, FILE* summary, uint _lod, uint _y, uint _x, float _xstart, float _ystart, float _size);
-
-    void generateGdalPhotos();
-    void writeGdal(jp2Map _map, std::ofstream& _gdal, std::string _input);
-    void writeGdalClear(std::ofstream& _gdal);
-    void bil_to_jp2Photos();
-    void bil_to_jp2Photos(std::string file, const uint size, uint _lod, uint _y, uint _x);
-    uint bil_to_jp2PhotosMemory(std::ofstream& _file, std::string filename, const uint size, uint _lod, uint _y, uint _x);
-    */
 
     void clearCameras();
     void setCamera(unsigned int _index, glm::mat4 viewMatrix, glm::mat4 projMatrix, float3 position, bool b_use, float _resolution);
@@ -549,10 +527,6 @@ private:
     void splitChild(quadtree_tile* _pTile, RenderContext* _renderContext);
     void splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _renderContext);
 
-    // JOHAN - remove these two they have been superceded
-    //uint gisHash(glm::vec3 _position);
-    //void gisReload(glm::vec3 _position);
-
     void bake_start(bool _toMAX);
     bool bakeToMax;
     void bake_frame();
@@ -621,12 +595,6 @@ private:
     float ribbonSpacing = 3.0f;             // the size fo the extents
     bool spacingFromExtents = true;
 
-    // JOHAN remove
-    //pixelShader thermalsShader;
-    //Buffer::SharedPtr       thermalsData;
-    //uint numThermals = 200;
-
-    //pixelShader cfdSliceShader;
 
 public:
     // JOHAN These are the buildings, and shoulkd also moce to its own class and not bve in here, and not like this.
@@ -636,13 +604,7 @@ public:
     int numrapperstri = 0;
     buildingsRenderer   buildings;     // PORT NOTE: replaces the commented-out rappersville blocks, see buildings.h
 
-    // JOHAN these where already removed in the code
-    //pixelShader         gliderwingShader;
-    //uint    wingloadedCnt;
-    //Buffer::SharedPtr   gliderwingData[2];
-    //RasterizerState::SharedPtr      rasterstateGliderWing;
-
-    bool useFreeCamWhileGliding = false;
+   bool useFreeCamWhileGliding = false;
     bool GliderDebugVisuals = false;
 
     
@@ -681,7 +643,6 @@ private:
     LRUCache<uint32_t, textureCacheElement> elevationCache;
 
     jp2Dir imageDirectory;
-    //std::map<uint32_t, heightMap> imageTileHashmap;
     LRUCache<uint32_t, textureCacheElement> imageCache; // move t indese jp2 calss
 
     terrafectorSystem		terrafectors;
@@ -737,8 +698,6 @@ private:
 
     
     struct {
-        //Texture::SharedPtr texture = nullptr;        // JOHAN remove, 
-        //uint hash = 0;
         glm::vec4 box;
         bool show = true;
         float strenght = 0.3f;
@@ -911,82 +870,9 @@ public:
         Texture::SharedPtr	  dappledLightTexture;
     }vegetation;
 
-private:
-    
-    //_cfd CFD;
-    //_cfdClipmap cfdClip;
-public:
 
-
-    //void cfdStart();
-    //void cfdThread();
-
-    // JOHAN - remove bool requestParaPack = false;
-// JOHAN - remove float3 paraCamPos;
-// JOHAN - remove float3 paraEyeLocal;
-
-    // JOHAN - remove, if thei braks teh sky, I want to do the shader chnage there instead, but I doubt it would
-/*
-    struct
-    {
-        //_cfdClipmap clipmap;
-        std::string rootPath;
-        std::string rootFile;
-        bool recordingCFD = false;
-        int cfd_play_k = 0;
-
-        // instead fo mutex, I am going to do oneay coms for now
-        // input
-        float stepTime;
-        bool realTime = true;   // if false we run as fast as posible to solve as much time
-        uint exportFrameStep = 0;   // 0 does not export, typical is repeating frame 2^lod - 1 every time we have sync
-
-        std::array<float3, 10> velocityRequets;
-        float3 originRequest = float3(-1425 - 0, 425 + 140, 14533 - 2000);
-        bool pause = false;
-
-
-        // output
-        bool newFlowLines = false;
-        uint numLines = 0;
-        std::vector<float4> flowlines;
-
-        std::array<float3, 10> velocityAnswers;
-
-        // skewT editor ---------------------------------
-        std::array<float3, 100> skewT_data;
-        std::array<float3, 100> skewT_V;
-        bool editMode = false;
-        bool editChanged = false;
-
-
-        Texture::SharedPtr	  sliceVTexture[2];
-        Texture::SharedPtr	  sliceDataTexture[2];
-        Texture::SharedPtr	  sliceVolumeTexture[6][3];
-        //uint sliceOrder[6] = { 0, 0, 0, 0, 0, 0 };
-        float sliceTime[6] = { 0, 0, 0, 0, 0, 0 };
-        float lodLerp[6] = { 0, 0, 0, 0, 0, 0 };
-    } cfd;      // guess this needs to become its own class or move into _cfdClipmap
-    */
-    // JOHAN - remove its already unused
-    /*
-    struct
-    {
-        bool newGliderLoaded = false;
-
-        bool loaded = false;
-        float frameTime;
-        float packTime;
-
-        float cellsTime[2];
-        float preTime[2];
-        float wingTime[2];
-        float postTime[2];
-    } glider;
-    */
 
     // Zero is not allowed and these are small so stick to 256 maybe
-
     uint lookupSizeTerrain[numRenderViews] =
     { 524288, 524288, 256, 256, 256, 256, 1024, 1024, 1024, 1024, 65536, 65536, 65536, 65536, 65536, 65536, 16384, 32768 };
     // 524288 = 33M triangles
@@ -1003,6 +889,4 @@ public:
 
     uint viewMask = main_LEFT | main_CENTER | cascade_0 | cascade_1 | cascade_2 | parabolic_low | parabolic_medium;
 
-    // JOHAN - remove, separate editor
-    //terrainGenerator newTerrainBuilder;
 };

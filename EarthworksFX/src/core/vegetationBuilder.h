@@ -1137,7 +1137,7 @@ public:
 };
 CEREAL_CLASS_VERSION(_clumpBuilder, 100);
 
-
+/*
 struct _leafNode
 {
     float3 pos;
@@ -1527,7 +1527,7 @@ public:
 };
 CEREAL_CLASS_VERSION(_treeBuilder, 100);
 
-
+*/
 
 
 

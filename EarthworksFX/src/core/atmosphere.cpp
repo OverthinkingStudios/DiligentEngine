@@ -100,7 +100,6 @@ void atmosphereAndFog::computeSunInAtmosphere(RenderContext* _renderContext)
     mainNear.updateFogparameters(params);
     parabolicFar.updateFogparameters(params);
 
-    FALCOR_PROFILE("sunlight");
     compute_sunSlice.Vars()["FogCloudCommonParams"]["sun_direction"] = common.sun_direction;
     compute_sunSlice.Vars()["FogCloudCommonParams"]["cloudBase"] = common.cloudBase;
     compute_sunSlice.Vars()["FogCloudCommonParams"]["cloudThickness"] = common.cloudThickness;
@@ -155,9 +154,6 @@ void atmosphereAndFog::computeSunInAtmosphere(RenderContext* _renderContext)
 
 void atmosphereAndFog::computeVolumetric(RenderContext* _renderContext)
 {
-    FALCOR_PROFILE("volumeFog");
-
-
     compute_Atmosphere.Vars()["FogCloudCommonParams"]["sun_direction"] = common.sun_direction;
     compute_Atmosphere.Vars()["FogCloudCommonParams"]["cloudBase"] = common.cloudBase;
     compute_Atmosphere.Vars()["FogCloudCommonParams"]["cloudThickness"] = common.cloudThickness;

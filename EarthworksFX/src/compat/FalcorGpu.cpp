@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#pragma optimize("", off)
 namespace Falcor
 {
 namespace Gpu

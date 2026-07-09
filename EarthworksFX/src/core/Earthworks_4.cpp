@@ -474,7 +474,6 @@ void Earthworks_4::onFrameUpdate(RenderContext* _renderContext)
         {
             LOG_LINE(1, "terrain.shadowEdges.shadowReady");
             spdlog::info("terrain.shadowEdges.shadowReady");
-            FALCOR_PROFILE("shadow update");
             _renderContext->updateTextureData(terrain.terrainShadowTexture.get(), terrain.shadowEdges.shadowH);
             global_sun_direction = terrain.shadowEdges.sunAng;
             terrain.shadowEdges.shadowReady = false;
@@ -482,8 +481,7 @@ void Earthworks_4::onFrameUpdate(RenderContext* _renderContext)
     }
 
     {
-        FALCOR_PROFILE("onFrameUpdate");
-
+        
         shaderLightBuffer lightBuffer;
         lightBuffer.sunRightVector = glm::normalize(glm::cross(float3(0, 1, 0), global_sun_direction));
         lightBuffer.sunUpVector = glm::normalize(glm::cross(global_sun_direction, lightBuffer.sunRightVector));
@@ -542,8 +540,7 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
 
     if (!terrain.fullResetDoNotRender)
     {
-        FALCOR_PROFILE("onFrameRender");
-
+        
         // clear
         {
             graphicsState->setFbo(pTargetFbo);
@@ -569,7 +566,6 @@ void Earthworks_4::onFrameRender(RenderContext* _renderContext, const Fbo::Share
 
         if (!ew::gDebug.toggles.bypassHdr && ew::gDebug.toggles.tonemapper)
         {
-            FALCOR_PROFILE("tonemapper");
             postProcess.tonemapper.Vars()->setTexture("hdr", hdrFbo->getColorTexture(0));
             postProcess.tonemapper.Vars()->setTexture("cube", postProcess.colorCube);
             postProcess.tonemapper.Vars()->setSampler("linearSampler", terrain.sampler_Clamp);
