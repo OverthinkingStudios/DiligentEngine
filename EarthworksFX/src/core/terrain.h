@@ -53,6 +53,7 @@
 #include "cereal/types/array.hpp"
 #include "cereal/types/string.hpp"
 
+#include "EarthworksDebug.h"
 #include <fstream>
 
 // JOHAN - why does this define exists, what purpose does it serve
@@ -786,6 +787,10 @@ private:
         RasterizerState::SharedPtr      rasterstateSplines;
         BlendState::SharedPtr           blendstateSplines;
         BlendState::SharedPtr		    blendstateRoadsCombined;
+        // DEBUG (terrafector bring-up): same as blendstateRoadsCombined but with
+        // blending disabled on RT0 (elevation, R32F). Selected at bake time via
+        // ew::gDebug.toggles.tfBakeNoElevationBlend for an A/B test of the hole.
+        BlendState::SharedPtr		    blendstateRoadsCombined_noElevBlend;
     } split;
 
     struct

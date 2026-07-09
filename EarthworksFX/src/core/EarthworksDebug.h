@@ -110,6 +110,17 @@ struct DebugToggles
     // that are unaffected by the render-pass toggles above.
     bool earthworksGui = false;
 
+    // --- terrafector bake diagnostics (problem B: pitch-dependent tile hole) ---
+    // While > 0, each tile bake (splitRenderTopdown) reads back the elevation
+    // render target (tileFbo color 0, R32F) and logs min/max/NaN/extreme-value
+    // stats together with the tile's lod/x/y, then decrements. Set from the GUI
+    // to inspect the next N bakes while reproducing the hole.
+    int tfBakeElevationStatsLeft = 0;
+    // A/B test: bake with RT0 (elevation) blending DISABLED on the terrafector
+    // bake state. If the hole changes shape/vanishes, the One/OneMinusSrcAlpha
+    // elevation blend on the R32F target is implicated.
+    bool tfBakeNoElevationBlend = false;
+
     // Force a _terrainMode at runtime. The desktop host does not forward the
     // 1..7 keys to the renderer, so this is the way to switch modes from the
     // UI. -1 means "no request"; it is applied once and reset to -1.

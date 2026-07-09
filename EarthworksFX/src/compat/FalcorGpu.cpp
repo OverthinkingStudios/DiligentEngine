@@ -898,7 +898,47 @@ VALUE_TYPE MapIndexType(ResourceFormat format)
     return format == ResourceFormat::R32Uint ? VT_UINT32 : VT_UINT16;
 }
 
-GfxPipelineCacheKey MakeGfxPipelineKey(const GraphicsProgram* pProgram, TEXTURE_FORMAT rtvFmt, TEXTURE_FORMAT dsvFmt,
+// All color-attachment formats of an FBO, not just slot 0. The tile-bake FBO
+// has 8 color targets (Elevation/Albedo/PBR/Alpha/Ecotope1-4) and the
+// terrafector/road bake shaders write SV_Target0..7; building the PSO with
+// NumRenderTargets = 1 (the original scheme) silently discarded every output
+// except Elevation - no terrafector or road ever appeared in a baked tile.
+struct FboFormats
+{
+    TEXTURE_FORMAT RTVs[DILIGENT_MAX_RENDER_TARGETS] = {}; // TEX_FORMAT_UNKNOWN
+    Uint32         NumRts = 0;
+    TEXTURE_FORMAT DSV = TEX_FORMAT_UNKNOWN;
+};
+
+FboFormats GetFboFormats(const Fbo* pFbo)
+{
+    FboFormats fmts;
+    if (!pFbo)
+        return fmts;
+
+    if (pFbo->isSwapChainProxy() && pFbo->getSwapChain())
+    {
+        const auto& scDesc = pFbo->getSwapChain()->GetDesc();
+        fmts.RTVs[0] = scDesc.ColorBufferFormat;
+        fmts.NumRts  = 1;
+        fmts.DSV     = scDesc.DepthBufferFormat;
+        return fmts;
+    }
+
+    for (Uint32 slot = 0; slot < DILIGENT_MAX_RENDER_TARGETS; ++slot)
+    {
+        if (auto color = pFbo->getColorTexture(slot))
+        {
+            fmts.RTVs[slot] = color->getFormat();
+            fmts.NumRts     = slot + 1;
+        }
+    }
+    if (auto depth = pFbo->getDepthStencilTexture())
+        fmts.DSV = depth->getFormat();
+    return fmts;
+}
+
+GfxPipelineCacheKey MakeGfxPipelineKey(const GraphicsProgram* pProgram, const FboFormats& fmts,
                                        const GraphicsState* pState, Vao::Topology topology)
 {
     // hash-combine (boost style). The state objects are hashed by IDENTITY
@@ -911,8 +951,10 @@ GfxPipelineCacheKey MakeGfxPipelineKey(const GraphicsProgram* pProgram, TEXTURE_
     };
 
     GfxPipelineCacheKey key = reinterpret_cast<GfxPipelineCacheKey>(pProgram);
-    key = mix(key, static_cast<GfxPipelineCacheKey>(rtvFmt));
-    key = mix(key, static_cast<GfxPipelineCacheKey>(dsvFmt));
+    key = mix(key, static_cast<GfxPipelineCacheKey>(fmts.NumRts));
+    for (Uint32 i = 0; i < fmts.NumRts; ++i)
+        key = mix(key, static_cast<GfxPipelineCacheKey>(fmts.RTVs[i]));
+    key = mix(key, static_cast<GfxPipelineCacheKey>(fmts.DSV));
     key = mix(key, static_cast<GfxPipelineCacheKey>(topology));
     if (pState)
     {
@@ -959,12 +1001,12 @@ MakeStorageBuffersNonDynamic(const std::vector<ShaderResourceInfo>& resources)
 
 GraphicsPipelineCacheEntry* GetOrCreateGraphicsPSO(const GraphicsProgram* pProgram, const GfxProgramGpu& gpu,
                                                    const GraphicsState* pState, Vao::Topology topology,
-                                                   TEXTURE_FORMAT rtvFmt, TEXTURE_FORMAT dsvFmt)
+                                                   const FboFormats& fboFmts)
 {
     if (!gpu.VS || !gpu.PS)
         return nullptr;
 
-    const GfxPipelineCacheKey key = MakeGfxPipelineKey(pProgram, rtvFmt, dsvFmt, pState, topology);
+    const GfxPipelineCacheKey key = MakeGfxPipelineKey(pProgram, fboFmts, pState, topology);
     auto                      it  = g_GfxPipelineCache.find(key);
     if (it != g_GfxPipelineCache.end())
         return &it->second;
@@ -991,9 +1033,13 @@ GraphicsPipelineCacheEntry* GetOrCreateGraphicsPSO(const GraphicsProgram* pProgr
     }
 
     auto& gp = psoCI.GraphicsPipeline;
-    gp.NumRenderTargets  = 1;
-    gp.RTVFormats[0]     = rtvFmt;
-    gp.DSVFormat         = dsvFmt;
+    // Declare EVERY color attachment of the FBO, not just slot 0 - MRT bakes
+    // (terrafector/road tile bake: 8 targets, vegetation bake: 4) discard all
+    // pixel-shader outputs beyond the declared count (see GetFboFormats).
+    gp.NumRenderTargets  = static_cast<Uint8>(fboFmts.NumRts);
+    for (Uint32 i = 0; i < fboFmts.NumRts; ++i)
+        gp.RTVFormats[i] = fboFmts.RTVs[i];
+    gp.DSVFormat         = fboFmts.DSV;
     gp.PrimitiveTopology = MapTopology(topology);
     // Falcor's default rasterizer state is front = COUNTER-clockwise; Diligent
     // defaults to clockwise. Draws without an explicit RasterizerState (e.g.
@@ -1017,6 +1063,12 @@ GraphicsPipelineCacheEntry* GetOrCreateGraphicsPSO(const GraphicsProgram* pProgr
     g_pDevice->CreateGraphicsPipelineState(psoCI, &pPSO);
     if (!pPSO)
         FatalGpuError("Failed to create graphics PSO: " + gpu.DebugName);
+
+    // TEMP DEBUG (terrafector bring-up): one line per unique PSO. Confirms which
+    // passes actually reach the draw functions and with how many render targets.
+    spdlog::info("EarthworksFX: gfx PSO '{}': {} RT(s) [rt0={}], dsv={}, topo={}",
+                 gpu.DebugName, fboFmts.NumRts, static_cast<int>(fboFmts.RTVs[0]),
+                 static_cast<int>(fboFmts.DSV), static_cast<int>(topology));
 
     GraphicsPipelineCacheEntry entry;
     entry.PSO = pPSO;
@@ -1087,9 +1139,21 @@ void SetRenderTargetsFromFbo(Fbo* pFbo)
     if (!g_pContext || !pFbo)
         return;
 
-    ITextureView* pRTV = pFbo->getRenderTargetView(0);
+    // Bind ALL color attachments (MRT), matching the PSO's declared render
+    // targets - binding only slot 0 dropped SV_Target1..7 of the terrafector
+    // and road tile bakes (see GetFboFormats).
+    ITextureView* pRTVs[DILIGENT_MAX_RENDER_TARGETS] = {};
+    Uint32        numRTVs = 0;
+    for (Uint32 slot = 0; slot < DILIGENT_MAX_RENDER_TARGETS; ++slot)
+    {
+        if (ITextureView* pRTV = pFbo->getRenderTargetView(slot))
+        {
+            pRTVs[slot] = pRTV;
+            numRTVs     = slot + 1;
+        }
+    }
     ITextureView* pDSV = pFbo->getDepthStencilView();
-    g_pContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    g_pContext->SetRenderTargets(numRTVs, pRTVs, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     const float w = pFbo->getWidth();
     const float h = pFbo->getHeight();
@@ -1281,16 +1345,7 @@ void DrawInstanced(IDeviceContext* pCtx, GraphicsState* pState, GraphicsVars* pV
     if (!fbo)
         return;
 
-    TEXTURE_FORMAT rtvFmt = TEX_FORMAT_UNKNOWN;
-    if (fbo->isSwapChainProxy() && fbo->getSwapChain())
-        rtvFmt = fbo->getSwapChain()->GetDesc().ColorBufferFormat;
-    else if (auto color = fbo->getColorTexture(0))
-        rtvFmt = color->getFormat();
-    TEXTURE_FORMAT dsvFmt = TEX_FORMAT_UNKNOWN;
-    if (fbo->isSwapChainProxy() && fbo->getSwapChain())
-        dsvFmt = fbo->getSwapChain()->GetDesc().DepthBufferFormat;
-    else if (auto depth = fbo->getDepthStencilTexture())
-        dsvFmt = depth->getFormat();
+    const FboFormats fboFmts = GetFboFormats(fbo.get());
 
     Vao::Topology topology = Vao::Topology::TriangleList;
     if (pState->getVao())
@@ -1300,7 +1355,7 @@ void DrawInstanced(IDeviceContext* pCtx, GraphicsState* pState, GraphicsVars* pV
             topology = vaoIt->second.Topology;
     }
 
-    GraphicsPipelineCacheEntry* pEntry = GetOrCreateGraphicsPSO(pProgram, gpu, pState, topology, rtvFmt, dsvFmt);
+    GraphicsPipelineCacheEntry* pEntry = GetOrCreateGraphicsPSO(pProgram, gpu, pState, topology, fboFmts);
     if (!pEntry || !pEntry->PSO)
         return;
     IPipelineState*         pPSO = pEntry->PSO;
@@ -1361,16 +1416,7 @@ void DrawIndexedInstanced(IDeviceContext* pCtx, GraphicsState* pState, GraphicsV
     if (!fbo)
         return;
 
-    TEXTURE_FORMAT rtvFmt = TEX_FORMAT_UNKNOWN;
-    if (fbo->isSwapChainProxy() && fbo->getSwapChain())
-        rtvFmt = fbo->getSwapChain()->GetDesc().ColorBufferFormat;
-    else if (auto color = fbo->getColorTexture(0))
-        rtvFmt = color->getFormat();
-    TEXTURE_FORMAT dsvFmt = TEX_FORMAT_UNKNOWN;
-    if (fbo->isSwapChainProxy() && fbo->getSwapChain())
-        dsvFmt = fbo->getSwapChain()->GetDesc().DepthBufferFormat;
-    else if (auto depth = fbo->getDepthStencilTexture())
-        dsvFmt = depth->getFormat();
+    const FboFormats fboFmts = GetFboFormats(fbo.get());
 
     Vao::Topology topology = Vao::Topology::TriangleList;
     if (pState->getVao())
@@ -1380,7 +1426,7 @@ void DrawIndexedInstanced(IDeviceContext* pCtx, GraphicsState* pState, GraphicsV
             topology = vaoIt->second.Topology;
     }
 
-    GraphicsPipelineCacheEntry* pEntry = GetOrCreateGraphicsPSO(pProgram, gpu, pState, topology, rtvFmt, dsvFmt);
+    GraphicsPipelineCacheEntry* pEntry = GetOrCreateGraphicsPSO(pProgram, gpu, pState, topology, fboFmts);
     if (!pEntry || !pEntry->PSO)
         return;
     IPipelineState*         pPSO = pEntry->PSO;
@@ -1437,16 +1483,7 @@ void DrawIndirect(IDeviceContext* pCtx, GraphicsState* pState, GraphicsVars* pVa
     if (!fbo)
         return;
 
-    TEXTURE_FORMAT rtvFmt = TEX_FORMAT_UNKNOWN;
-    if (fbo->isSwapChainProxy() && fbo->getSwapChain())
-        rtvFmt = fbo->getSwapChain()->GetDesc().ColorBufferFormat;
-    else if (auto color = fbo->getColorTexture(0))
-        rtvFmt = color->getFormat();
-    TEXTURE_FORMAT dsvFmt = TEX_FORMAT_UNKNOWN;
-    if (fbo->isSwapChainProxy() && fbo->getSwapChain())
-        dsvFmt = fbo->getSwapChain()->GetDesc().DepthBufferFormat;
-    else if (auto depth = fbo->getDepthStencilTexture())
-        dsvFmt = depth->getFormat();
+    const FboFormats fboFmts = GetFboFormats(fbo.get());
 
     Vao::Topology topology = Vao::Topology::TriangleList;
     if (pState->getVao())
@@ -1456,7 +1493,7 @@ void DrawIndirect(IDeviceContext* pCtx, GraphicsState* pState, GraphicsVars* pVa
             topology = vaoIt->second.Topology;
     }
 
-    GraphicsPipelineCacheEntry* pEntry = GetOrCreateGraphicsPSO(pProgram, gpu, pState, topology, rtvFmt, dsvFmt);
+    GraphicsPipelineCacheEntry* pEntry = GetOrCreateGraphicsPSO(pProgram, gpu, pState, topology, fboFmts);
     if (!pEntry || !pEntry->PSO)
         return;
     IPipelineState*         pPSO = pEntry->PSO;

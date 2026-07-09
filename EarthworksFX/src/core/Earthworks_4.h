@@ -79,6 +79,10 @@ private:
     static constexpr uint32_t   kMaxDebugTileRects = 1024;  // >= terrainManager tile pool (997)
     Buffer::SharedPtr           debugTileRectBuffer;   // quadtree leaf rects, refreshed per frame
     std::vector<float4>         debugTileRects;        // CPU scratch for the upload
+    // Per-tile terrain height so the grid drapes onto the terrain instead of
+    // sitting at y=0 (sampled from the CPU-side shadowEdges heightfield).
+    Buffer::SharedPtr           debugTileHeightBuffer;
+    std::vector<float>          debugTileHeights;
 
     GraphicsState::Viewport     viewport3d;
     float2                      screenSize;

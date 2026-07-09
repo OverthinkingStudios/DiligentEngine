@@ -22,6 +22,20 @@ void EarthworksFXWindowBase::DrawImGuiControls(bool ShowFirstPersonCamera)
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("When off, the terrain manager keeps its last camera, so its\nfrustum / tile visibility stops following the view. Use it to\ntest whether the terrain frustum points where we are looking.");
+
+    // Terrafector-bake diagnostics (pitch-dependent tile hole).
+    if (ImGui::Button("Log next 16 bake elevation stats"))
+        ew::gDebug.toggles.tfBakeElevationStatsLeft = 16;
+    if (ew::gDebug.toggles.tfBakeElevationStatsLeft > 0)
+    {
+        ImGui::SameLine();
+        ImGui::Text("%d left", ew::gDebug.toggles.tfBakeElevationStatsLeft);
+    }
+    ImGui::Checkbox("Bake A/B: disable elevation blend (RT0)", &ew::gDebug.toggles.tfBakeNoElevationBlend);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Bakes tiles with blending disabled on the R32F elevation target.\nIf the tile hole changes or vanishes, the One/OneMinusSrcAlpha\nelevation blend is implicated. Move the camera to force re-bakes.");
 }
 
 void EarthworksFXWindowBase::SetInitialSize(int Width, int Height)

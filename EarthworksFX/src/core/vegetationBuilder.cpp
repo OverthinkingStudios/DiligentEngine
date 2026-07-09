@@ -6145,10 +6145,11 @@ void _rootPlant::bake(std::string _path, std::string _seed, lodBake* _info, glm:
     VP = glm::orthoRH(-W, W, H0, H1, -100.0f, 100.0f) * V;
 
     rmcv::mat4 viewproj, view;
+    // PORT NOTE: index swap = transpose (glm -> row-major rmcv, see terrain.cpp splitRenderTopdown).
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
-            viewproj[j][i] = VP[j][i];
-            view[j][i] = VIEW[j][i];
+            viewproj[j][i] = VP[i][j];
+            view[j][i] = VIEW[i][j];
         }
     }
 
@@ -6342,10 +6343,11 @@ void _rootPlant::render(RenderContext* _renderContext, const Fbo::SharedPtr& _fb
         P = glm::orthoLH(-1.0f, 1.0f, -1.0f, 1.0f, -100.0f, 100.0f);
         VP = P * V;
 
+        // PORT NOTE: index swap = transpose (glm -> row-major rmcv, see terrain.cpp splitRenderTopdown).
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                _viewproj[j][i] = VP[j][i];
-                _view[j][i] = view[j][i];
+                _viewproj[j][i] = VP[i][j];
+                _view[j][i] = view[i][j];
             }
         }
 
@@ -6432,10 +6434,11 @@ void _rootPlant::render(RenderContext* _renderContext, const Fbo::SharedPtr& _fb
         P = glm::orthoRH(-W, W, -W, W, -100.0f, 100.0f);
         VP = P * V;
 
+        // PORT NOTE: index swap = transpose (glm -> row-major rmcv, see terrain.cpp splitRenderTopdown).
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                _viewproj[j][i] = VP[j][i];
-                _view[j][i] = bakeViewAdjusted[j][i];// rename to camerqa or pass in vextors
+                _viewproj[j][i] = VP[i][j];
+                _view[j][i] = bakeViewAdjusted[i][j];// rename to camerqa or pass in vextors
             }
         }
 
