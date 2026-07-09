@@ -19,7 +19,8 @@
 //                            into `tileRects`), colour-coded by LOD and inset by 1%
 //                            of the tile size so neighbouring outlines stay separate
 //                            and splits are easy to spot. Drawn ON TOP (depth
-//                            disabled) at y = groundY.
+//                            disabled), draped at the terrain height under each
+//                            tile (tileHeights, CPU heightfield) + groundY.
 //
 // It mirrors the cbuffer + transpose convention used by render_triangles.hlsl
 // (mul(float4(pos,1), viewproj) with viewproj = camera->getViewProjMatrix().getTranspose())
@@ -42,6 +43,9 @@ cbuffer gConstantBuffer
 
 // One entry per quadtree leaf tile: xy = world-space origin (x, z), z = size, w = lod.
 StructuredBuffer<float4> tileRects;
+// Terrain height per tile (max over centre + corners, CPU heightfield) so the
+// grid drapes onto the terrain instead of drawing at sea level.
+StructuredBuffer<float> tileHeights;
 
 struct VSOut
 {
@@ -156,7 +160,10 @@ VSOut groundVertex(uint vId)
     else if (edge == 2u) p = float2(endp ? mn.x : mx.x, mx.y);   // +Z edge
     else                 p = float2(mn.x, endp ? mn.y : mx.y);   // -X edge
 
-    o.pos = mul(float4(p.x, groundY, p.y, 1.0), viewproj);
+    // Sit 2 m above the sampled terrain height so the outline is not z-buried
+    // by the surface it describes (drawn without depth test anyway, but this
+    // also keeps the projected position visually on the terrain).
+    o.pos = mul(float4(p.x, groundY + tileHeights[tile] + 2.0, p.y, 1.0), viewproj);
     o.col = kLodPalette[(uint)r.w & 7u];
     return o;
 }

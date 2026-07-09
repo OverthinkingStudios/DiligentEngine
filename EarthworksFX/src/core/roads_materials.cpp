@@ -168,6 +168,8 @@ bool roadMaterialGroup::renderGui(Gui* _gui, Gui::Window& _window)
 /*  roadMaterialCache
     --------------------------------------------------------------------------------------------------------------------*/
 
+#pragma optimize("", off)
+
 
 uint roadMaterialCache::find_insert_material(std::string _path)
 {
