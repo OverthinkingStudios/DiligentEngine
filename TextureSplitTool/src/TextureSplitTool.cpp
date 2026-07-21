@@ -93,7 +93,7 @@ void textureTool::init() {
 
     Diligent::ShaderCreateInfo ShaderCI;
     ShaderCI.EntryPoint = "vsMain";
-    ShaderCI.FilePath = "textureTool/hlsl/extractTextures.hlsl";
+    ShaderCI.FilePath = "hlsl/terrain/extractTextures.hlsl";
     ShaderCI.Macros = {};
     ShaderCI.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
     ShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;

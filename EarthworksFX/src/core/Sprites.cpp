@@ -127,11 +127,13 @@ void spriteRender::onRender(Camera::SharedPtr _camera, RenderContext* _renderCon
     glm::mat4 P = toGLM(_camera->getProjMatrix());
     glm::mat4 VP = toGLM(_camera->getViewProjMatrix());
     rmcv::mat4 view, proj, viewproj;
+    // PORT NOTE: index swap = transpose (rmcv::mat4 == glm::mat4 in the port,
+    // but this copy originally converted column-major glm to row-major rmcv).
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
-            view[j][i] = V[j][i];
-            proj[j][i] = P[j][i];
-            viewproj[j][i] = VP[j][i];
+            view[j][i] = V[i][j];
+            proj[j][i] = P[i][j];
+            viewproj[j][i] = VP[i][j];
         }
     }
 

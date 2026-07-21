@@ -244,8 +244,7 @@ void buildingsRenderer::render(RenderContext* _renderContext, const Fbo::SharedP
 {
     if (!loaded() || !ew::gDebug.toggles.buildings) return;
 
-    FALCOR_PROFILE("buildings");
-
+    
     shader.State()->setFbo(_fbo);
     shader.State()->setViewport(0, _viewport, true);
     shader.Vars()["PerFrameCB"]["view"] = _view;

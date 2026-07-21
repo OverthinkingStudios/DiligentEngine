@@ -270,7 +270,7 @@ public:
 
 
 
-#define TFMATERIAL_VERSION 100
+#define TFMATERIAL_VERSION 101
 #define TFMATERIAL_VERSION_LOAD 100
 class terrafectorEditorMaterial {
 public:
