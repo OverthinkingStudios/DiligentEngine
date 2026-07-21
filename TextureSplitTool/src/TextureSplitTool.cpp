@@ -11,6 +11,7 @@ std::string earthworksPaths::root = "F:/ESim_NextCloud/eSim-Plantwork/resources/
 
 bool earthworksPaths::make_relative(std::string& _path) {
     clean(_path);
+    clean(root);
     if (_path.find(root) == 0) {
         _path = _path.substr(root.length());
         return true;
@@ -115,15 +116,36 @@ void textureTool::init() {
 
     Diligent::GraphicsPipelineStateCreateInfo PSOCreateInfo;
 
-    PSOCreateInfo.GraphicsPipeline.NumRenderTargets = 5;
-    PSOCreateInfo.GraphicsPipeline.DSVFormat = Diligent::TEX_FORMAT_UNKNOWN;  // Or your depth format
+    
+    Diligent::ImmutableSamplerDesc samDesc;
+    samDesc.ShaderStages = Diligent::SHADER_TYPE_PIXEL;
+    samDesc.Desc.MagFilter = Diligent::FILTER_TYPE_ANISOTROPIC;
+    samDesc.Desc.MinFilter = Diligent::FILTER_TYPE_ANISOTROPIC;
+    samDesc.Desc.MipFilter = Diligent::FILTER_TYPE_ANISOTROPIC;
+    samDesc.Desc.AddressU = Diligent::TEXTURE_ADDRESS_WRAP;
+    samDesc.Desc.AddressV = Diligent::TEXTURE_ADDRESS_WRAP;
+    samDesc.Desc.AddressW = Diligent::TEXTURE_ADDRESS_WRAP;
+    //samDesc.Desc.MinLOD = -Diligent::D3D11_FLOAT32_MAX;
+    //samDesc.Desc.MaxLOD = Diligent::D3D11_FLOAT32_MAX;
+    samDesc.Desc.MipLODBias = 0.0f;
+    //samDesc.Desc.MaxAnisotropy = Diligent::TEXTURE_ANISO;
+    samDesc.Desc.ComparisonFunc = Diligent::COMPARISON_FUNC_NEVER;
+    samDesc.SamplerOrTextureName = "Tex";
+
+    PSOCreateInfo.PSODesc.ResourceLayout.ImmutableSamplers = &samDesc;
+    PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = 1;
+
+    
     PSOCreateInfo.GraphicsPipeline.PrimitiveTopology = Diligent::PRIMITIVE_TOPOLOGY_POINT_LIST;
     PSOCreateInfo.GraphicsPipeline.RasterizerDesc.CullMode = Diligent::CULL_MODE_NONE;
     PSOCreateInfo.GraphicsPipeline.RasterizerDesc.DepthClipEnable = false;
 
+    PSOCreateInfo.GraphicsPipeline.NumRenderTargets = 5;
     for (int i = 0; i < 5; i++) {
         PSOCreateInfo.GraphicsPipeline.RTVFormats[i] = Diligent::TEX_FORMAT_RGBA8_UNORM;
     }
+    PSOCreateInfo.GraphicsPipeline.DSVFormat = Diligent::TEX_FORMAT_UNKNOWN; 
+    
 
     PSOCreateInfo.pVS = VS;
     PSOCreateInfo.pGS = GS;
@@ -142,7 +164,7 @@ void textureTool::init() {
     PSO.Release();
     SRB.Release();
     m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &PSO);
-    PSO->CreateShaderResourceBinding(&SRB, false);
+    PSO->CreateShaderResourceBinding(&SRB, true);
 
     rsVARS[0] = SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "galbedo");
     rsVARS[1] = SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "galpha");
@@ -174,7 +196,7 @@ void textureTool::renderToTexture(int _slot) {
         //if (pSRV[i] && rsVARS[i]) rsVARS[i]->Set(pSRV[i]);
         if (rsVARS[i]) rsVARS[i]->Set(pSRV[i]);
     }
-    //m_pImmediateContext->CommitShaderResources(SRB, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    m_pImmediateContext->CommitShaderResources(SRB, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     
     m_pImmediateContext->SetRenderTargets(5, FBO.pRTV, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
@@ -198,6 +220,17 @@ void textureTool::reloadTextures() {
     }
 }
 
+void textureTool::load(const char* name) {
+    std::ifstream is(name);
+    cereal::JSONInputArchive archive(is);
+    archive(*this);
+    changed = false;
+    reloadTextures();
+    currentTexture = (int)textures.size();
+}
+
+
+
 void textureTool::load() {
     Diligent::FileDialogAttribs OpenDialogAttribs{Diligent::FILE_DIALOG_TYPE_OPEN};
     OpenDialogAttribs.Title = "texture tool";
@@ -208,11 +241,7 @@ void textureTool::load() {
             path = FileName;
             name = ew_paths.get_name(FileName);
 
-            std::ifstream is(ew_paths.get_full(FileName));
-            cereal::JSONInputArchive archive(is);
-            archive(*this);
-            changed = false;
-            reloadTextures();
+            load(ew_paths.get_full(FileName).c_str());
         }
     }
 }
@@ -769,7 +798,13 @@ TextureSplitTool::TextureSplitTool()
 
 TextureSplitTool::~TextureSplitTool() = default;
 
-void TextureSplitTool::Initialize() {}
+void TextureSplitTool::Initialize() { 
+    const char* gameroot = std::getenv("ACSMP_GAMEROOT"); 
+    if (gameroot) {
+        earthworksPaths::root = gameroot;  //        +;
+        earthworksPaths::root += "\\textureTool\\";
+    }
+}
 
 void TextureSplitTool::OnConfigureSettings(Diligent::EarthworksFXAppSettings& settings) {
     // No terrain scene: build the environment + shaders only and render manually.
@@ -792,6 +827,11 @@ void TextureSplitTool::OnGraphicsReady() {
     texture_tool.m_pImmediateContext = m_pImmediateContext;
     texture_tool.m_pSwapChain = m_pSwapChain;
     texture_tool.init();
+
+    // TEMP to reproduce the crash
+    texture_tool.name = "TEST.textureTool";
+    texture_tool.path = "TEST.textureTool";
+    texture_tool.load((earthworksPaths::root + texture_tool.path).c_str());
 }
 
 void TextureSplitTool::OnRender() {

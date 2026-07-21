@@ -277,6 +277,7 @@ class textureTool {
     void renderGui();
     void load_texture(uint _slot);
     void clear_texture(uint _slot);
+    void load(const char *name);
     void load();
     void save();
     void save_as();
