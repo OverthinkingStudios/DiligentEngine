@@ -202,11 +202,13 @@ class render_target {
     int2 getSize() { return size; }
 
     int2 size = int2(0, 0);
-    int numtargets;
+    int numtargets = 0;
 
     Diligent::RefCntAutoPtr<Diligent::ITexture> pTexture[8];
-    Diligent::ITextureView* pRTV[8];
-    Diligent::ITextureView* pSRV[8];
+    // BUGFIX: these were uninitialized raw pointers - anything reading them before
+    // setup() (e.g. the FBO preview in the GUI) dereferenced garbage. Zero-init.
+    Diligent::ITextureView* pRTV[8] = {};
+    Diligent::ITextureView* pSRV[8] = {};
 };
 
 
@@ -258,9 +260,12 @@ class oneTexture {
         if (_version >= 101) {
             archive(bezierOffset);
         }
+        if (_version >= 102) {
+            archive(numMips);  // BUGFIX: was never serialized -> silently reset to 5 on every load
+        }
     }
 };
-CEREAL_CLASS_VERSION(oneTexture, 101);
+CEREAL_CLASS_VERSION(oneTexture, 102);
 
 enum texTypes { tex_albedo, tex_alpha, tex_normal, tex_translucency, tex_displacement };
 
@@ -293,7 +298,16 @@ class textureTool {
     std::array<std::string, 5> texturePaths;
 
     Diligent::RefCntAutoPtr<Diligent::ITexture> tex_input[5];
-    Diligent::ITextureView* pSRV[5];
+    // BUGFIX: zero-init; slots whose file is missing were dangling and got handed
+    // to Diligent as SRVs (machine-dependent garbage -> likely device removal).
+    Diligent::ITextureView* pSRV[5] = {};
+
+    // 1x1 fallback textures so a shader slot is NEVER left unbound (unbound
+    // descriptors are undefined behaviour on the GPU and a classic TDR trigger).
+    Diligent::RefCntAutoPtr<Diligent::ITexture> tex_fallback_white;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> tex_fallback_normal;
+    Diligent::ITextureView* pFallbackWhiteSRV = nullptr;
+    Diligent::ITextureView* pFallbackNormalSRV = nullptr;
 
     // Fbo::SharedPtr fbo;
 
@@ -322,10 +336,12 @@ class textureTool {
     Diligent::RefCntAutoPtr<Diligent::IShader> VS;
     Diligent::RefCntAutoPtr<Diligent::IShader> GS;
     Diligent::RefCntAutoPtr<Diligent::IShader> PS;
-    //Diligent::RefCntAutoPtr<Diligent::IPipelineState> PSO;
     Diligent::RefCntAutoPtr<Diligent::IPipelineState> PSO;
     Diligent::RefCntAutoPtr<Diligent::IShaderResourceBinding> SRB;
     Diligent::RefCntAutoPtr<Diligent::IShaderResourceVariable> rsVARS[10];
+    // BUGFIX: gConstantBuffer in extractTextures.hlsl was never created or bound -
+    // the GS/PS read undefined values. This is its backing buffer.
+    Diligent::RefCntAutoPtr<Diligent::IBuffer> constantsCB;
 
     template <class Archive>
     void serialize(Archive& archive, unsigned int const _version) {

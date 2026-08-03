@@ -3,7 +3,10 @@
 #include "imgui.h"
 // #include "GraphicsAccessories.hpp"
 #include "FileWrapper.hpp"
-#pragma optimize("", off)
+#include "MapHelper.hpp"
+// NOTE: removed `#pragma optimize("", off)` - besides the perf hit it changes
+// uninitialized-memory patterns, which can mask/unmask exactly the kind of
+// machine-dependent bug we were chasing. Re-add locally when stepping through.
 gui _Gui;
 
 earthworksPaths ew_paths;
@@ -70,23 +73,42 @@ void render_target::setup(int2 _size, int _numTargets, Diligent::RefCntAutoPtr<D
         RTDesc.Format = Diligent::TEX_FORMAT_RGBA8_UNORM;
         RTDesc.BindFlags = Diligent::BIND_RENDER_TARGET | Diligent::BIND_SHADER_RESOURCE;
         RTDesc.ClearValue.Format = Diligent::TEX_FORMAT_RGBA8_UNORM;
-        RTDesc.ClearValue.Color[0] = 0.350f;
-        RTDesc.ClearValue.Color[1] = 0.350f;
-        RTDesc.ClearValue.Color[2] = 0.350f;
+        // Match the clear color actually used in renderToTexture() (green) -
+        // a mismatched optimal-clear value causes slow clears / warnings.
+        RTDesc.ClearValue.Color[0] = 0.f;
+        RTDesc.ClearValue.Color[1] = 1.f;
+        RTDesc.ClearValue.Color[2] = 0.f;
         RTDesc.ClearValue.Color[3] = 1.f;
 
         for (int i = 0; i < _numTargets; i++) {
             pTexture[i].Release();
+            pRTV[i] = nullptr;
+            pSRV[i] = nullptr;
             _pDevice->CreateTexture(RTDesc, nullptr, &pTexture[i]);
-            pRTV[i] = pTexture[i]->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
-            pSRV[i] = pTexture[i]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+            if (pTexture[i]) {  // BUGFIX: CreateTexture can fail; was a null deref
+                pRTV[i] = pTexture[i]->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
+                pSRV[i] = pTexture[i]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+            }
         }
     }
 }
 
 
-// RefCntAutoPtr<IShader> VS = CreateShader(m_pDevice, nullptr, "FullScreenTriangleVS.fx", "FullScreenTriangleVS",
-// SHADER_TYPE_VERTEX); ShaderCI.CompileFlags |= SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
+// CPU mirror of gConstantBuffer in extractTextures.hlsl. Layout must match HLSL
+// cbuffer packing exactly: no float2 straddles a 16-byte boundary here, and an
+// HLSL cbuffer bool is 4 bytes (hence int). 80 bytes total.
+struct ExtractTexturesConstants {
+    float2 A, B, C, D;            // corners of the extraction quad (UV space)
+    float2 start, stop, bezier;   // curve control points (UV space)
+    float width;                  // half-width of the strip (UV space)
+    float padd;
+    int flipRed;
+    int flipGreen;
+    float nStrength;
+    int toSRGB;
+};
+static_assert(sizeof(ExtractTexturesConstants) == 80, "must match gConstantBuffer in extractTextures.hlsl");
+
 void textureTool::init() {
     Diligent::RefCntAutoPtr<Diligent::IShaderSourceInputStreamFactory> pShaderSourceFactory;
     m_pDevice->GetEngineFactory()->CreateDefaultShaderSourceStreamFactory("shaders", &pShaderSourceFactory);
@@ -99,7 +121,9 @@ void textureTool::init() {
     ShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
     ShaderCI.Desc.Name = "vsMain";
     ShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
-    ShaderCI.Desc.UseCombinedTextureSamplers = true;
+    // BUGFIX: was `true`, but the shader uses a standalone SamplerState (gSmpLinear),
+    // not the <texture>_sampler convention combined samplers require.
+    ShaderCI.Desc.UseCombinedTextureSamplers = false;
     ShaderCI.CompileFlags = Diligent::SHADER_COMPILE_FLAG_NONE;
     ShaderCI.ShaderCompiler = Diligent::SHADER_COMPILER_DXC;
     m_pDevice->CreateShader(ShaderCI, &VS);
@@ -114,28 +138,67 @@ void textureTool::init() {
     ShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
     m_pDevice->CreateShader(ShaderCI, &PS);
 
+    // Backing buffer for gConstantBuffer. BUGFIX: this buffer did not exist at all -
+    // the geometry and pixel shaders read a completely unbound constant buffer.
+    {
+        Diligent::BufferDesc CBDesc;
+        CBDesc.Name = "extractTextures constants";
+        CBDesc.Size = sizeof(ExtractTexturesConstants);
+        CBDesc.Usage = Diligent::USAGE_DYNAMIC;
+        CBDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER;
+        CBDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
+        constantsCB.Release();
+        m_pDevice->CreateBuffer(CBDesc, nullptr, &constantsCB);
+    }
+
+    // 1x1 fallback textures (white / flat normal). Bound whenever an input slot is
+    // empty so the pixel shader never samples an unbound descriptor (undefined on
+    // the GPU; a prime suspect for the machine-dependent black screen / TDR).
+    {
+        auto make1x1 = [&](const char* _name, Diligent::Uint32 _rgba,
+                           Diligent::RefCntAutoPtr<Diligent::ITexture>& _tex) {
+            Diligent::TextureDesc desc;
+            desc.Name = _name;
+            desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+            desc.Width = 1;
+            desc.Height = 1;
+            desc.MipLevels = 1;
+            desc.Format = Diligent::TEX_FORMAT_RGBA8_UNORM;
+            desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
+            Diligent::TextureSubResData level0;
+            level0.pData = &_rgba;
+            level0.Stride = 4;
+            Diligent::TextureData data(&level0, 1);
+            _tex.Release();
+            m_pDevice->CreateTexture(desc, &data, &_tex);
+        };
+        make1x1("fallback white", 0xFFFFFFFFu, tex_fallback_white);
+        make1x1("fallback flat normal", 0xFFFF8080u, tex_fallback_normal);  // RGBA (128,128,255,255)
+        pFallbackWhiteSRV = tex_fallback_white->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+        pFallbackNormalSRV = tex_fallback_normal->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+    }
+
     Diligent::GraphicsPipelineStateCreateInfo PSOCreateInfo;
 
-    
+    // BUGFIX: sampler was named "Tex" (matches nothing in the shader) so gSmpLinear
+    // stayed unbound -> sampling through a null sampler descriptor. Name it after
+    // the shader's SamplerState. Linear filtering matches the original's intent
+    // (the old Falcor path bound sampler_Ribbons to "gSmpLinear").
     Diligent::ImmutableSamplerDesc samDesc;
     samDesc.ShaderStages = Diligent::SHADER_TYPE_PIXEL;
-    samDesc.Desc.MagFilter = Diligent::FILTER_TYPE_ANISOTROPIC;
-    samDesc.Desc.MinFilter = Diligent::FILTER_TYPE_ANISOTROPIC;
-    samDesc.Desc.MipFilter = Diligent::FILTER_TYPE_ANISOTROPIC;
+    samDesc.Desc.MagFilter = Diligent::FILTER_TYPE_LINEAR;
+    samDesc.Desc.MinFilter = Diligent::FILTER_TYPE_LINEAR;
+    samDesc.Desc.MipFilter = Diligent::FILTER_TYPE_LINEAR;
     samDesc.Desc.AddressU = Diligent::TEXTURE_ADDRESS_WRAP;
     samDesc.Desc.AddressV = Diligent::TEXTURE_ADDRESS_WRAP;
     samDesc.Desc.AddressW = Diligent::TEXTURE_ADDRESS_WRAP;
-    //samDesc.Desc.MinLOD = -Diligent::D3D11_FLOAT32_MAX;
-    //samDesc.Desc.MaxLOD = Diligent::D3D11_FLOAT32_MAX;
     samDesc.Desc.MipLODBias = 0.0f;
-    //samDesc.Desc.MaxAnisotropy = Diligent::TEXTURE_ANISO;
     samDesc.Desc.ComparisonFunc = Diligent::COMPARISON_FUNC_NEVER;
-    samDesc.SamplerOrTextureName = "Tex";
+    samDesc.SamplerOrTextureName = "gSmpLinear";
 
     PSOCreateInfo.PSODesc.ResourceLayout.ImmutableSamplers = &samDesc;
     PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = 1;
 
-    
     PSOCreateInfo.GraphicsPipeline.PrimitiveTopology = Diligent::PRIMITIVE_TOPOLOGY_POINT_LIST;
     PSOCreateInfo.GraphicsPipeline.RasterizerDesc.CullMode = Diligent::CULL_MODE_NONE;
     PSOCreateInfo.GraphicsPipeline.RasterizerDesc.DepthClipEnable = false;
@@ -144,19 +207,25 @@ void textureTool::init() {
     for (int i = 0; i < 5; i++) {
         PSOCreateInfo.GraphicsPipeline.RTVFormats[i] = Diligent::TEX_FORMAT_RGBA8_UNORM;
     }
-    PSOCreateInfo.GraphicsPipeline.DSVFormat = Diligent::TEX_FORMAT_UNKNOWN; 
-    
+    PSOCreateInfo.GraphicsPipeline.DSVFormat = Diligent::TEX_FORMAT_UNKNOWN;
+    // BUGFIX: DepthEnable defaults to true; with DSVFormat UNKNOWN and no DSV bound
+    // that is an invalid pipeline (D3D12 rejects it, others get undefined behaviour).
+    PSOCreateInfo.GraphicsPipeline.DepthStencilDesc.DepthEnable = false;
+    PSOCreateInfo.GraphicsPipeline.DepthStencilDesc.DepthWriteEnable = false;
 
     PSOCreateInfo.pVS = VS;
     PSOCreateInfo.pGS = GS;
     PSOCreateInfo.pPS = PS;
 
+    // BUGFIX: "gdisplacement" removed - it does not exist in extractTextures.hlsl
+    // (the shader consumes 4 inputs; the tool's 5th slot is not part of the bake).
+    // DYNAMIC instead of MUTABLE: these are re-Set() on every bake, which MUTABLE
+    // variables do not allow (only once per SRB).
     Diligent::ShaderResourceVariableDesc Vars[] = {
-        {Diligent::SHADER_TYPE_PIXEL, "galbedo", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
-        {Diligent::SHADER_TYPE_PIXEL, "galpha", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
-        {Diligent::SHADER_TYPE_PIXEL, "gnormal", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
-        {Diligent::SHADER_TYPE_PIXEL, "gtranslucency", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
-        {Diligent::SHADER_TYPE_PIXEL, "gdisplacement", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}};
+        {Diligent::SHADER_TYPE_PIXEL, "galbedo", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {Diligent::SHADER_TYPE_PIXEL, "galpha", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {Diligent::SHADER_TYPE_PIXEL, "gnormal", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {Diligent::SHADER_TYPE_PIXEL, "gtranslucency", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
 
     PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
     PSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars;
@@ -164,13 +233,21 @@ void textureTool::init() {
     PSO.Release();
     SRB.Release();
     m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &PSO);
+
+    // gConstantBuffer is not listed in Vars -> default variable type (STATIC), so it
+    // must be bound on the PSO before the SRB is created. The GS reads A/B/D and the
+    // PS reads the curve/flip values; the VS doesn't reference it (null -> skipped).
+    if (auto* pVar = PSO->GetStaticVariableByName(Diligent::SHADER_TYPE_GEOMETRY, "gConstantBuffer"))
+        pVar->Set(constantsCB);
+    if (auto* pVar = PSO->GetStaticVariableByName(Diligent::SHADER_TYPE_PIXEL, "gConstantBuffer"))
+        pVar->Set(constantsCB);
+
     PSO->CreateShaderResourceBinding(&SRB, true);
 
     rsVARS[0] = SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "galbedo");
     rsVARS[1] = SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "galpha");
     rsVARS[2] = SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "gnormal");
     rsVARS[3] = SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "gtranslucency");
-    rsVARS[4] = SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "gdisplacement");
 }
 
 void textureTool::exportNow() {
@@ -180,42 +257,94 @@ void textureTool::exportNow() {
 }
 
 void textureTool::renderToTexture(int _slot) {
-    int w = (int)(textures[_slot].texWidth * 4 * pow(2, textures[_slot].numMips));
-    int h = (int)(textures[_slot].texHeight * 4 * pow(2, textures[_slot].numMips));
+    // BUGFIX: was called with out-of-range indices (see load()); guard everything.
+    if (_slot < 0 || _slot >= (int)textures.size() || !PSO || !constantsCB) return;
 
-    
+    auto& T = textures[_slot];
+    int w = (int)(T.texWidth * 4 * pow(2, T.numMips));
+    int h = (int)(T.texHeight * 4 * pow(2, T.numMips));
+
     FBO.setup(int2(w, h), 5, m_pDevice, m_pImmediateContext);
-    
+    if (!FBO.pRTV[0]) return;  // render target creation failed
+
+    // The GUI stores start/stop/bezier/width in image PIXEL coordinates, but the
+    // shader works in UV space -> convert using the albedo input's dimensions.
+    // (width is divided by X only - same approximation for non-square textures
+    // as the original tool.)
+    float2 imgSize(1.f, 1.f);
+    if (tex_input[tex_albedo]) {
+        const auto& desc = tex_input[tex_albedo]->GetDesc();
+        imgSize = float2((float)desc.Width, (float)desc.Height);
+    }
+    float2 uvStart = T.start / imgSize;
+    float2 uvStop = T.stop / imgSize;
+    float2 uvBezier = T.bezier / imgSize;
+    float uvWidth = T.width / imgSize.x;
+
+    float2 seg = uvStop - uvStart;
+    float segLen = glm::length(seg);
+    if (segLen < 1e-6f) return;  // degenerate extents - normalize() below would produce NaNs
+
+    // BUGFIX: fill gConstantBuffer (previously never uploaded at all). A/B/C/D are
+    // the quad corners, computed on the CPU exactly like the original Falcor tool.
+    {
+        float2 dir = seg / segLen;
+        float2 norm = float2(dir.y, -dir.x);
+
+        Diligent::MapHelper<ExtractTexturesConstants> CB(m_pImmediateContext, constantsCB, Diligent::MAP_WRITE,
+                                                         Diligent::MAP_FLAG_DISCARD);
+        CB->A = uvStart + norm * uvWidth;
+        CB->B = uvStart - norm * uvWidth;
+        CB->C = uvStop - norm * uvWidth;
+        CB->D = uvStop + norm * uvWidth;
+        CB->start = uvStart;
+        CB->stop = uvStop;
+        CB->bezier = uvBezier;
+        CB->width = uvWidth;
+        CB->padd = 0.f;
+        CB->flipRed = flipRed ? 1 : 0;
+        CB->flipGreen = flipGreen ? 1 : 0;
+        CB->nStrength = normalScale;
+        CB->toSRGB = 0;  // original only sets this for the final export, not the preview
+    }
+
+    // BUGFIX: command order. Previous order was Commit -> SetRenderTargets -> SetPSO,
+    // but SetPipelineState invalidates committed resources, so the draw executed with
+    // NOTHING bound (garbage descriptors on the GPU in release builds - the prime
+    // black-screen candidate). Required order: targets -> PSO -> commit -> draw.
+    m_pImmediateContext->SetRenderTargets(5, FBO.pRTV, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
     float ClearColor[] = {0.0f, 1.0f, 0.0f, 1.0f};
     for (int i = 0; i < 5; i++) {
         m_pImmediateContext->ClearRenderTarget(FBO.pRTV[i], ClearColor,
-         Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                                               Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     }
-
-    for (int i = 0; i < 5; i++) {
-        //if (pSRV[i] && rsVARS[i]) rsVARS[i]->Set(pSRV[i]);
-        if (rsVARS[i]) rsVARS[i]->Set(pSRV[i]);
-    }
-    m_pImmediateContext->CommitShaderResources(SRB, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    
-    m_pImmediateContext->SetRenderTargets(5, FBO.pRTV, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     m_pImmediateContext->SetPipelineState(PSO);
 
+    // Only 4 shader inputs (the displacement slot is not part of the bake). Missing
+    // inputs get a 1x1 fallback so no descriptor is ever left unbound.
+    for (int i = 0; i < 4; i++) {
+        Diligent::ITextureView* fallback = (i == tex_normal) ? pFallbackNormalSRV : pFallbackWhiteSRV;
+        if (rsVARS[i]) rsVARS[i]->Set(pSRV[i] ? pSRV[i] : fallback);
+    }
+    m_pImmediateContext->CommitShaderResources(SRB, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
     Diligent::DrawAttribs DrawAttrs(1, Diligent::DRAW_FLAG_VERIFY_ALL);
     m_pImmediateContext->Draw(DrawAttrs);
-    
 }
 
 void textureTool::reloadTextures() {
     for (int i = 0; i < 5; i++) {
         tex_input[i].Release();
+        pSRV[i] = nullptr;  // BUGFIX: left dangling when the file below doesn't exist
         std::string fullPath = ew_paths.get_full(texturePaths[i]);
         if (texturePaths[i].length() > 0 && std::filesystem::exists(fullPath)) {
             Diligent::TextureLoadInfo LoadInfo{texNames[i]};
             LoadInfo.Format = Diligent::TEX_FORMAT_RGBA8_UNORM;
             CreateTextureFromFile(fullPath.c_str(), LoadInfo, m_pDevice, &tex_input[i]);
-            pSRV[i] = tex_input[i]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+            if (tex_input[i])  // BUGFIX: load can fail (bad format etc.) -> was a null deref
+                pSRV[i] = tex_input[i]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
         }
     }
 }
@@ -226,7 +355,9 @@ void textureTool::load(const char* name) {
     archive(*this);
     changed = false;
     reloadTextures();
-    currentTexture = (int)textures.size();
+    // BUGFIX: was textures.size() - one past the end; onRender() then indexed
+    // textures[] out of bounds every frame.
+    currentTexture = (int)textures.size() - 1;
 }
 
 
@@ -295,9 +426,11 @@ void textureTool::load_texture(uint _slot) {
                     LoadInfo.Format = Diligent::TEX_FORMAT_RGBA8_UNORM;
                     break;
             };
-            tex_input[_slot].Release();            
+            tex_input[_slot].Release();
+            pSRV[_slot] = nullptr;
             CreateTextureFromFile(ew_paths.get_full(FileName).c_str(), LoadInfo, m_pDevice, &tex_input[_slot]);
-            pSRV[_slot] = tex_input[_slot]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+            if (tex_input[_slot])  // BUGFIX: load can fail -> was a null deref
+                pSRV[_slot] = tex_input[_slot]->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
         } else {
             // warn no tin poath
         }
@@ -307,6 +440,7 @@ void textureTool::load_texture(uint _slot) {
 void textureTool::clear_texture(uint _slot) {
     texturePaths[_slot].clear();
     tex_input[_slot].Release();
+    pSRV[_slot] = nullptr;  // BUGFIX: was left dangling after the texture died
 }
 
 void textureTool::renderGui_A() {
@@ -331,6 +465,8 @@ void textureTool::renderGui_A() {
         if (ImGui::BeginPopupContextItem("left_context")) {
             if (ImGui::MenuItem("delete")) {
                 textures.erase(textures.begin() + i);
+                // keep currentTexture a valid index (or -1 when empty)
+                if (currentTexture >= (int)textures.size()) currentTexture = (int)textures.size() - 1;
             }
             ImGui::EndPopup();
         }
@@ -394,26 +530,30 @@ void textureTool::renderGui_TEX() {
                                 T.bezier = (T.start + T.stop) * 0.5f;
                                 clickCount++;
                                 break;
-                            case 2:
+                            case 2: {
                                 float2 tangent = glm::normalize(T.stop - T.start);
                                 float2 right = float2(-tangent.y, tangent.x);
                                 float2 diff = imagePixelPos - T.start;
-                                T.width = abs(glm::dot(diff, right));
+                                // BUGFIX: clamp to >= 1 pixel. A (near-)collinear 3rd click gave
+                                // width ~0 -> aspect exploding -> a multi-gigapixel render target
+                                // request below. Also guards the division right after.
+                                T.width = __max(abs(glm::dot(diff, right)), 1.f);
 
                                 // auto setup the aspect
                                 // can be done a lot better by alowing 2:3 etc
                                 float aspect = glm::length(T.stop - T.start) / (T.width * 2.f);
+                                // BUGFIX: clamp to the GUI's own [1,16] range (mips<=7 -> max 8k)
                                 if (aspect > 1.f) {
                                     T.texWidth = 1;
-                                    T.texHeight = (int)(aspect + 0.5f);
+                                    T.texHeight = Diligent::clamp((int)(aspect + 0.5f), 1, 16);
                                 } else {
-                                    T.texWidth = (int)(1.f / aspect + 0.5f);
+                                    T.texWidth = Diligent::clamp((int)(1.f / aspect + 0.5f), 1, 16);
                                     T.texHeight = 1;
                                 }
                                 clickCount++;
                                 clickMode = false;
                                 changed = true;
-                                break;
+                            } break;
                         }
                     }
                 } else {
@@ -467,8 +607,10 @@ void textureTool::renderGui_TEX() {
                     clickCount = 0;
                 }
                 if (ImGui::MenuItem("delete")) {
-                    if (textures.size() > 0) {
+                    // BUGFIX: bounds check - currentTexture could be -1 or == size()
+                    if (currentTexture >= 0 && currentTexture < (int)textures.size()) {
                         textures.erase(textures.begin() + currentTexture);
+                        if (currentTexture >= (int)textures.size()) currentTexture = (int)textures.size() - 1;
                     }
                 }
                 ImGui::EndPopup();
@@ -629,8 +771,13 @@ void textureTool::renderGui_C() {
     ImGui::Separator();
 
     // FIXME outputZoom
-    ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(FBO.pSRV[0]), ImVec2(FBO.getSize().x * 2.f, FBO.getSize().y * 2.f),
-                       ImVec2(0, 0), ImVec2(1, 1), ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+    // BUGFIX: FBO.pSRV[0] was an uninitialized pointer until the first bake -
+    // this handed garbage to the ImGui renderer on every frame before that.
+    if (FBO.pSRV[0]) {
+        ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(FBO.pSRV[0]),
+                           ImVec2(FBO.getSize().x * 2.f, FBO.getSize().y * 2.f), ImVec2(0, 0), ImVec2(1, 1),
+                           ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+    }
 
     ImGui::Separator();
 }
@@ -748,7 +895,9 @@ void textureTool::renderGui_right() {
 }
 
 void textureTool::onRender() {
-    if (changed && currentTexture >= 0) {
+    // BUGFIX: upper bound was missing; load() used to leave currentTexture one past
+    // the end (also fixed), which made this bake from a non-existent element.
+    if (changed && currentTexture >= 0 && currentTexture < (int)textures.size()) {
         renderToTexture(currentTexture);
         changed = false;
     }
