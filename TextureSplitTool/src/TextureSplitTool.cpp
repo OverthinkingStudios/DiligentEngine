@@ -14,14 +14,10 @@ gui _Gui;
 
 float header_height;
 
-
-
-
-void saveTexture(Diligent::RefCntAutoPtr<Diligent::IRenderDevice> m_pDevice, 
+void saveTexture(Diligent::RefCntAutoPtr<Diligent::IRenderDevice> m_pDevice,
                  Diligent::RefCntAutoPtr<Diligent::IDeviceContext> pContext,
-                 Diligent::RefCntAutoPtr<Diligent::ITexture> _tex,
-                 std::string filename, bool _alpha, Diligent::IMAGE_FILE_FORMAT _format) 
-{
+                 Diligent::RefCntAutoPtr<Diligent::ITexture> _tex, std::string filename, bool _alpha,
+                 Diligent::IMAGE_FILE_FORMAT _format) {
     Diligent::TextureDesc StagingTexDesc;
     StagingTexDesc.Name = "Staging texture for download";
     StagingTexDesc.Type = Diligent::RESOURCE_DIM_TEX_2D;
@@ -43,7 +39,7 @@ void saveTexture(Diligent::RefCntAutoPtr<Diligent::IRenderDevice> m_pDevice,
 
     // map the data
     Diligent::MappedTextureSubresource MappedData;
-    //MAP_FLAG_DO_NOT_WAIT
+    // MAP_FLAG_DO_NOT_WAIT
     pContext->MapTextureSubresource(pStagingTex, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr,
                                     MappedData);
     {
@@ -69,11 +65,6 @@ void saveTexture(Diligent::RefCntAutoPtr<Diligent::IRenderDevice> m_pDevice,
     }
     pContext->UnmapTextureSubresource(pStagingTex, 0, 0);
 }
-
-
-
-
-
 
 earthworksPaths ew_paths;
 std::string earthworksPaths::root = "";
@@ -332,21 +323,38 @@ void textureTool::exportNow() {
         m_pImmediateContext->Flush();  // Flush the context to ensure the GPU finishes the copy operation
         m_pImmediateContext->WaitForIdle();
 
+        _plantMaterial_TT material;
         std::string baseName = ew_paths.get_pathNoExt(path);
-        std::string filename = ew_paths.get_full(baseName + "_" + std::to_string(i) + "_albedo.png");
+
+        material.albedoPath = baseName + "_" + std::to_string(i) + "_albedo.png";
+        material.albedoName = ew_paths.get_name(material.albedoPath);
+        std::string filename = ew_paths.get_full(material.albedoPath);
         saveTexture(m_pDevice, m_pImmediateContext, FBO.pTexture[0], filename, true, Diligent::IMAGE_FILE_FORMAT_PNG);
 
         if (tex_input[2]) {
-            std::string filename = ew_paths.get_full(baseName + "_" + std::to_string(i) + "_normal.png");
+            material.normalPath = baseName + "_" + std::to_string(i) + "_normal.png";
+            material.normalName = ew_paths.get_name(material.albedoPath);
+            std::string filename = ew_paths.get_full(material.albedoPath);
             saveTexture(m_pDevice, m_pImmediateContext, FBO.pTexture[1], filename, false,
                         Diligent::IMAGE_FILE_FORMAT_PNG);
         }
 
         if (tex_input[3]) {
-            std::string filename = ew_paths.get_full(baseName + "_" + std::to_string(i) + "_translucency.png");
+            material.translucencyPath = baseName + "_" + std::to_string(i) + "_translucency.png";
+            material.translucencyName = ew_paths.get_name(material.albedoPath);
+            std::string filename = ew_paths.get_full(material.albedoPath);
             saveTexture(m_pDevice, m_pImmediateContext, FBO.pTexture[2], filename, false,
                         Diligent::IMAGE_FILE_FORMAT_PNG);
         }
+
+        material.displayName = ew_paths.get_name(path);
+        material.fullPath = ew_paths.get_full(baseName + ".vegetationMaterial");
+
+        std::ofstream os(material.fullPath);
+        cereal::JSONOutputArchive archive(os);
+        archive(material);
+
+         
     }
 }
 
@@ -437,17 +445,15 @@ void textureTool::renderToTexture(int _slot) {
     m_pImmediateContext->Flush();
     m_pImmediateContext->SetRenderTargets(0, nullptr, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_NONE);
 
-    
     // 2. Define the transition barrier
     Diligent::StateTransitionDesc Barrier;
-    Barrier.pResource = pSRV[0]; 
+    Barrier.pResource = pSRV[0];
     Barrier.OldState = Diligent::RESOURCE_STATE_RENDER_TARGET;
     Barrier.NewState = Diligent::RESOURCE_STATE_SHADER_RESOURCE;
-    //Barrier.TransitionMode = Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+    // Barrier.TransitionMode = Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
 
     // 3. Execute the transition
     m_pImmediateContext->TransitionResourceStates(1, &Barrier);
-    
 }
 
 void textureTool::reloadTextures() {
@@ -490,7 +496,6 @@ void textureTool::load() {
         }
         changed_for_save = false;
     }
-    
 }
 
 void textureTool::save() {
@@ -516,7 +521,6 @@ void textureTool::save_as() {
         }
         changed_for_save = false;
     }
-    
 }
 
 void textureTool::load_texture(uint _slot) {
@@ -578,20 +582,16 @@ void textureTool::onGuiMenubar() {
         if (ImGui::MenuItem("export", "Ctrl+S")) {
             exportNow();
         }
-        
-        
-        
+
         ImGui::EndMenu();
     }
 
-    
     ImGui::SameLine(0, 100);
-    //ImGui::SetCursorPosX(ImGui::GetIO().DisplaySize.x - 300);
+    // ImGui::SetCursorPosX(ImGui::GetIO().DisplaySize.x - 300);
     ImGui::SetCursorPosY(header_height - h_H1 - 7);
     _Gui.text(font_H1, name.c_str());
     _Gui.tooltip(font_normal, path.c_str());
 }
-
 
 void textureTool::renderGui_A() {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -681,6 +681,7 @@ void textureTool::renderGui_TEX() {
                                 clickCount++;
                                 break;
                             case 2: {
+                                T.widthMarker = imagePixelPos;
                                 float2 tangent = glm::normalize(T.stop - T.start);
                                 float2 right = float2(-tangent.y, tangent.x);
                                 float2 diff = imagePixelPos - T.start;
@@ -712,6 +713,7 @@ void textureTool::renderGui_TEX() {
                         float A = glm::length(T.start - imagePixelPos);
                         float B = glm::length(T.stop - imagePixelPos);
                         float C = glm::length(T.bezier - imagePixelPos);
+                        float D = glm::length(T.widthMarker - imagePixelPos);
 
                         if (A < 10)
                             dragSelector = 1;
@@ -719,6 +721,8 @@ void textureTool::renderGui_TEX() {
                             dragSelector = 2;
                         else if (C < 10)
                             dragSelector = 3;
+                        else if (D < 10)
+                            dragSelector = 4;
                         else
                             dragSelector = 0;
                     }
@@ -737,6 +741,14 @@ void textureTool::renderGui_TEX() {
                                     break;
                                 case 3:
                                     T.bezier = imagePixelPos;
+                                    changed = true;
+                                    break;
+                                case 4:
+                                    T.widthMarker = imagePixelPos;
+                                    float2 tangent = glm::normalize(T.stop - T.start);
+                                    float2 right = float2(-tangent.y, tangent.x);
+                                    float2 diff = imagePixelPos - T.start;
+                                    T.width = __max(abs(glm::dot(diff, right)), 1.f);
                                     changed = true;
                                     break;
                             }
@@ -778,6 +790,8 @@ void textureTool::renderGui_TEX() {
             draw_list->AddCircle(root_pos + toImVec2_b(T.start) * zoom, 10, (currentTexture == i) ? B : A, 50, 3.f);
             draw_list->AddCircle(root_pos + toImVec2_b(T.stop) * zoom, 10, (currentTexture == i) ? C : A, 50, 3.f);
             draw_list->AddCircle(root_pos + toImVec2_b(T.bezier) * zoom, 10, (currentTexture == i) ? D : A, 50, 3.f);
+            draw_list->AddCircle(root_pos + toImVec2_b(T.widthMarker) * zoom, 10, (currentTexture == i) ? D : A, 50,
+                                 3.f);
 
             if (currentTexture == i) {
                 switch (dragSelector) {
@@ -789,6 +803,10 @@ void textureTool::renderGui_TEX() {
                         break;
                     case 3:
                         draw_list->AddCircle(root_pos + toImVec2_b(T.bezier) * zoom, 12, W, 50, 3.f);
+                        ;
+                        break;
+                    case 4:
+                        draw_list->AddCircle(root_pos + toImVec2_b(T.widthMarker) * zoom, 12, W, 50, 3.f);
                         ;
                         break;
                 }
@@ -854,28 +872,23 @@ void textureTool::renderGui_C() {
     changed |= _Gui.dragFloat("normal scale", &normalScale, 0.01f, 0.1f, 3.f);
     ImGui::Separator();
 
-
-
     // ImGui::BeginChildFrame(1002, ImVec2(40 * 8, 40 * 8), 0);
     {
         float y = ImGui::GetCursorPosY();
         float font_height = ImGui::GetFontSize();
         if (currentTexture >= 0 && currentTexture < textures.size()) {
-
             int scale = 4 * (int)pow(2, textures[currentTexture].numMips);
             int W = (int)textures[currentTexture].texWidth * scale;
             int H = (int)textures[currentTexture].texHeight * scale;
-            
+
             _Gui.text(font_H2, "(%d, %d)", W, H);
             ImGui::NewLine();
             changed |= _Gui.dragInt("width", &textures[currentTexture].texWidth, 0.1f, 1, 16);
             changed |= _Gui.dragInt("height", &textures[currentTexture].texHeight, 0.1f, 1, 16);
             changed |= _Gui.dragInt("mips", &textures[currentTexture].numMips, 0.1f, 0, 7);
 
-
             ImGui::SetCursorPosY(y);
             ImGui::SetCursorPosX(250);
-
 
             ImGui::BeginTable("GridSelectableTable", 8, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Borders,
                               ImVec2(font_height * 8, font_height * 8));
@@ -908,10 +921,6 @@ void textureTool::renderGui_C() {
                 }
             }
             ImGui::EndTable();
-
-            
-            
-            
         }
     }
     // ImGui::EndChildFrame();
@@ -969,14 +978,14 @@ void textureTool::renderGui_C() {
 void textureTool::renderGui_main() {
     ImGuiStyle& style = ImGui::GetStyle();
 
-    
+
     //ImGuiIO& io = ImGui::GetIO();
 
     // Set a permanent, writeable path (e.g., in your executable directory or user app data)
-    //std::string ini = io.IniFilename; 
+    //std::string ini = io.IniFilename;
     //if (ImGui::BeginTable("SplitterTable", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings)) {
-    
-    
+
+
 
     ImVec2 space = ImGui::GetContentRegionAvail();
     float A = 200;
@@ -1005,7 +1014,7 @@ void textureTool::renderGui_main() {
         renderGui_C();
     }
     ImGui::EndChildFrame();
-    
+
 }
 */
 /*
@@ -1103,7 +1112,6 @@ void textureTool::renderGui() {
 
     ImGuiStyle& style = ImGui::GetStyle();
 
-
     ImGui::PushFont(font_normal);
     {
         float menu_bar_height = ImGui::GetFrameHeight();
@@ -1117,9 +1125,9 @@ void textureTool::renderGui() {
                 if (ImGui::IsKeyPressed(ImGuiKey::ImGuiKey_S)) {
                     save_as();
                 }
-                //if (ImGui::IsKeyPressed(ImGuiKey::ImGuiKey_O)) {
-                //    load();
-               // }
+                // if (ImGui::IsKeyPressed(ImGuiKey::ImGuiKey_O)) {
+                //     load();
+                // }
             }
 
             if (ImGui::BeginTable("SplitterTable", 3, ImGuiTableFlags_Resizable)) {
@@ -1199,14 +1207,19 @@ TextureSplitTool::~TextureSplitTool() {
     std::ofstream os(savedGamesFile);
     cereal::JSONOutputArchive archive(os);
     archive(info);
+
+    std::filesystem::path local = Diligent::FileSystem::GetLocalAppDataDirectory();
+    ImGui::SaveIniSettingsToDisk((local / "imgui.ini").string().c_str());
+    //ImGui::LoadIniSettingsFromDisk((local / "imgui.ini").string().c_str());
 }
 
 void TextureSplitTool::Initialize() {
-    //const char* gameroot = std::getenv("ACSMP_GAMEROOT");
-    //if (gameroot) {
-    //    earthworksPaths::root = gameroot;  //        +;
-    //    earthworksPaths::root += "\\textureTool\\";
-    //}
+    // const char* gameroot = std::getenv("ACSMP_GAMEROOT");
+    // if (gameroot) {
+    //     earthworksPaths::root = gameroot;  //        +;
+    //     earthworksPaths::root += "\\textureTool\\";
+    // }
+    
 }
 
 void TextureSplitTool::OnConfigureSettings(Diligent::EarthworksFXAppSettings& settings) {
@@ -1214,13 +1227,24 @@ void TextureSplitTool::OnConfigureSettings(Diligent::EarthworksFXAppSettings& se
     settings.CreateScene = false;
     settings.VSync = true;
     // FIXME needs fulklscreen flag as well
+
+    
 }
 
-void TextureSplitTool::OnModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& attribs) {}
+void TextureSplitTool::OnModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& attribs) {
+    
+
+}
 
 void TextureSplitTool::OnGraphicsReady() {
     ImGuiIO& io = ImGui::GetIO();
+
+    std::filesystem::path local = Diligent::FileSystem::GetLocalAppDataDirectory();
+    //ImGui::SaveIniSettingsToDisk("path/to/your/backup_config.ini");
+    ImGui::LoadIniSettingsFromDisk((local / "imgui.ini").string().c_str());
+
     
+
     font_small = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 16.f);
     font_normal = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 20.f);
     font_H1 = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 26.f);
@@ -1253,9 +1277,9 @@ void TextureSplitTool::OnGraphicsReady() {
     texture_tool.init();
 
     // TEMP to reproduce the crash
-    //texture_tool.name = "TEST.textureTool";
-    //texture_tool.path = "TEST.textureTool";
-    //texture_tool.load((earthworksPaths::root + texture_tool.path).c_str());
+    // texture_tool.name = "TEST.textureTool";
+    // texture_tool.path = "TEST.textureTool";
+    // texture_tool.load((earthworksPaths::root + texture_tool.path).c_str());
 }
 
 void TextureSplitTool::OnRender() {}
@@ -1282,11 +1306,10 @@ void TextureSplitTool::onGuiMenubar() {
 
     ImGui::PushFont(font_H2);
     if (ImGui::BeginMainMenuBar()) {
-
         header_height = ImGui::GetWindowHeight();
-        
-        //ImGui::SetCursorPos(ImVec2(10, 15));
-        //ImGui::SetCursorPosY(header_height - h_small - 7);        
+
+        // ImGui::SetCursorPos(ImVec2(10, 15));
+        // ImGui::SetCursorPosY(header_height - h_small - 7);
         //_Gui.text(font_small, "earthworks");
         ImGui::SetCursorPosY(header_height - h_normal - 7);
         _Gui.text(font_normal, "Texture Tool");
@@ -1312,14 +1335,12 @@ void TextureSplitTool::onGuiMenubar() {
         }
         ImGui::PopFont();
 
-        //ImGui::SameLine(0, 100);
+        // ImGui::SameLine(0, 100);
         ImGui::SetCursorPosX(ImGui::GetIO().DisplaySize.x - 500);
         ImGui::SetCursorPosY(header_height - h_normal - 7);
-        //ImGui::SetCursorPos(ImVec2(600, 15));
+        // ImGui::SetCursorPos(ImVec2(600, 15));
         _Gui.text(font_normal, info.dataRootFolder.c_str());
-       
 
-        
         ImGui::EndMainMenuBar();
     }
     ImGui::PopFont();

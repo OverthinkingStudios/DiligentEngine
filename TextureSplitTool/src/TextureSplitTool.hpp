@@ -214,7 +214,7 @@ struct sprite_material_TT {
 
     float translucency = 1.f;
     float alphaPow = 1.f;
-    float roughness[2] = {0.02f, 0.3f};
+    float roughness[2] = {0.1f, 0.7f};
 
     float4 albedoScale[2] = {{0.5f, 0.5f, 0.5f, 1.f}, {0.6f, 0.5f, 0.6f, 1.f}};  // front and back
 
@@ -334,6 +334,7 @@ class oneTexture {
     float2 stop = float2(0.5f, 0.4f);
     float2 bezier = float2(0.f, 0.f);
     float width = 0.05f;  // all in UV coordinates
+    float2 widthMarker = float2(0.5f, 0.5f);
     float bezierOffset = 0.f;
 
     std::array<float, 9> offset = {0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -359,9 +360,12 @@ class oneTexture {
         if (_version >= 102) {
             archive(numMips);  // BUGFIX: was never serialized -> silently reset to 5 on every load
         }
+        if (_version >= 103) {
+            archive_float2(widthMarker);
+        }
     }
 };
-CEREAL_CLASS_VERSION(oneTexture, 102);
+CEREAL_CLASS_VERSION(oneTexture, 103);
 
 enum texTypes { tex_albedo, tex_alpha, tex_normal, tex_translucency, tex_displacement };
 
