@@ -1,6 +1,7 @@
 #include "TextureSplitTool.hpp"
 
 #include "imgui.h"
+#include "overthinkingEnv.h"
 // #include "GraphicsAccessories.hpp"
 #include "FileWrapper.hpp"
 #include "MapHelper.hpp"
@@ -9,8 +10,73 @@
 // machine-dependent bug we were chasing. Re-add locally when stepping through.
 gui _Gui;
 
+#pragma optimize("", off)
+
+float header_height;
+
+
+
+
+void saveTexture(Diligent::RefCntAutoPtr<Diligent::IRenderDevice> m_pDevice, 
+                 Diligent::RefCntAutoPtr<Diligent::IDeviceContext> pContext,
+                 Diligent::RefCntAutoPtr<Diligent::ITexture> _tex,
+                 std::string filename, bool _alpha, Diligent::IMAGE_FILE_FORMAT _format) 
+{
+    Diligent::TextureDesc StagingTexDesc;
+    StagingTexDesc.Name = "Staging texture for download";
+    StagingTexDesc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+    StagingTexDesc.Usage = Diligent::USAGE_STAGING;
+    StagingTexDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
+    StagingTexDesc.Width = _tex->GetDesc().Width;
+    StagingTexDesc.Height = _tex->GetDesc().Height;
+    StagingTexDesc.Format = _tex->GetDesc().Format;
+
+    Diligent::RefCntAutoPtr<Diligent::ITexture> pStagingTex;
+    m_pDevice->CreateTexture(StagingTexDesc, nullptr, &pStagingTex);
+
+    // copy data
+    Diligent::CopyTextureAttribs CopyAttribs(_tex, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION, pStagingTex,
+                                             Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    pContext->CopyTexture(CopyAttribs);
+    pContext->Flush();  // Flush the context to ensure the GPU finishes the copy operation
+    pContext->WaitForIdle();
+
+    // map the data
+    Diligent::MappedTextureSubresource MappedData;
+    //MAP_FLAG_DO_NOT_WAIT
+    pContext->MapTextureSubresource(pStagingTex, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr,
+                                    MappedData);
+    {
+        Diligent::Image::EncodeInfo Info;
+        Info.Width = StagingTexDesc.Width;
+        Info.Height = StagingTexDesc.Height;
+        Info.TexFormat = StagingTexDesc.Format;
+        Info.KeepAlpha = _alpha;
+        Info.FlipY = m_pDevice->GetDeviceInfo().IsGLDevice();
+        Info.pData = MappedData.pData;
+        Info.Stride = static_cast<Diligent::Uint32>(MappedData.Stride);
+        Info.FileFormat = _format;
+        Info.JpegQuality = 95;
+
+        Diligent::RefCntAutoPtr<Diligent::IDataBlob> pEncodedImage;
+        Diligent::Image::Encode(Info, &pEncodedImage);
+
+        FILE* f = fopen(filename.c_str(), "wb");
+        if (f) {
+            fwrite(pEncodedImage->GetDataPtr(), 1, pEncodedImage->GetSize(), f);
+            fclose(f);
+        }
+    }
+    pContext->UnmapTextureSubresource(pStagingTex, 0, 0);
+}
+
+
+
+
+
+
 earthworksPaths ew_paths;
-std::string earthworksPaths::root = "F:/ESim_NextCloud/eSim-Plantwork/resources/";
+std::string earthworksPaths::root = "";
 
 bool earthworksPaths::make_relative(std::string& _path) {
     clean(_path);
@@ -38,6 +104,11 @@ std::string earthworksPaths::get_fullname(std::string& _path) {
     return _path.substr(start);
 }
 
+std::string earthworksPaths::get_pathNoExt(std::string& _path) {
+    size_t stop = _path.find_last_of(".");
+    return _path.substr(0, stop);
+}
+
 void earthworksPaths::replaceAll(std::string& _str, const std::string& _from, const std::string& _to) {
     if (_from.empty()) return;
 
@@ -60,7 +131,6 @@ void earthworksPaths::to_back_slash(std::string& _path) { replaceAll(_path, "/",
 void render_target::setup(int2 _size, int _numTargets, Diligent::RefCntAutoPtr<Diligent::IRenderDevice> _pDevice,
                           Diligent::RefCntAutoPtr<Diligent::IDeviceContext> _pImmediateContext) {
     if (_size != size) {
-
         size = _size;
         numtargets = _numTargets;
 
@@ -93,21 +163,24 @@ void render_target::setup(int2 _size, int _numTargets, Diligent::RefCntAutoPtr<D
     }
 }
 
-
 // CPU mirror of gConstantBuffer in extractTextures.hlsl. Layout must match HLSL
 // cbuffer packing exactly: no float2 straddles a 16-byte boundary here, and an
 // HLSL cbuffer bool is 4 bytes (hence int). 80 bytes total.
 struct ExtractTexturesConstants {
-    float2 A, B, C, D;            // corners of the extraction quad (UV space)
-    float2 start, stop, bezier;   // curve control points (UV space)
-    float width;                  // half-width of the strip (UV space)
+    float2 A, B, C, D;           // corners of the extraction quad (UV space)
+    float2 start, stop, bezier;  // curve control points (UV space)
+    float width;                 // half-width of the strip (UV space)
     float padd;
     int flipRed;
     int flipGreen;
     float nStrength;
     int toSRGB;
+
+    // MAterial
+    float4 albedoScale[2];
+    float roughness[2];
 };
-static_assert(sizeof(ExtractTexturesConstants) == 80, "must match gConstantBuffer in extractTextures.hlsl");
+static_assert(sizeof(ExtractTexturesConstants) == 120, "must match gConstantBuffer in extractTextures.hlsl");
 
 void textureTool::init() {
     Diligent::RefCntAutoPtr<Diligent::IShaderSourceInputStreamFactory> pShaderSourceFactory;
@@ -251,8 +324,29 @@ void textureTool::init() {
 }
 
 void textureTool::exportNow() {
+    save();
+
     for (int i = 0; i < textures.size(); i++) {
         renderToTexture(i);
+
+        m_pImmediateContext->Flush();  // Flush the context to ensure the GPU finishes the copy operation
+        m_pImmediateContext->WaitForIdle();
+
+        std::string baseName = ew_paths.get_pathNoExt(path);
+        std::string filename = ew_paths.get_full(baseName + "_" + std::to_string(i) + "_albedo.png");
+        saveTexture(m_pDevice, m_pImmediateContext, FBO.pTexture[0], filename, true, Diligent::IMAGE_FILE_FORMAT_PNG);
+
+        if (tex_input[2]) {
+            std::string filename = ew_paths.get_full(baseName + "_" + std::to_string(i) + "_normal.png");
+            saveTexture(m_pDevice, m_pImmediateContext, FBO.pTexture[1], filename, false,
+                        Diligent::IMAGE_FILE_FORMAT_PNG);
+        }
+
+        if (tex_input[3]) {
+            std::string filename = ew_paths.get_full(baseName + "_" + std::to_string(i) + "_translucency.png");
+            saveTexture(m_pDevice, m_pImmediateContext, FBO.pTexture[2], filename, false,
+                        Diligent::IMAGE_FILE_FORMAT_PNG);
+        }
     }
 }
 
@@ -306,6 +400,12 @@ void textureTool::renderToTexture(int _slot) {
         CB->flipGreen = flipGreen ? 1 : 0;
         CB->nStrength = normalScale;
         CB->toSRGB = 0;  // original only sets this for the final export, not the preview
+
+        CB->albedoScale[0].rgb = material._constData.albedoScale[0];
+        CB->albedoScale[1].rgb = material._constData.albedoScale[1];
+
+        CB->roughness[0] = material._constData.roughness[0];
+        CB->roughness[1] = material._constData.roughness[1];
     }
 
     // BUGFIX: command order. Previous order was Commit -> SetRenderTargets -> SetPSO,
@@ -332,6 +432,22 @@ void textureTool::renderToTexture(int _slot) {
 
     Diligent::DrawAttribs DrawAttrs(1, Diligent::DRAW_FLAG_VERIFY_ALL);
     m_pImmediateContext->Draw(DrawAttrs);
+
+    // unbind
+    m_pImmediateContext->Flush();
+    m_pImmediateContext->SetRenderTargets(0, nullptr, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_NONE);
+
+    
+    // 2. Define the transition barrier
+    Diligent::StateTransitionDesc Barrier;
+    Barrier.pResource = pSRV[0]; 
+    Barrier.OldState = Diligent::RESOURCE_STATE_RENDER_TARGET;
+    Barrier.NewState = Diligent::RESOURCE_STATE_SHADER_RESOURCE;
+    //Barrier.TransitionMode = Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+
+    // 3. Execute the transition
+    m_pImmediateContext->TransitionResourceStates(1, &Barrier);
+    
 }
 
 void textureTool::reloadTextures() {
@@ -360,8 +476,6 @@ void textureTool::load(const char* name) {
     currentTexture = (int)textures.size() - 1;
 }
 
-
-
 void textureTool::load() {
     Diligent::FileDialogAttribs OpenDialogAttribs{Diligent::FILE_DIALOG_TYPE_OPEN};
     OpenDialogAttribs.Title = "texture tool";
@@ -374,7 +488,9 @@ void textureTool::load() {
 
             load(ew_paths.get_full(FileName).c_str());
         }
+        changed_for_save = false;
     }
+    
 }
 
 void textureTool::save() {
@@ -382,6 +498,7 @@ void textureTool::save() {
     cereal::JSONOutputArchive archive(os);
     archive(*this);
     changed = false;
+    changed_for_save = false;
 }
 
 void textureTool::save_as() {
@@ -397,7 +514,9 @@ void textureTool::save_as() {
             name = ew_paths.get_name(FileName);
             save();
         }
+        changed_for_save = false;
     }
+    
 }
 
 void textureTool::load_texture(uint _slot) {
@@ -442,6 +561,37 @@ void textureTool::clear_texture(uint _slot) {
     tex_input[_slot].Release();
     pSRV[_slot] = nullptr;  // BUGFIX: was left dangling after the texture died
 }
+
+void textureTool::onGuiMenubar() {
+    if (ImGui::BeginMenu("file")) {
+        if (ImGui::MenuItem("load", "Ctrl+O")) {
+            load();
+        }
+        if (ImGui::MenuItem("save", "")) {
+            save();
+        }
+        if (ImGui::MenuItem("save-as", "Ctrl+S")) {
+            save_as();
+        }
+
+        ImGui::NewLine();
+        if (ImGui::MenuItem("export", "Ctrl+S")) {
+            exportNow();
+        }
+        
+        
+        
+        ImGui::EndMenu();
+    }
+
+    
+    ImGui::SameLine(0, 100);
+    //ImGui::SetCursorPosX(ImGui::GetIO().DisplaySize.x - 300);
+    ImGui::SetCursorPosY(header_height - h_H1 - 7);
+    _Gui.text(font_H1, name.c_str());
+    _Gui.tooltip(font_normal, path.c_str());
+}
+
 
 void textureTool::renderGui_A() {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -579,15 +729,15 @@ void textureTool::renderGui_TEX() {
                             switch (dragSelector) {
                                 case 1:
                                     T.start = imagePixelPos;
-                                    // changed = true;
+                                    changed = true;
                                     break;
                                 case 2:
                                     T.stop = imagePixelPos;
-                                    // changed = true;
+                                    changed = true;
                                     break;
                                 case 3:
                                     T.bezier = imagePixelPos;
-                                    // changed = true;
+                                    changed = true;
                                     break;
                             }
                         } else {
@@ -704,10 +854,29 @@ void textureTool::renderGui_C() {
     changed |= _Gui.dragFloat("normal scale", &normalScale, 0.01f, 0.1f, 3.f);
     ImGui::Separator();
 
+
+
     // ImGui::BeginChildFrame(1002, ImVec2(40 * 8, 40 * 8), 0);
     {
+        float y = ImGui::GetCursorPosY();
         float font_height = ImGui::GetFontSize();
         if (currentTexture >= 0 && currentTexture < textures.size()) {
+
+            int scale = 4 * (int)pow(2, textures[currentTexture].numMips);
+            int W = (int)textures[currentTexture].texWidth * scale;
+            int H = (int)textures[currentTexture].texHeight * scale;
+            
+            _Gui.text(font_H2, "(%d, %d)", W, H);
+            ImGui::NewLine();
+            changed |= _Gui.dragInt("width", &textures[currentTexture].texWidth, 0.1f, 1, 16);
+            changed |= _Gui.dragInt("height", &textures[currentTexture].texHeight, 0.1f, 1, 16);
+            changed |= _Gui.dragInt("mips", &textures[currentTexture].numMips, 0.1f, 0, 7);
+
+
+            ImGui::SetCursorPosY(y);
+            ImGui::SetCursorPosX(250);
+
+
             ImGui::BeginTable("GridSelectableTable", 8, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Borders,
                               ImVec2(font_height * 8, font_height * 8));
             {
@@ -740,15 +909,9 @@ void textureTool::renderGui_C() {
             }
             ImGui::EndTable();
 
-            ImGui::NewLine();
-            changed |= _Gui.dragInt("width", &textures[currentTexture].texWidth, 0.1f, 1, 16);
-            changed |= _Gui.dragInt("height", &textures[currentTexture].texHeight, 0.1f, 1, 16);
-            changed |= _Gui.dragInt("mips", &textures[currentTexture].numMips, 0.1f, 0, 7);
-
-            int scale = 4 * (int)pow(2, textures[currentTexture].numMips);
-            int W = (int)textures[currentTexture].texWidth * scale;
-            int H = (int)textures[currentTexture].texHeight * scale;
-            _Gui.text(font_H2, "(%d, %d)", W, H);
+            
+            
+            
         }
     }
     // ImGui::EndChildFrame();
@@ -763,7 +926,6 @@ void textureTool::renderGui_C() {
             ImGui::SetNextItemWidth(8 * 20);
 
             //??? Do vidually instead with a table up to maybe 8x8? Just click in a celland all left top will light
-            
         }
     }
     // ImGui::EndChildFrame();
@@ -773,20 +935,48 @@ void textureTool::renderGui_C() {
     // FIXME outputZoom
     // BUGFIX: FBO.pSRV[0] was an uninitialized pointer until the first bake -
     // this handed garbage to the ImGui renderer on every frame before that.
+
+    static float ZOOM = 1.f;
+    _Gui.dragFloat("zoom", &ZOOM, 0.02f, 1.f, 4.f);
+
     if (FBO.pSRV[0]) {
         ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(FBO.pSRV[0]),
-                           ImVec2(FBO.getSize().x * 2.f, FBO.getSize().y * 2.f), ImVec2(0, 0), ImVec2(1, 1),
+                           ImVec2(FBO.getSize().x * ZOOM, FBO.getSize().y * ZOOM), ImVec2(0, 0), ImVec2(1, 1),
+                           ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+    }
+    ImGui::SameLine(0, 10);
+    if (FBO.pSRV[1]) {
+        ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(FBO.pSRV[1]),
+                           ImVec2(FBO.getSize().x * ZOOM, FBO.getSize().y * ZOOM), ImVec2(0, 0), ImVec2(1, 1),
+                           ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+    }
+
+    if (FBO.pSRV[2]) {
+        ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(FBO.pSRV[2]),
+                           ImVec2(FBO.getSize().x * ZOOM, FBO.getSize().y * ZOOM), ImVec2(0, 0), ImVec2(1, 1),
+                           ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+    }
+    ImGui::SameLine(0, 10);
+    if (FBO.pSRV[4]) {
+        ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(FBO.pSRV[4]),
+                           ImVec2(FBO.getSize().x * ZOOM, FBO.getSize().y * ZOOM), ImVec2(0, 0), ImVec2(1, 1),
                            ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
     }
 
     ImGui::Separator();
 }
-
+/*
 void textureTool::renderGui_main() {
     ImGuiStyle& style = ImGui::GetStyle();
 
-    _Gui.text_centered(font_H3, name.c_str());
-    _Gui.tooltip(font_H1, path.c_str());
+    
+    //ImGuiIO& io = ImGui::GetIO();
+
+    // Set a permanent, writeable path (e.g., in your executable directory or user app data)
+    //std::string ini = io.IniFilename; 
+    //if (ImGui::BeginTable("SplitterTable", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings)) {
+    
+    
 
     ImVec2 space = ImGui::GetContentRegionAvail();
     float A = 200;
@@ -815,8 +1005,9 @@ void textureTool::renderGui_main() {
         renderGui_C();
     }
     ImGui::EndChildFrame();
+    
 }
-
+*/
 /*
 if (ImGui::Button("load", ImVec2(140, 0)))
         {
@@ -868,6 +1059,7 @@ path.stem().string());
             }
         }
 */
+/*
 void textureTool::renderGui_right() {
     ImGuiStyle& style = ImGui::GetStyle();
     style.Colors[ImGuiCol_FrameBg] = changed_for_save ? ImVec4(0.3f, 0.2f, 0.0f, 1.0f) : ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
@@ -893,7 +1085,7 @@ void textureTool::renderGui_right() {
     }
     ImGui::EndChildFrame();
 }
-
+*/
 void textureTool::onRender() {
     // BUGFIX: upper bound was missing; load() used to leave currentTexture one past
     // the end (also fixed), which made this bake from a non-existent element.
@@ -911,20 +1103,51 @@ void textureTool::renderGui() {
 
     ImGuiStyle& style = ImGui::GetStyle();
 
-    // style.ScaleAllSizes(1.5f); ??? crahses
 
     ImGui::PushFont(font_normal);
     {
-        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->Pos);
-        ImGui::SetNextWindowSize(ImGui::GetMainViewport()->Size - ImVec2(200, 0));
+        float menu_bar_height = ImGui::GetFrameHeight();
+        ImGui::SetNextWindowPos(ImVec2(0, header_height));
+        ImGui::SetNextWindowSize(ImGui::GetMainViewport()->Size - ImVec2(0, header_height));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         style.Colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.12f, 0.12f, 1.0f);  // Dark gray background
         ImGui::Begin("##main", NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
         {
-            renderGui_main();
+            if (ImGui::IsKeyPressed(ImGuiKey::ImGuiMod_Ctrl)) {
+                if (ImGui::IsKeyPressed(ImGuiKey::ImGuiKey_S)) {
+                    save_as();
+                }
+                //if (ImGui::IsKeyPressed(ImGuiKey::ImGuiKey_O)) {
+                //    load();
+               // }
+            }
+
+            if (ImGui::BeginTable("SplitterTable", 3, ImGuiTableFlags_Resizable)) {
+                // Track sizing context across frames
+                ImGui::TableNextRow();
+
+                // --- LEFT PANE ---
+                ImGui::TableNextColumn();
+                ImGui::BeginChild("LeftPaneChild", ImVec2(0, 0), ImGuiChildFlags_None);
+                renderGui_A();
+                ImGui::EndChild();
+
+                // --- RIGHT PANE ---
+                ImGui::TableNextColumn();
+                ImGui::BeginChild("MiddlePaneChild", ImVec2(0, 0), ImGuiChildFlags_None);
+                renderGui_B();
+                ImGui::EndChild();
+
+                ImGui::TableNextColumn();
+                ImGui::BeginChild("RightPaneChild", ImVec2(0, 0), ImGuiChildFlags_None);
+                renderGui_C();
+                ImGui::EndChild();
+
+                ImGui::EndTable();
+            }
         }
         ImGui::End();
-
+        /*
         float x = ImGui::GetMainViewport()->Size.x - 200;
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->Pos + ImVec2(x, 0));
         ImGui::SetNextWindowSize(ImVec2(200, ImGui::GetMainViewport()->Size.y));
@@ -934,6 +1157,7 @@ void textureTool::renderGui() {
             renderGui_right();
         }
         ImGui::End();
+        */
         ImGui::PopStyleVar();
     }
     ImGui::PopFont();
@@ -942,17 +1166,47 @@ void textureTool::renderGui() {
     changed_for_save |= changed;
 }
 
-TextureSplitTool::TextureSplitTool()
-    : Diligent::EarthworksFXApplicationBase("TextureSplitTool", "texture-split-tool", overthinking::Env::Stage::Dev) {}
-
-TextureSplitTool::~TextureSplitTool() = default;
-
-void TextureSplitTool::Initialize() { 
-    const char* gameroot = std::getenv("ACSMP_GAMEROOT"); 
-    if (gameroot) {
-        earthworksPaths::root = gameroot;  //        +;
-        earthworksPaths::root += "\\textureTool\\";
+#include <shlobj.h>
+std::filesystem::path resolveRootPath() {
+    // Get %SavedGames% path from Windows
+    PWSTR saved_games_path = nullptr;
+    const HRESULT hr = SHGetKnownFolderPath(FOLDERID_SavedGames, 0, NULL, &saved_games_path);
+    if (FAILED(hr) || saved_games_path == nullptr) {
+        throw std::runtime_error("SHGetKnownFolderPath(FOLDERID_SavedGames) failed");
     }
+
+    std::filesystem::path root = std::filesystem::path(saved_games_path) / "earthworksTextureTool";
+    CoTaskMemFree(saved_games_path);
+    return root;
+}
+
+TextureSplitTool::TextureSplitTool()
+    : Diligent::EarthworksFXApplicationBase("TextureSplitTool", "texture-split-tool", overthinking::Env::Stage::Dev) {
+    savedGamesFile = resolveRootPath() / "textureTool.info";
+
+    std::filesystem::path local = Diligent::FileSystem::GetLocalAppDataDirectory();
+    savedGamesFile = local / "textureTool.info";
+
+    if (std::filesystem::is_regular_file(savedGamesFile)) {
+        std::ifstream is(savedGamesFile);
+        cereal::JSONInputArchive archive(is);
+        archive(info);
+        earthworksPaths::root = info.dataRootFolder;
+    }
+}
+
+TextureSplitTool::~TextureSplitTool() {
+    std::ofstream os(savedGamesFile);
+    cereal::JSONOutputArchive archive(os);
+    archive(info);
+}
+
+void TextureSplitTool::Initialize() {
+    //const char* gameroot = std::getenv("ACSMP_GAMEROOT");
+    //if (gameroot) {
+    //    earthworksPaths::root = gameroot;  //        +;
+    //    earthworksPaths::root += "\\textureTool\\";
+    //}
 }
 
 void TextureSplitTool::OnConfigureSettings(Diligent::EarthworksFXAppSettings& settings) {
@@ -966,11 +1220,32 @@ void TextureSplitTool::OnModifyEngineInitInfo(const ModifyEngineInitInfoAttribs&
 
 void TextureSplitTool::OnGraphicsReady() {
     ImGuiIO& io = ImGui::GetIO();
-    font_small = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 14.f);
+    
+    font_small = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 16.f);
     font_normal = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 20.f);
-    font_H1 = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 30.f);
-    font_H2 = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 40.f);
-    font_H3 = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 50.f);
+    font_H1 = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 26.f);
+    font_H2 = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 32.f);
+    font_H3 = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 48.f);
+
+    ImGui::PushFont(font_small);
+    h_small = ImGui::CalcTextSize("Small Text").y;
+    ImGui::PopFont();
+
+    ImGui::PushFont(font_normal);
+    h_normal = ImGui::CalcTextSize("Small Text").y;
+    ImGui::PopFont();
+
+    ImGui::PushFont(font_H1);
+    h_H1 = ImGui::CalcTextSize("Small Text").y;
+    ImGui::PopFont();
+
+    ImGui::PushFont(font_H2);
+    h_H2 = ImGui::CalcTextSize("Small Text").y;
+    ImGui::PopFont();
+
+    ImGui::PushFont(font_H3);
+    h_H3 = ImGui::CalcTextSize("Small Text").y;
+    ImGui::PopFont();
 
     texture_tool.m_pDevice = m_pDevice;
     texture_tool.m_pImmediateContext = m_pImmediateContext;
@@ -978,14 +1253,12 @@ void TextureSplitTool::OnGraphicsReady() {
     texture_tool.init();
 
     // TEMP to reproduce the crash
-    texture_tool.name = "TEST.textureTool";
-    texture_tool.path = "TEST.textureTool";
-    texture_tool.load((earthworksPaths::root + texture_tool.path).c_str());
+    //texture_tool.name = "TEST.textureTool";
+    //texture_tool.path = "TEST.textureTool";
+    //texture_tool.load((earthworksPaths::root + texture_tool.path).c_str());
 }
 
-void TextureSplitTool::OnRender() {
-    
-}
+void TextureSplitTool::OnRender() {}
 
 void TextureSplitTool::OnUpdate(double current_time, double elapsed_time, bool do_update_ui) {
     //???EarthworksFXApplicationBase::Update(current_time, elapsed_time, do_update_ui);
@@ -1001,12 +1274,66 @@ void TextureSplitTool::OnUpdate(double current_time, double elapsed_time, bool d
 
 void TextureSplitTool::OnWindowResized(Diligent::Uint32 width, Diligent::Uint32 height) {}
 
+void TextureSplitTool::onGuiMenubar() {
+    auto& style = ImGui::GetStyle();
+
+    style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.02f, 0.04f, 0.01f, 1.0f);
+    if (texture_tool.changed_for_save) style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.3f, 0.2f, 0.01f, 1.0f);
+
+    ImGui::PushFont(font_H2);
+    if (ImGui::BeginMainMenuBar()) {
+
+        header_height = ImGui::GetWindowHeight();
+        
+        //ImGui::SetCursorPos(ImVec2(10, 15));
+        //ImGui::SetCursorPosY(header_height - h_small - 7);        
+        //_Gui.text(font_small, "earthworks");
+        ImGui::SetCursorPosY(header_height - h_normal - 7);
+        _Gui.text(font_normal, "Texture Tool");
+
+        ImGui::SameLine(0, 100);
+        ImGui::PushFont(font_normal);
+        {
+            texture_tool.onGuiMenubar();
+
+            if (ImGui::BeginMenu("file")) {
+                ImGui::Separator();
+
+                if (ImGui::MenuItem("change root folder")) {
+                    std::string FolderName = Diligent::FileSystem::OpenFolderDialog("data root folder");
+                    if (!FolderName.empty()) {
+                        info.dataRootFolder = FolderName;
+                        earthworksPaths::root = info.dataRootFolder;
+                    }
+                }
+
+                ImGui::EndMenu();
+            }
+        }
+        ImGui::PopFont();
+
+        //ImGui::SameLine(0, 100);
+        ImGui::SetCursorPosX(ImGui::GetIO().DisplaySize.x - 500);
+        ImGui::SetCursorPosY(header_height - h_normal - 7);
+        //ImGui::SetCursorPos(ImVec2(600, 15));
+        _Gui.text(font_normal, info.dataRootFolder.c_str());
+       
+
+        
+        ImGui::EndMainMenuBar();
+    }
+    ImGui::PopFont();
+}
+
 void TextureSplitTool::UpdateUI() {
     EarthworksFXApplicationBase::UpdateUI();  // I dont want the common UI
 
     texture_tool.m_pDevice = m_pDevice;
     texture_tool.m_pImmediateContext = m_pImmediateContext;
     texture_tool.m_pSwapChain = m_pSwapChain;
+
+    onGuiMenubar();
+
     return texture_tool.renderGui();
 }
 
