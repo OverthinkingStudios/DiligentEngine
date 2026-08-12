@@ -545,11 +545,6 @@ protected:
     void UpdateUI() override;
     void onGuiMenubar();
 
-    // --- input --------------------------------------------------------------
-
-    /// Feed live mouse state into the (absent) Earthworks camera. Unused here.
-    void SyncInput() override;
-
     // --- misc ---------------------------------------------------------------
 
     /// Release swap-chain-sized resources before a resize/fullscreen switch.

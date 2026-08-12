@@ -1,16 +1,10 @@
 #include "TextureSplitTool.hpp"
-
 #include "imgui.h"
 #include "overthinkingEnv.h"
-// #include "GraphicsAccessories.hpp"
 #include "FileWrapper.hpp"
 #include "MapHelper.hpp"
-// NOTE: removed `#pragma optimize("", off)` - besides the perf hit it changes
-// uninitialized-memory patterns, which can mask/unmask exactly the kind of
-// machine-dependent bug we were chasing. Re-add locally when stepping through.
 gui _Gui;
 
-#pragma optimize("", off)
 
 float header_height;
 
@@ -353,8 +347,6 @@ void textureTool::exportNow() {
         std::ofstream os(material.fullPath);
         cereal::JSONOutputArchive archive(os);
         archive(material);
-
-         
     }
 }
 
@@ -450,7 +442,6 @@ void textureTool::renderToTexture(int _slot) {
     Barrier.pResource = pSRV[0];
     Barrier.OldState = Diligent::RESOURCE_STATE_RENDER_TARGET;
     Barrier.NewState = Diligent::RESOURCE_STATE_SHADER_RESOURCE;
-    // Barrier.TransitionMode = Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
 
     // 3. Execute the transition
     m_pImmediateContext->TransitionResourceStates(1, &Barrier);
@@ -477,8 +468,6 @@ void textureTool::load(const char* name) {
     archive(*this);
     changed = false;
     reloadTextures();
-    // BUGFIX: was textures.size() - one past the end; onRender() then indexed
-    // textures[] out of bounds every frame.
     currentTexture = (int)textures.size() - 1;
 }
 
@@ -587,7 +576,6 @@ void textureTool::onGuiMenubar() {
     }
 
     ImGui::SameLine(0, 100);
-    // ImGui::SetCursorPosX(ImGui::GetIO().DisplaySize.x - 300);
     ImGui::SetCursorPosY(header_height - h_H1 - 7);
     _Gui.text(font_H1, name.c_str());
     _Gui.tooltip(font_normal, path.c_str());
@@ -597,7 +585,6 @@ void textureTool::renderGui_A() {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec2 space = ImGui::GetContentRegionAvail();
 
-    // ImGui::SetCursorPosY(200);
     for (int i = 0; i < 7; i++) ImGui::NewLine();
     for (int i = 0; i < textures.size(); i++) {
         ImGui::PushID(&textures[i]);
@@ -872,7 +859,6 @@ void textureTool::renderGui_C() {
     changed |= _Gui.dragFloat("normal scale", &normalScale, 0.01f, 0.1f, 3.f);
     ImGui::Separator();
 
-    // ImGui::BeginChildFrame(1002, ImVec2(40 * 8, 40 * 8), 0);
     {
         float y = ImGui::GetCursorPosY();
         float font_height = ImGui::GetFontSize();
@@ -890,13 +876,13 @@ void textureTool::renderGui_C() {
             ImGui::SetCursorPosY(y);
             ImGui::SetCursorPosX(250);
 
-            ImGui::BeginTable("GridSelectableTable", 8, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Borders,
-                              ImVec2(font_height * 8, font_height * 8));
+            ImGui::BeginTable("GridSelectableTable", 6, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Borders,
+                              ImVec2(font_height * 6, font_height * 6));
             {
-                for (int row = 1; row <= 8; row++) {
+                for (int row = 1; row <= 6; row++) {
                     ImGui::TableNextRow(ImGuiTableRowFlags_None);
 
-                    for (int col = 1; col <= 8; col++) {
+                    for (int col = 1; col <= 6; col++) {
                         ImGui::TableNextColumn();
                         ImGui::SetNextItemWidth(-FLT_MIN);
 
@@ -923,27 +909,8 @@ void textureTool::renderGui_C() {
             ImGui::EndTable();
         }
     }
-    // ImGui::EndChildFrame();
 
-    ImVec2 space = ImGui::GetContentRegionAvail();
-
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
-    // ImGui::BeginChildFrame(1001, ImVec2(space.x, ImGui::GetFontSize() * 16), 0);
-    {
-        if (currentTexture >= 0 && currentTexture < textures.size()) {
-            ImGui::SetNextItemWidth(8 * 20);
-
-            //??? Do vidually instead with a table up to maybe 8x8? Just click in a celland all left top will light
-        }
-    }
-    // ImGui::EndChildFrame();
-
-    ImGui::Separator();
-
-    // FIXME outputZoom
-    // BUGFIX: FBO.pSRV[0] was an uninitialized pointer until the first bake -
-    // this handed garbage to the ImGui renderer on every frame before that.
+    ImGui::NewLine();
 
     static float ZOOM = 1.f;
     _Gui.dragFloat("zoom", &ZOOM, 0.02f, 1.f, 4.f);
@@ -974,130 +941,8 @@ void textureTool::renderGui_C() {
 
     ImGui::Separator();
 }
-/*
-void textureTool::renderGui_main() {
-    ImGuiStyle& style = ImGui::GetStyle();
 
-
-    //ImGuiIO& io = ImGui::GetIO();
-
-    // Set a permanent, writeable path (e.g., in your executable directory or user app data)
-    //std::string ini = io.IniFilename;
-    //if (ImGui::BeginTable("SplitterTable", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings)) {
-
-
-
-    ImVec2 space = ImGui::GetContentRegionAvail();
-    float A = 200;
-    float C = (space.x - 200) * 0.4f;
-    float B = space.x - A - C;
-
-    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.02f, 0.02f, 0.02f, 0.0f);
-    ImGui::BeginChildFrame(1, ImVec2(A, space.y), 0);
-    {
-        renderGui_A();
-    }
-    ImGui::EndChildFrame();
-
-    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.02f, 0.02f, 0.2f, 0.0f);
-    ImGui::SameLine();
-    ImGui::BeginChildFrame(2, ImVec2(B, space.y), 0);
-    {
-        renderGui_B();
-    }
-    ImGui::EndChildFrame();
-
-    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.02f, 0.2f, 0.02f, 0.0f);
-    ImGui::SameLine();
-    ImGui::BeginChildFrame(3, ImVec2(C, space.y), 0);
-    {
-        renderGui_C();
-    }
-    ImGui::EndChildFrame();
-
-}
-*/
-/*
-if (ImGui::Button("load", ImVec2(140, 0)))
-        {
-            std::filesystem::path path;
-            if (openFileDialog({ {"textureTool"} }, path))
-            {
-                std::ifstream is(path);
-                cereal::JSONInputArchive archive(is);
-                archive(textureToolData);
-                changed = false;
-
-                textureToolData.tex_albedo = Texture::createFromFile(terrafectorEditorMaterial::rootFolder +
-textureToolData.albedo, true, true); textureToolData.tex_alpha =
-Texture::createFromFile(terrafectorEditorMaterial::rootFolder + textureToolData.alpha, true, true);
-                textureToolData.tex_normal = Texture::createFromFile(terrafectorEditorMaterial::rootFolder +
-textureToolData.normal, true, false); textureToolData.tex_translucency =
-Texture::createFromFile(terrafectorEditorMaterial::rootFolder + textureToolData.translucency, true, true);
-                textureToolData.changed = false;
-            }
-        }
-
-        if (textureToolData.changed)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.2f, 0.0f, 1.0f));
-            ImGui::SameLine(0, 20);
-            if (ImGui::Button("save", ImVec2(140, 0)))
-            {
-                std::ofstream os(terrafectorEditorMaterial::rootFolder + textureToolData.path);
-                cereal::JSONOutputArchive archive(os);
-                archive(textureToolData);
-                textureToolData.changed = false;
-            }
-            ImGui::PopStyleColor();
-        }
-
-        //ImGui::SameLine(0, 20);
-        if (ImGui::Button("save - as", ImVec2(140, 0)))
-        {
-            std::filesystem::path path = terrafectorEditorMaterial::rootFolder + textureToolData.path;
-            if (saveFileDialog({ {"textureTool"} }, path))
-            {
-                std::ofstream os(path);
-                cereal::JSONOutputArchive archive(os);
-                textureToolData.path = materialCache::getRelative(path.parent_path().string() + "//" +
-path.stem().string());
-
-                archive(textureToolData);
-                textureToolData.changed = false;
-            }
-        }
-*/
-/*
-void textureTool::renderGui_right() {
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.Colors[ImGuiCol_FrameBg] = changed_for_save ? ImVec4(0.3f, 0.2f, 0.0f, 1.0f) : ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
-    ImGui::BeginChildFrame(200, ImVec2(0, 0), 0);
-    {
-        ImGui::NewLine();
-        _Gui.text_centered(font_H1, "Texture tool");
-
-        ImGui::PushFont(font_H1);
-        {
-            ImGui::NewLine();
-            if (ImGui::Button("load", ImVec2(200, 0))) {
-                load();
-            }  // FIXME hard coded
-            if (ImGui::Button("save", ImVec2(200, 0))) {
-                save();
-            }
-            if (ImGui::Button("save-as", ImVec2(200, 0))) {
-                save_as();
-            }
-        }
-        ImGui::PopFont();
-    }
-    ImGui::EndChildFrame();
-}
-*/
 void textureTool::onRender() {
-    // BUGFIX: upper bound was missing; load() used to leave currentTexture one past
-    // the end (also fixed), which made this bake from a non-existent element.
     if (changed && currentTexture >= 0 && currentTexture < (int)textures.size()) {
         renderToTexture(currentTexture);
         changed = false;
@@ -1125,9 +970,6 @@ void textureTool::renderGui() {
                 if (ImGui::IsKeyPressed(ImGuiKey::ImGuiKey_S)) {
                     save_as();
                 }
-                // if (ImGui::IsKeyPressed(ImGuiKey::ImGuiKey_O)) {
-                //     load();
-                // }
             }
 
             if (ImGui::BeginTable("SplitterTable", 3, ImGuiTableFlags_Resizable)) {
@@ -1155,21 +997,9 @@ void textureTool::renderGui() {
             }
         }
         ImGui::End();
-        /*
-        float x = ImGui::GetMainViewport()->Size.x - 200;
-        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->Pos + ImVec2(x, 0));
-        ImGui::SetNextWindowSize(ImVec2(200, ImGui::GetMainViewport()->Size.y));
-        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);  // Dark gray background
-        ImGui::Begin("##right", NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
-        {
-            renderGui_right();
-        }
-        ImGui::End();
-        */
         ImGui::PopStyleVar();
     }
     ImGui::PopFont();
-    // DockSpaceOverViewport
 
     changed_for_save |= changed;
 }
@@ -1190,7 +1020,7 @@ std::filesystem::path resolveRootPath() {
 
 TextureSplitTool::TextureSplitTool()
     : Diligent::EarthworksFXApplicationBase("TextureSplitTool", "texture-split-tool", overthinking::Env::Stage::Dev) {
-    savedGamesFile = resolveRootPath() / "textureTool.info";
+    //savedGamesFile = resolveRootPath() / "textureTool.info";
 
     std::filesystem::path local = Diligent::FileSystem::GetLocalAppDataDirectory();
     savedGamesFile = local / "textureTool.info";
@@ -1210,40 +1040,24 @@ TextureSplitTool::~TextureSplitTool() {
 
     std::filesystem::path local = Diligent::FileSystem::GetLocalAppDataDirectory();
     ImGui::SaveIniSettingsToDisk((local / "imgui.ini").string().c_str());
-    //ImGui::LoadIniSettingsFromDisk((local / "imgui.ini").string().c_str());
 }
 
-void TextureSplitTool::Initialize() {
-    // const char* gameroot = std::getenv("ACSMP_GAMEROOT");
-    // if (gameroot) {
-    //     earthworksPaths::root = gameroot;  //        +;
-    //     earthworksPaths::root += "\\textureTool\\";
-    // }
-    
-}
+void TextureSplitTool::Initialize() {}
 
 void TextureSplitTool::OnConfigureSettings(Diligent::EarthworksFXAppSettings& settings) {
     // No terrain scene: build the environment + shaders only and render manually.
     settings.CreateScene = false;
     settings.VSync = true;
     // FIXME needs fulklscreen flag as well
-
-    
 }
 
-void TextureSplitTool::OnModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& attribs) {
-    
-
-}
+void TextureSplitTool::OnModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& attribs) {}
 
 void TextureSplitTool::OnGraphicsReady() {
     ImGuiIO& io = ImGui::GetIO();
 
     std::filesystem::path local = Diligent::FileSystem::GetLocalAppDataDirectory();
-    //ImGui::SaveIniSettingsToDisk("path/to/your/backup_config.ini");
     ImGui::LoadIniSettingsFromDisk((local / "imgui.ini").string().c_str());
-
-    
 
     font_small = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 16.f);
     font_normal = io.Fonts->AddFontFromFileTTF("fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf", 20.f);
@@ -1275,17 +1089,11 @@ void TextureSplitTool::OnGraphicsReady() {
     texture_tool.m_pImmediateContext = m_pImmediateContext;
     texture_tool.m_pSwapChain = m_pSwapChain;
     texture_tool.init();
-
-    // TEMP to reproduce the crash
-    // texture_tool.name = "TEST.textureTool";
-    // texture_tool.path = "TEST.textureTool";
-    // texture_tool.load((earthworksPaths::root + texture_tool.path).c_str());
 }
 
 void TextureSplitTool::OnRender() {}
 
 void TextureSplitTool::OnUpdate(double current_time, double elapsed_time, bool do_update_ui) {
-    //???EarthworksFXApplicationBase::Update(current_time, elapsed_time, do_update_ui);
 
     texture_tool.onRender();
 
@@ -1307,10 +1115,6 @@ void TextureSplitTool::onGuiMenubar() {
     ImGui::PushFont(font_H2);
     if (ImGui::BeginMainMenuBar()) {
         header_height = ImGui::GetWindowHeight();
-
-        // ImGui::SetCursorPos(ImVec2(10, 15));
-        // ImGui::SetCursorPosY(header_height - h_small - 7);
-        //_Gui.text(font_small, "earthworks");
         ImGui::SetCursorPosY(header_height - h_normal - 7);
         _Gui.text(font_normal, "Texture Tool");
 
@@ -1335,10 +1139,8 @@ void TextureSplitTool::onGuiMenubar() {
         }
         ImGui::PopFont();
 
-        // ImGui::SameLine(0, 100);
         ImGui::SetCursorPosX(ImGui::GetIO().DisplaySize.x - 500);
         ImGui::SetCursorPosY(header_height - h_normal - 7);
-        // ImGui::SetCursorPos(ImVec2(600, 15));
         _Gui.text(font_normal, info.dataRootFolder.c_str());
 
         ImGui::EndMainMenuBar();
@@ -1347,7 +1149,7 @@ void TextureSplitTool::onGuiMenubar() {
 }
 
 void TextureSplitTool::UpdateUI() {
-    EarthworksFXApplicationBase::UpdateUI();  // I dont want the common UI
+    //EarthworksFXApplicationBase::UpdateUI();  // I dont want the common UI
 
     texture_tool.m_pDevice = m_pDevice;
     texture_tool.m_pImmediateContext = m_pImmediateContext;
@@ -1357,8 +1159,6 @@ void TextureSplitTool::UpdateUI() {
 
     return texture_tool.renderGui();
 }
-
-void TextureSplitTool::SyncInput() {}
 
 void TextureSplitTool::ReleaseSwapChainBuffers() {}
 
