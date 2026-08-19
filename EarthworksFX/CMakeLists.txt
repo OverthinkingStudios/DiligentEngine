@@ -18,8 +18,15 @@ if(NOT TARGET Earthworks::Earthworks)
         ${CMAKE_BINARY_DIR}/Earthworks)
 endif()
 
+# legacy/ (an older renderer: its own src/core, src/compat, hlsl, Falcor.h) is
+# deliberately EXCLUDED from the build - reference and salvage material only.
+# The live tree is src/gpu (the ew:: native layer), src/core and hlsl/.
 file(GLOB EFX_CORE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp")
+
+file(GLOB EFX_GPU_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/*.h")
 
 file(GLOB EFX_HLSL CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/hlsl/*.hlsl"
@@ -54,11 +61,7 @@ elseif(PLATFORM_LINUX)
 endif()
 
 add_library(EarthworksFX STATIC
-    src/compat/Falcor.cpp
-    src/compat/FalcorGpu.cpp
-    src/compat/GlmBasicMath.cpp
-    interface/Falcor.h
-    interface/GlmBasicMath.h
+    ${EFX_GPU_SOURCES}
     ${EFX_CORE_SOURCES}
     ${EFX_HLSL}
     ${EFX_APP_SOURCES}
@@ -77,6 +80,7 @@ target_include_directories(EarthworksFX
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/interface"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/core")
 
 # Committed testflight scenario jsons (see TESTFLIGHTS.md). Dev-machine builds
@@ -85,12 +89,11 @@ target_include_directories(EarthworksFX
 target_compile_definitions(EarthworksFX PRIVATE
     "EFX_TESTFLIGHTS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/testflights\"")
 
-# The original Falcor build defined this GLOBALLY (Falcor/CMakeLists.txt), so
-# every glm clip-space helper the ported core calls (glm::unProject mouse
-# picking, glm::orthoLH/orthoRH bake projections) was compiled with D3D/Vulkan
-# [0,1] depth. Without it glm defaults to GL [-1,1] and those helpers silently
-# change meaning. PUBLIC so app targets compile glm identically. Part of the
-# right-handedness restoration, BRINGUP_NOTES F20.
+# Every glm clip-space helper the core calls (glm::unProject for mouse picking,
+# glm::orthoLH/orthoRH for the bake projections) has to be compiled for the
+# D3D/Vulkan [0,1] depth range. Without this define glm defaults to GL's
+# [-1,1] and those helpers silently change meaning. PUBLIC so that app targets
+# compile glm identically - a mismatch here is an ODR violation.
 target_compile_definitions(EarthworksFX PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE)
 
 if(NOT EARTHWORKS_WITH_OPENJPH OR NOT EARTHWORKS_WITH_ASSIMP)
@@ -159,18 +162,16 @@ set_common_target_properties(EarthworksFX)
 
 if(MSVC)
     target_compile_options(EarthworksFX PRIVATE /bigobj /FS /wd4201)
-    target_compile_definitions(EarthworksFX PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    # _CRT_SECURE_NO_WARNINGS: the core reads the terrain streaming manifests
+    # with fopen/fscanf/fread (terrain.cpp) - silence C4996 rather than rewrite
+    # the hot IO paths.
+    target_compile_definitions(EarthworksFX PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 endif()
 
 set_source_files_properties(${EFX_HLSL} PROPERTIES VS_TOOL_OVERRIDE "None")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/hlsl" PREFIX "hlsl" FILES ${EFX_HLSL})
 source_group("src/core" FILES ${EFX_CORE_SOURCES})
-source_group("src/compat" FILES
-    src/compat/Falcor.cpp
-    src/compat/FalcorGpu.cpp
-    src/compat/GlmBasicMath.cpp
-    interface/Falcor.h
-    interface/GlmBasicMath.h)
+source_group("src/gpu" FILES ${EFX_GPU_SOURCES})
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src/app" PREFIX "src/app" FILES
     src/app/EarthworksFXApplicationBase.cpp
     src/app/EarthworksFXWindowBase.cpp

@@ -17,6 +17,8 @@ void EarthworksFXSample::UpdateUI()
     DrawDebugUI();
 }
 
+// TODO: empty body with an unused parameter - an unreferenced-formal-parameter
+// warning under the zero-warning policy. Use a (void) cast like the other stubs.
 void EarthworksFXSample::OnConfigureSettings(EarthworksFXAppSettings& s) {
     
 }

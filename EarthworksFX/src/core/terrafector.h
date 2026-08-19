@@ -1,10 +1,21 @@
 #pragma once
 
+// ---------------------------------------------------------------------------
+// Terrafector materials and the mesh-terrafector LOD split/cache pipeline.
+//
+// Include from terrain.h AFTER the hlsli-defines block: this relies on the
+// HLSL-shared aliases (float2/float3/float4/uint) being in scope.
+// materials.hlsli brings in TF_material - the byte contract shared with the
+// three terrafector shaders, cereal AND the raw fwrite exports.
+// ---------------------------------------------------------------------------
 
+#include "ewResources.h"
+#include "ewShader.h"
 
-#include "Falcor.h"		// for glm includes float4 etc
-#include<unordered_map>
-#include<list>
+#include <cstddef>      // offsetof (the TF_material byte-contract asserts)
+#include <unordered_map>
+#include <list>
+#include <chrono>
 
 #include "cereal/archives/binary.hpp"
 #include "cereal/archives/xml.hpp"
@@ -21,109 +32,36 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 
-using namespace std::chrono;
-
 #include "ecotope.h"
 
+#include "hlsl/terrain/materials.hlsli"
 
 
-using namespace Falcor;
-#include"hlsl/terrain/groundcover_defines.hlsli"
-#include"hlsl/terrain/terrainDefines.hlsli"
-#include"hlsl/terrain/gpuLights_defines.hlsli"
-#include"hlsl/terrain/materials.hlsli"
-
-
+// Part of the authoring-file format contract: the serialize() functions depend
+// on the exact NVP names these emit. Guarded because TextureSplitTool.hpp
+// carries its own equivalent copies.
+#ifndef archive_float2
 #define archive_float2(v) {archive(CEREAL_NVP(v.x)); archive(CEREAL_NVP(v.y));}
 #define archive_float3(v) {archive(CEREAL_NVP(v.x)); archive(CEREAL_NVP(v.y)); archive(CEREAL_NVP(v.z));}
 #define archive_float4(v) {archive(CEREAL_NVP(v.x)); archive(CEREAL_NVP(v.y)); archive(CEREAL_NVP(v.z)); archive(CEREAL_NVP(v.w));}
+#endif
 
 
-
-class logBlock
-{
-public:
-    uint type;
-    std::chrono::time_point<std::chrono::high_resolution_clock>  startTime;
-};
-
-class JLogger
-{
-private:
-    std::stack<logBlock>    stack;
-    std::chrono::time_point<std::chrono::high_resolution_clock>  startTime;
-
-    static std::string indent(int depth) { return std::string(static_cast<size_t>(depth) * 4, ' '); }
-
-    static spdlog::level::level_enum levelForType(uint type)
-    {
-        switch (type)
-        {
-        case 3: return spdlog::level::err;
-        case 2: return spdlog::level::warn;
-        default: return spdlog::level::info;
-        }
-    }
-
-    static const char* typeLabel(uint type)
-    {
-        static const char* logTypes[4] = {"verb", "info", "warn", "erro"};
-        return logTypes[type < 4 ? type : 0];
-    }
-
-    float elapsedSecondsSince(const std::chrono::time_point<std::chrono::high_resolution_clock>& from) const
-    {
-        const auto now = high_resolution_clock::now();
-        return static_cast<float>(duration_cast<microseconds>(now - from).count()) / 1000000.f;
-    }
-
-public:
-    using SharedPtr = std::shared_ptr<JLogger>;
-
-    static const JLogger::SharedPtr& instancePtr();
-    
-    void startBlock(char* _name, uint _type);
-    void endBlock();
-    void open(char* _name);
-    void close();
-
-    void log(uint _type, std::string _text);
-    void logMulti(uint _type, std::string _text);
-};
-
-class logBlockEvent
-{
-public:
-    logBlockEvent(char* _name, uint _type)
-    {
-        JLogger::instancePtr()->startBlock(_name, _type);
-    }
-
-    ~logBlockEvent()
-    {
-        JLogger::instancePtr()->endBlock();
-    }
-
-private:
-};
-
-#define LOG_BLOCK(_name, _type) logBlockEvent _logEvent##__LINE__(_name, _type)
-#define LOG_LINE(_type, _text) JLogger::instancePtr()->log(_type, _text)
-#define LOG_MULTI(_type, _text) JLogger::instancePtr()->log(_type, _text)
 
 // FIXME move to hlsl
 class  triVertex {
 public:
-    glm::float3 pos;
+    glm::vec3   pos;
     float       alpha;      // might have to be full float4 colour   but look at float16
 
-    glm::float2 uv;         // might have to add second UV
+    glm::vec2   uv;         // might have to add second UV
     uint        material;
     float       buffer;         // now 32
 
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive_float3(pos);
         archive_float2(uv);
         archive(CEREAL_NVP(material));
@@ -132,12 +70,18 @@ public:
 };
 CEREAL_CLASS_VERSION(triVertex, 100);
 
+// The 32-byte stride is load-bearing: triVertex is the StructuredBuffer
+// element of the mesh-terrafector VB (render_meshTerrafector.hlsl `triVertex`)
+// AND a cereal/.lodNCache payload - the trailing `buffer` pad is part of the
+// contract.
+static_assert(sizeof(triVertex) == 32, "triVertex must stay exactly 32 bytes (GPU stride + cache format)");
+
 
 
 class triangleBlock {
 public:
 private:
-    std::array<glm::int4, 128> index;
+    std::array<glm::ivec4, 128> index;
 };
 
 class tileTriangleBlock {
@@ -159,6 +103,7 @@ public:
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(verts));
         archive(CEREAL_NVP(tempIndexBuffer));
     }
@@ -177,7 +122,7 @@ public:
     void logStats();
     void save(const std::string _path);
     bool load(const std::string _path);
-    
+
 
 private:
     uint xMin, xMax, yMin, yMax;
@@ -186,7 +131,7 @@ private:
     float tileSize;
     float bufferSize;
     bool Yup = false;       // default to MAX Z up, Y north X east
-    
+
 public:
     std::vector<tileTriangleBlock> tiles;
     std::vector<std::string> materialNames;
@@ -194,6 +139,7 @@ public:
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(lod));
         archive(CEREAL_NVP(materialNames));
         archive(CEREAL_NVP(tiles));
@@ -208,8 +154,8 @@ struct gpuTileTerrafector
     uint numVerts = 0;
     uint numTriangles = 0;
     uint numBlocks = 0;
-    Buffer::SharedPtr vertex = nullptr;
-    Buffer::SharedPtr index = nullptr;
+    ew::Buffer::SharedPtr vertex = nullptr;
+    ew::Buffer::SharedPtr index = nullptr;
 };
 
 
@@ -249,29 +195,37 @@ public:
     uint find_insert_material(const std::filesystem::path _path);
 	int find_insert_texture(const std::filesystem::path _path, bool isSRGB);
 
-	void setTextures(ShaderVar& var);
+    // Binds the whole gmyTextures_T array by name: only the actually-used
+    // prefix is passed and the layer dummy-pads the remaining declared slots,
+    // because unset descriptor-array elements are UB on Vulkan.
+    // Not implemented: bindless binding - it would mean marking gmyTextures_T
+    // as a runtime-sized descriptor array (Diligent
+    // SHADER_VARIABLE_FLAG_UNFILLED_MUTABLE) with MUTABLE variable type in the
+    // three terrafector PSOs, binding once here on texture-set change instead
+    // of per-draw, and dropping the per-commit 4096-descriptor writes.
+    void setTextures(ew::pixelShader& _shader);
 	void rebuildStructuredBuffer();
 	void rebuildAll();
-    void reFindMaterial(std::filesystem::path currentPath);
-    void renameMoveMaterial(terrafectorEditorMaterial& _material);
-
-    void renderGui(Gui* mpGui, Gui::Window& _window);
-    void renderGuiTextures(Gui* mpGui, Gui::Window& _window);
-    bool renderGuiSelect(Gui* mpGui);
-    Texture::SharedPtr getDisplayTexture();
+    ew::Texture::SharedPtr getDisplayTexture();     // consumed by the render-overlay blit path; editor-only in practice, dispTexIndex is only set >= 0 from the GUI
 
 	std::vector<terrafectorEditorMaterial>	materialVector;
-	int selectedMaterial = -1;
-	std::vector<Texture::SharedPtr>			textureVector;
-	int dispTexIndex = -1;
+	int selectedMaterial = -1;      // also read/written by the terrain stamp code, not just the GUI
+	std::vector<ew::Texture::SharedPtr>		textureVector;
+	int dispTexIndex = -1;          // see getDisplayTexture
     float texture_memory_in_Mb = 0;
-    Buffer::SharedPtr sb_Terrafector_Materials = nullptr;
+    ew::Buffer::SharedPtr sb_Terrafector_Materials = nullptr;
+
+    // ew::Texture carries no source path or name; find_insert_texture and the
+    // EVO exports need both, so they are mirrored here, index-aligned with
+    // textureVector.
+    std::vector<std::filesystem::path>      texturePathVector;
+    std::vector<std::string>                textureNameVector;
 };
 
 
 
 #define TFMATERIAL_VERSION 101
-#define TFMATERIAL_VERSION_LOAD 100
+#define TFMATERIAL_VERSION_LOAD 101
 class terrafectorEditorMaterial {
 public:
 	terrafectorEditorMaterial();
@@ -283,16 +237,9 @@ public:
 	uint32_t blendHash();
 
 	void import(std::filesystem::path _path, bool _replacePath = true);
-	void import(bool _replacePath = true);
     void save();
 	void eXport(std::filesystem::path _path);
-	void eXport();
 	void reloadTextures();
-	void loadTexture(int idx);
-    void loadSubMaterial(int idx);
-    void clearSubMaterial(int idx);
-
-	bool renderGUI(Gui *mpGui);
 
 	static std::string rootFolder;
 
@@ -319,21 +266,20 @@ public:
 		archive(CEREAL_NVP(_constData));
 		_constData.useAbsoluteElevation = useAbsoluteElevation;
 
-        
+
 	}
 
 	// should maybe be done with friend
 public:
-	std::string			  displayName = "Not set!";			
+	std::string			  displayName = "Not set!";
     std::filesystem::path 			  fullPath;			// for quick save
 	bool				isModified = false;
     std::array<std::string, 8>	  submaterialPaths = { "", "", "", "", "", "", "", "" };
-    Texture::SharedPtr		thumbnail = nullptr;
+    ew::Texture::SharedPtr		thumbnail = nullptr;    // filled in by materialCache::find_insert_material; only the editor GUI reads it
 
 	bool			useAbsoluteElevation = true;	// deprecated
 
 	enum tfTextures { baseAlpha, detailAlpha, baseElevation, detailElevation, baseAlbedo, detailAlbedo, baseRoughness, detailRoughness, ecotope, tfTextureSize };
-	std::array<std::string, 9> tfElement = { "##baseAlpha", "##detailAlpha", "##baseElevation", "##detailElevation", "##baseAlbedo", "##detailAlbedo", "##baseRoughness", "##detailRoughness", "##ecotope" };
 	std::array<bool, 9> tfSRGB = { false, false, false, false, true, true, false, false, false };
 
 	std::array<std::string, 9>	texturePaths;
@@ -374,19 +320,23 @@ public:
 		float	baseAlphaContrast = 1.0f;
 		uint	baseAlphaClampU = 0;		// bool
 
+		// The explicit zeros from here on matter: a material whose import fails
+		// would otherwise carry indeterminate values. The gates
+		// (useElevation / useColour / useEcotopes) are zeroed for the same
+		// reason - do not drop the initializers.
 		uint	detailAlphaTexture = 0;
 		float	detailAlphaBrightness = 0.0f;
 		float	detailAlphaContrast = 1.0f;
-		float	useAbsoluteElevation;
+		float	useAbsoluteElevation = 0;
 
 		uint	useElevation = 0;
-		float	useVertexY;
-		float	YOffset;
-		uint	baseElevationTexture;
+		float	useVertexY = 0;
+		float	YOffset = 0;
+		uint	baseElevationTexture = 0;
 
 		float	baseElevationScale = 0.0f;
 		float	baseElevationOffset = 0.5f;
-		uint	detailElevationTexture;
+		uint	detailElevationTexture = 0;
 		float	detailElevationScale = 0.0f;
 
 		float	detailElevationOffset = 0.5f;
@@ -396,16 +346,16 @@ public:
 		float3	buf_____03;
 
 		uint	useColour = 0;
-		uint	baseAlbedoTexture;
-		float	albedoBlend;
-		uint	detailAlbedoTexture;
+		uint	baseAlbedoTexture = 0;
+		float	albedoBlend = 0;
+		uint	detailAlbedoTexture = 0;
 
 		float3	albedoScale = {0.5f, 0.5f, 0.5f};
 		float	uvWorldRotation = 0.0f;
 
-		uint	baseRoughnessTexture;
-		float	roughnessBlend;
-		uint	detailRoughnessTexture;
+		uint	baseRoughnessTexture = 0;
+		float	roughnessBlend = 0;
+		uint	detailRoughnessTexture = 0;
 		float	roughnessScale = 1.0f;
 
 		float	porosity = 0.5f;
@@ -419,7 +369,7 @@ public:
 		float	cullA = 0;
 		float	cullB = 0;
 		float	cullC = 0;
-		uint	ecotopeTexture;
+		uint	ecotopeTexture = 0;
 
         std::array<uint, 8>	subMaterials = {0, 0, 0, 0, 0, 0, 0, 0};
 
@@ -428,7 +378,7 @@ public:
 		template<class Archive>
 		void serialize(Archive & archive)
 		{
-			
+
 			archive(CEREAL_NVP(materialType));
 			archive(CEREAL_NVP(uvScale.x), CEREAL_NVP(uvScale.y));
 			archive(CEREAL_NVP(worldSize));
@@ -457,18 +407,39 @@ public:
 				archive(CEREAL_NVP(ecotopeMasks[i].x), CEREAL_NVP(ecotopeMasks[i].y), CEREAL_NVP(ecotopeMasks[i].z), CEREAL_NVP(ecotopeMasks[i].w));
 			}
 
-			
-			
+
+
 		}
-	} _constData;		// 464 bytes for now
+	} _constData;		// 512 bytes, mirroring TF_material
 
 
 	void rebuildConstantbuffer();
 	void rebuildConstantbufferData();
 	int textureIndex[9] = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
-	BlendState::SharedPtr		blendstate;
 };
 CEREAL_CLASS_VERSION(terrafectorEditorMaterial, TFMATERIAL_VERSION);
+
+
+// --- TF_material byte contract -----------------------------------------------
+// _constData mirrors materials.hlsli's TF_material BYTE-FOR-BYTE: the same
+// bytes are (1) the HLSL StructuredBuffer element of `materials` in all three
+// terrafector shaders, (2) the cereal-JSON field list of .terrafectorMaterial
+// files, and (3) the raw fwrite payload of Materials.gpu / exportBinary.
+// The `buf_____NN` float3 pads are load-bearing. The asserted 512 bytes are
+// 15 rows x 16 B + 32 B subMaterials + 240 B ecotopeMasks.
+static_assert(sizeof(TF_material) == 512, "TF_material contract: 15*16 + 32 + 240 = 512 bytes");
+static_assert(offsetof(TF_material, useAlpha) == 32, "TF_material row 3 moved");
+static_assert(offsetof(TF_material, useElevation) == 80, "TF_material elevation row moved");
+static_assert(offsetof(TF_material, buf_____02) == 116, "TF_material pad 02 moved (load-bearing padding)");
+static_assert(offsetof(TF_material, useColour) == 144, "TF_material colour row moved");
+static_assert(offsetof(TF_material, subMaterials) == 240, "TF_material subMaterials moved");
+static_assert(offsetof(TF_material, ecotopeMasks) == 272, "TF_material ecotopeMasks moved");
+static_assert(sizeof(decltype(terrafectorEditorMaterial::_constData)) == sizeof(TF_material),
+              "terrafectorEditorMaterial::_constData must mirror TF_material byte-for-byte");
+static_assert(offsetof(decltype(terrafectorEditorMaterial::_constData), subMaterials) == offsetof(TF_material, subMaterials),
+              "_constData/TF_material field drift before subMaterials");
+static_assert(offsetof(decltype(terrafectorEditorMaterial::_constData), ecotopeMasks) == offsetof(TF_material, ecotopeMasks),
+              "_constData/TF_material field drift before ecotopeMasks");
 
 
 
@@ -489,11 +460,9 @@ public:
     bool isMeshCached(const std::string _path);
     void splitAndCacheMesh(const std::string _path);
 	terrafectorElement &find_insert(const std::string _name, const tfTypes _type= tf_heading, const std::string _path="");
-	void renderGui(Gui* _pGui, float tab = 0);
 
     void loadPath(std::string _path);
 
-	TriangleMesh::SharedPtr		pMesh;
 	struct subMesh {
 		uint index;
 		uint sortVal;
@@ -502,11 +471,10 @@ public:
 	};
 	std::vector<subMesh>	materials;
 	bool visible = true;
-	bool bExpanded = false;
     bool bakeOnly = false;
 
-    
-}; 
+
+};
 
 
 
@@ -518,12 +486,9 @@ public:
     terrafectorSystem() { ;	}
 	virtual ~terrafectorSystem() { ; }
 
-	void loadFile();
-	void saveFile();
 	template<class Archive>
 	void serialize(Archive & archive) {	/*archive(groups); */}
 
-	void renderGui(Gui* mpGui, Gui::Window& _window);
     void loadPath(std::string _path, std::string _exportPath, bool _rebuild = false);
     void exportMaterialBinary(std::string _path, std::string _evoRoot);
 
@@ -536,17 +501,18 @@ public:
 
     static void logTimeX()
     {
-        auto a = high_resolution_clock::now();
-        float delta_ms = (float)(duration_cast<microseconds>(a - terrafectorSystem::logStartTime).count() / 1000.);
-        spdlog::info("{:.3f}ms    :", delta_ms);
+        auto a = std::chrono::high_resolution_clock::now();
+        float delta_ms = (float)std::chrono::duration_cast<std::chrono::microseconds>(a - terrafectorSystem::logStartTime).count() / 1000.f;
+        fprintf(_logfile, "%3.3fms    :    ", delta_ms);
     }
     /*
     static void logTab()
     {
-        spdlog::info("");
+        fprintf(_logfile, "    ");
     }
     static void logHeader()
     {
+        //fprintf(_logfile, "%3.3fms    :    ", delta_ms);
     }
     */
 	terrafectorElement root = terrafectorElement(tf_heading, "root");
@@ -564,4 +530,3 @@ public:
     static lodTriangleMesh_LoadCombiner loadCombine_LOD4_bakeHigh;
     static lodTriangleMesh_LoadCombiner loadCombine_LOD4_overlay;
 };
-

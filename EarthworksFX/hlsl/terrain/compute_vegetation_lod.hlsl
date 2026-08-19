@@ -1,5 +1,5 @@
 #include "groundcover_defines.hlsli"
-#include "groundcover_functions.hlsli"		
+#include "groundcover_functions.hlsli"
 #include "vegetation_defines.hlsli"
 
 
@@ -30,7 +30,7 @@ cbuffer gConstantBuffer
     float padd;
 
     int firstPlant;
-    int lastPlant; // just big
+    int lastPlant;
     int firstLod;
     int lastLod;
 
@@ -84,14 +84,14 @@ void main(uint idx : SV_DispatchThreadId)
             //if (viewDir.y > 0.98) pix *= 3;
             //
             // FIOXME reintroduce byt make sure oit doesnt mess with the basic pixel size
-            pix *= (1.0 + smoothstep(0.97, 1.0, viewDir.y));
+            float pixBoost = pix *(1.0 + smoothstep(0.97, 1.0, viewDir.y));
 
             if (idx == 0)
             {
                 feedback[0].plantZero_pixeSize = pix;
             }
 
-            if (pix < PLANT.lods[0].pixSize)        // do billboards
+            if (pixBoost < PLANT.lods[0].pixSize)        // do billboards
             {
                 InterlockedAdd(DrawArgs_Quads[0].vertexCountPerInstance, 1, slot);
                 instance_buffer_billboard[slot] = INSTANCE;

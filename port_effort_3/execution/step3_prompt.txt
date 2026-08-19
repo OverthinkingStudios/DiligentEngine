@@ -1,0 +1,32 @@
+You are executing step 3 of the Earthworks port (Path B+) in c:\dev\git\os\DiligentEngine, branch port_effort_3: FULL TILE BAKE + ATMOSPHERE + SHADOWEDGES + HDR PIPELINE. Steps 1-2 are developer-verified: full terrain renders flat-shaded on VK + D3D12 at ~1-1.2k fps. Your job: the terrain looks REAL at the end of this step (materials, sky, fog, terrain shadows, tonemapping).
+
+READ FIRST, in this order:
+1. port_effort_3\task.md S0 (NEVER commit/push - no git state changes; developer compiles; zero warnings; do not spawn subagents)
+2. port_effort_3\execution\plan.md - your task is the "Step 3 spec" section; follow it exactly; update the step log when done
+3. port_effort_3\execution\bringup_notes.md - P-numbered root causes from steps 1-2. P1 (GenerateMips view flag), P4 (setCamera glm convention), P5 (age-gate ANY async readback of recyclable slots), P8 (deploy pipeline) directly concern you
+4. port_effort_3\catalog\atmosphere_shadows.md - THE authority for atmosphere/fog/shadows (LUT layouts, log-depth fog params, shadowEdges solver semantics, the two dead fog shaders, do-not-fix atan half-angle)
+5. port_effort_3\catalog\gpu_tile_pipeline.md - bake chain (ecotopes/floodfill/bc6h positions, 256/248 border convention)
+6. port_effort_3\catalog\shader_interface.md - binding contracts for every pass you port (cbuffer layouts + PADDING - never remove padding members; bind by NAME, never by register; tonemapper is a GRAPHICS pass despite its filename and its register(u0) annotation is bogus)
+7. port_effort_3\catalog\conventions_app_wiring.md S2 (app wiring: onLoad order dependency chain, shaderLightBuffer, hdrFbo formats, hdrPreviousFrame half-res blit) + S3 (invariants)
+
+SOURCES: port_effort_3\source_extract_3\ is the code authority (earthworks_scene\atmosphere.*, ecotope.*, volumeFogPhaseFunctions.cpp, the _shadowEdges block in terrain.cpp/.h, Earthworks_4.cpp app wiring; hlsl\atmosphere\*, hlsl\PBR.hlsli, hlsl\material.hlsli? no - materials.hlsli lives in hlsl\terrain\, render_Common.hlsli in hlsl\ root, compute_tonemapper.hlsl). Port structure-preserving: keep class/member names and original comments; grep the current EarthworksFX\src\core\terrain.cpp for "STEP2-STUB" - each marks the exact re-insertion point for your scope. EarthworksFX\legacy\ shows how the previous port solved DXC/Diligent issues (techniques only - its shader CONTENT is stale). DiligentCore\ is READABLE - verify every Diligent API call against real headers. Pristine original C:\dev\git\os\Earthworks_4-F5_2\ READ-ONLY.
+
+SCOPE - IN (per plan.md Step 3 spec):
+1. Full tile bake: ecotopes block at its STEP2-STUB position in splitChild + ecotope.cpp/.h port (placement/serialization only - editor GUI stays stripped, extract already is) + compute_tileEcotopes; compute_bakeFloodfill; compute_bc6h + _functions + PBR array publish.
+2. render_Tiles real psMain: port ../PBR.hlsli, gpuLights_functions.hlsli, render_Common.hlsli, materials.hlsli from the extract; LightsCB replaces Step2StubCB (delete the stub); full material/fog/shadow sampling.
+3. Atmosphere: atmosphere.cpp/.h, volumeFogPhaseFunctions.cpp, hlsl\atmosphere\* EXCEPT compute_volumeFogLights.hlsl and compute_volumeFogSmokeAndDust.hlsl (dead even in the pristine original - do not port; note in the step log). cfd smoke seam stays stubbed (atmosphere setSMOKE feeders were glider/cfd scope). Skydome/triangleShader (render_triangles.hlsl + its CPU dispatch), sky/cloudbase textures bound by EXACT name, sun-transmittance + Mie-phase LUT dispatches, froxel volume + bicubic-upsample consumers.
+4. shadowEdges: the full _shadowEdges block from the extract (CPU scanline solver, ~336MB static arrays, solveThread detached thread, load from <dirRoot>/elevation/root4096.bil - requireFile() it per P2), terrainShadowTexture RG32F 4096^2, the atomic sun-direction+texture update in onFrameUpdate, atmosphere.setTerrainShadow wiring. The original GUI that set sunAngle/requestNewShadow is stripped: add an ew::gDebug slider (sunAngle) + toggle/button (re-solve) in the Earthworks debug panel instead, defaults from the extract (sunAngle 0.95605f).
+5. HDR pipeline: hdrFbo R11G11B10+D24S8 created on resize, terrain renders into it, tonemapper graphics pass (vsMain/psMain, fullscreen triangle drawInstanced(3,1)) with colorCube 33^3 RGB32F LUT loaded from settings.dirResource + "/colorcubes/ColdChrome.cube" (requireFile it; graceful fallback to identity if absent), blit hdrFbo color -> hdrPreviousFrame (HALF-res, catalog: feeds JHFAA temporal AA later), updateShaderConstants full fan-out per the extract, bind gHDRBackbuffer in compute_terrain_under_mouse.
+6. Housekeeping: silence Diligent's "bound as render target will be unset" Info by explicitly unbinding render targets before compute that samples the backbuffer/hdr texture.
+SCOPE - OUT: vegetation (step 4 - keep the stub buffers), terrafectors/roads bake + splitRenderTopdown (step 5), buildings/sprites (step 6), camera.bin/presets persistence.
+
+CRITICAL RULES:
+- Extract = authority; structure-preserving; every deviation gets // PORT-REVIEW, every deferred piece // STEP3-STUB.
+- cbuffer/struct PADDING is load-bearing (previous porting agent deleted padding and broke rendering). shaderLightBuffer layout per conventions_app_wiring.md S5.
+- Any new async GPU->CPU readback: age-gate recyclable slots (P5 pattern, ReadbackBuffer tags).
+- VK primary + D3D12 must both work: volumeFog storage images need explicit float4 + [[vk::image_format]] handling per shader_interface.md DXC-pitfalls; verify texture view flags (P1).
+- Atmosphere math oddities are CORRECT (atan(0.5h/f) without factor 2; acumulateFog in/out asymmetry) - do not fix (catalog documents both).
+- Zero warnings. You cannot compile - verify signatures against real headers.
+- Update plan.md step log + append any new root causes to bringup_notes.md (P9+).
+
+RETURN: concise report - files created/modified, scope covered vs deferred (STEP3-STUB list for step 4/5), design decisions, the ordered checklist the developer should walk when it doesn't compile or renders wrong (most-likely-first), and a reminder to clean %ACSMP_GAMEROOT%/hlsl before building (P8).

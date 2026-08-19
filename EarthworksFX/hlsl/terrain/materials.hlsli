@@ -1,4 +1,9 @@
-
+// Compiled by BOTH DXC (the three terrafector shaders) and MSVC - terrafector.h
+// mirrors TF_material into terrafectorEditorMaterial::_constData. The C++ side
+// can reach this file twice through the terrain.h include closure, hence the
+// include guard.
+#ifndef EW_TERRAIN_MATERIALS_HLSLI
+#define EW_TERRAIN_MATERIALS_HLSLI
 
 #define MATERIAL_TYPE_STANDARD 0
 #define MATERIAL_TYPE_MULTILAYER 1
@@ -102,6 +107,14 @@ struct _uv
 
 #if defined(CALLEDFROMHLSL)
 
+// Every gmyTextures_T index below comes from a per-layer TF_material read, so
+// it varies PER PIXEL within a wave. Indexing a descriptor array with a
+// non-uniform index without NonUniformResourceIndex() is undefined behaviour:
+// D3D12/NV tolerates it, Vulkan/NV samples an undefined descriptor, which reads
+// as 1.0 and turns the terrafector solid white. Needs
+// Features.ShaderResourceRuntimeArrays at engine init on Vulkan.
+#define TF_TEX(idx) gmyTextures_T[NonUniformResourceIndex(idx)]
+
 void solveUV(const TF_material _mat, const float2 worldPos, const float2 uvIn, inout _uv uv)
 {
     uv.side = uvIn;
@@ -136,21 +149,21 @@ float solveAlpha(const TF_material _mat, _uv uv, float _vertexAlpha)
             {
                 uv.side.xy *= _mat.uvScale;    // without rotate
                 uv.side.x = clamp(sideAlpha, 0.1, 0.9);
-                float alphaBase = gmyTextures_T[_mat.baseAlphaTexture].SampleLevel (gSmpLinear, uv.side, 3).r;
+                float alphaBase = TF_TEX(_mat.baseAlphaTexture).SampleLevel (gSmpLinear, uv.side, 3).r;
 
                 sideAlpha = lerp(1, saturate((alphaBase + _mat.baseAlphaBrightness) * _mat.baseAlphaContrast), _mat.baseAlphaScale);
             }
 
             //float range = min(1 - sideAlpha, sideAlpha);
-            float alphaDetail = gmyTextures_T[_mat.detailAlphaTexture].Sample(gSmpLinear, uv.world).r;
+            float alphaDetail = TF_TEX(_mat.detailAlphaTexture).Sample(gSmpLinear, uv.world).r;
             alpha *= lerp(1, saturate((sideAlpha + alphaDetail + _mat.detailAlphaBrightness) * _mat.detailAlphaContrast), _mat.detailAlphaScale);
 
             alpha *= sideAlpha;
         }
         else
         {
-            float alphaBase = gmyTextures_T[_mat.baseAlphaTexture].Sample(gSmpLinear, uv.object).r;
-            float alphaDetail = gmyTextures_T[_mat.detailAlphaTexture].Sample(gSmpLinear, uv.world).r;
+            float alphaBase = TF_TEX(_mat.baseAlphaTexture).Sample(gSmpLinear, uv.object).r;
+            float alphaDetail = TF_TEX(_mat.detailAlphaTexture).Sample(gSmpLinear, uv.world).r;
 
             alpha *= lerp(1, smoothstep(0, 1, _vertexAlpha), _mat.vertexAlphaScale);
             alpha *= lerp(1, saturate((alphaBase + _mat.baseAlphaBrightness) * _mat.baseAlphaContrast), _mat.baseAlphaScale);
@@ -189,8 +202,8 @@ void solveElevationColour(inout PS_OUTPUT_Terrafector output, const TF_material 
     {
         
         output.Elevation.r += MAT.YOffset;
-        output.Elevation.r += (gmyTextures_T[MAT.baseElevationTexture].Sample(gSmpLinear, uv.object).r - MAT.baseElevationOffset) * MAT.baseElevationScale;
-        output.Elevation.r += (gmyTextures_T[MAT.detailElevationTexture].Sample(gSmpLinear, uv.world).r - MAT.detailElevationOffset) * MAT.detailElevationScale;
+        output.Elevation.r += (TF_TEX(MAT.baseElevationTexture).Sample(gSmpLinear, uv.object).r - MAT.baseElevationOffset) * MAT.baseElevationScale;
+        output.Elevation.r += (TF_TEX(MAT.detailElevationTexture).Sample(gSmpLinear, uv.world).r - MAT.detailElevationOffset) * MAT.detailElevationScale;
         output.Elevation.r *= alpha;
 
         if (MAT.useAbsoluteElevation > 0.5)
@@ -215,8 +228,8 @@ void solveElevationColour(inout PS_OUTPUT_Terrafector output, const TF_material 
 
     if (MAT.useColour)
     {
-        float3 albedo = gmyTextures_T[MAT.baseAlbedoTexture].Sample(gSmpLinear, uv.object).rgb;
-        float3 albedoDetail = gmyTextures_T[MAT.detailAlbedoTexture].Sample(gSmpLinear, uv.world).rgb;
+        float3 albedo = TF_TEX(MAT.baseAlbedoTexture).Sample(gSmpLinear, uv.object).rgb;
+        float3 albedoDetail = TF_TEX(MAT.detailAlbedoTexture).Sample(gSmpLinear, uv.world).rgb;
 
         float3 A = lerp(albedo, 0.5, saturate(MAT.albedoBlend));
         float3 B = lerp(albedoDetail, 0.5, saturate(-MAT.albedoBlend));
@@ -225,8 +238,8 @@ void solveElevationColour(inout PS_OUTPUT_Terrafector output, const TF_material 
         output.Albedo.a = alpha;
 
 
-        float baseRoughness = gmyTextures_T[MAT.baseRoughnessTexture].Sample(gSmpLinear, uv.object).r;
-        float detailRoughness = gmyTextures_T[MAT.detailRoughnessTexture].Sample(gSmpLinear, uv.world).r;
+        float baseRoughness = TF_TEX(MAT.baseRoughnessTexture).Sample(gSmpLinear, uv.object).r;
+        float detailRoughness = TF_TEX(MAT.detailRoughnessTexture).Sample(gSmpLinear, uv.world).r;
 
         float rA = lerp(baseRoughness, 0.5, saturate(MAT.roughnessBlend));
         float rB = lerp(detailRoughness, 0.5, saturate(-MAT.roughnessBlend));
@@ -246,7 +259,7 @@ void solveElevationColour(inout PS_OUTPUT_Terrafector output, const TF_material 
 
     if (MAT.useEcotopes)
     {
-        float3 ecotopeTex = gmyTextures_T[MAT.ecotopeTexture].Sample(gSmpLinear, uv.object).rgb;
+        float3 ecotopeTex = TF_TEX(MAT.ecotopeTexture).Sample(gSmpLinear, uv.object).rgb;
         output.Ecotope1 = float4(dot(MAT.ecotopeMasks[0].rgb, ecotopeTex), dot(MAT.ecotopeMasks[1].rgb, ecotopeTex), dot(MAT.ecotopeMasks[2].rgb, ecotopeTex), alpha * MAT.ecotopeMasks[0].a);
         output.Ecotope2 = float4(dot(MAT.ecotopeMasks[3].rgb, ecotopeTex), dot(MAT.ecotopeMasks[4].rgb, ecotopeTex), dot(MAT.ecotopeMasks[5].rgb, ecotopeTex), alpha * MAT.ecotopeMasks[3].a);
         output.Ecotope3 = float4(dot(MAT.ecotopeMasks[6].rgb, ecotopeTex), dot(MAT.ecotopeMasks[7].rgb, ecotopeTex), dot(MAT.ecotopeMasks[8].rgb, ecotopeTex), alpha * MAT.ecotopeMasks[6].a);
@@ -265,3 +278,5 @@ void solveElevationColour(inout PS_OUTPUT_Terrafector output, const TF_material 
 
 
 #endif
+
+#endif // EW_TERRAIN_MATERIALS_HLSLI

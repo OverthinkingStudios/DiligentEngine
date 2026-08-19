@@ -1,7 +1,14 @@
 #pragma once
 
-#include "roads_intersection.h"
-#include "roads_AI.h"
+// ---------------------------------------------------------------------------
+// FILE FORMAT: .roadnetwork is cereal BINARY with an EXTERNAL version -
+// `load(path, _version)` passes it manually, the file embeds NO version.
+// ROADNETWORK_CEREAL_VERSION must stay 103; older files go through the explicit
+// upgrade(_FROM) flow, which re-saves as <name>.<103>.roadnetwork.
+// ---------------------------------------------------------------------------
+
+#include "roads_Intersection.h"
+#include "roads_physics.h"
 
 
 
@@ -10,13 +17,6 @@ class roadNetwork {
 public:
     roadNetwork();
     virtual ~roadNetwork() { ; }
-
-    bool renderpopupGUI(Gui* _gui, roadSection* _road, int _vertex);
-    bool renderpopupGUI(Gui* _gui, intersection* _intersection);
-    void renderPopupVertexGUI(Gui* mpGui, glm::vec2 _pos, uint _idx);
-    void renderPopupSegmentGUI(Gui* mpGui, glm::vec2  _pos, uint _idx);
-    void renderGUI(Gui* _gui);
-    void renderGUI_3d(Gui* _gui);
 
     void saveRoadGeometry(roadSection* _road, int _vertex);
     void loadRoadGeometry(roadSection* _road, int _from, int _to);
@@ -29,7 +29,7 @@ public:
     void loadRoadMaterialsAsphalt(roadSection* _road, int _from, int _to);
     void loadRoadMaterialsLines(roadSection* _road, int _from, int _to);
     void loadRoadMaterialsWT(roadSection* _road, int _from, int _to);
-    
+
     bool popupVisible = false;
 
     void newRoadSplineBasic();
@@ -57,19 +57,10 @@ public:
 
     void TEMP_pushAllMaterial();
 
-    void currentRoadtoAI();
-    void exportAI();
-    void exportAI_CSV();
-    void loadAI();
-    bool AI_path_mode = false;
-    void ai_clearPath() { pathBezier.clearRoads(); }
-    void addRoad();
-
     // testing and intersection
     void physicsTest(glm::vec3 pos);
     void doSelect(glm::vec3 pos);
     void testHit(glm::vec3 pos);
-    void testHitAI(glm::vec3 pos);
     void lanesFromHit();
 
     // basic editing
@@ -102,10 +93,6 @@ public:
     static std::vector<bezierLayer>	staticIndexData_BakeOnly;
     uint debugNumBezier;
     uint debugNumIndex;
-
-    AI_bezier pathBezier;
-    aiIntersection	AIpathIntersect;
-
 
     bool isDirty = false;
     bezierIntersection physicsMouseIntersection;
@@ -152,17 +139,9 @@ public:
     void setEditLane(int _l) { editLaneIndex = _l; }
 
     //static roadMaterialCache roadMatCache;
-    void loadRoadMaterial(uint _side, uint _slot);
-    void dragdropRoadMaterial(uint _side, uint _slot, uint _index);
-    void clearRoadMaterial(uint _side, uint _slot);
-    uint getRoadMaterial(uint _side, uint _slot, uint _index);
     int selectFrom;
     int selectTo;
     uint selectionType = 0;
-    const std::string getMaterialName(uint _side, uint _slot);
-    const std::string getMaterialPath(uint _side, uint _slot);
-    const Texture::SharedPtr getMaterialTexture(uint _side, uint _slot);
-    static Texture::SharedPtr displayThumbnail;
     static bool showMaterials;
 
     template<class Archive>

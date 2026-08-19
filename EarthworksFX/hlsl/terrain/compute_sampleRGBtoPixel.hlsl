@@ -1,5 +1,3 @@
-
-
 #include "terrainDefines.hlsli"
 #include "terrainFunctions.hlsli"
 #include "groundcover_defines.hlsli"
@@ -45,7 +43,7 @@ void main(int2 coord : SV_DispatchThreadId)
 
 #else
 
-[numthreads(32, 32, 1)]	
+[numthreads(32, 32, 1)]
 void main(int2 coord : SV_DispatchThreadId)
 {
     uint index = (pix.y * 256 + pix.x) * 4;
@@ -66,7 +64,7 @@ void main(int2 coord : SV_DispatchThreadId)
     InterlockedAdd(data[index + 2], gg, cnt);
     InterlockedAdd(data[index + 3], bb, cnt);
 
-    
+
 }
 
 #endif

@@ -1,27 +1,23 @@
 #pragma once
 
+#include <cstdint>
 #include <list>
 #include <unordered_map>
-#include <mutex>
+#include <utility>
 
-// Thread-safe: get() mutates the recency list, and the cache is accessed
-// concurrently from the main thread (jp2Dir::cacheHash) and the async
-// decode threads (hashAndCacheImages_Thread), so every entry point locks.
 template<typename K, typename V = K>
 class LRUCache
 {
 public:
     LRUCache() { ; }
 
-    void resize(uint s) {
-        std::lock_guard<std::mutex> lock(mutex);
+    void resize(std::uint32_t s) {
         csize = s;
         items.clear();
         keyValuesMap.clear();
     }
 
     void set(const K key, const V value) {
-        std::lock_guard<std::mutex> lock(mutex);
         auto pos = keyValuesMap.find(key);
         if (pos == keyValuesMap.end()) {
             items.push_front(key);
@@ -39,7 +35,6 @@ public:
     }
 
     bool get(const K key, V& value) {
-        std::lock_guard<std::mutex> lock(mutex);
         auto pos = keyValuesMap.find(key);
         if (pos == keyValuesMap.end())
             return false;
@@ -52,8 +47,7 @@ public:
 
 
 private:
-    std::mutex mutex;
     std::list<K>items;
     std::unordered_map <K, std::pair<V, typename std::list<K>::iterator>> keyValuesMap;
-    uint csize = 50;	// arbitrary default
+    std::uint32_t csize = 50;	// arbitrary default
 };

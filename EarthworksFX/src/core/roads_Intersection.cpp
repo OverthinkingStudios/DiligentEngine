@@ -1,16 +1,12 @@
-#include "roads_intersection.h"
+#include "terrain.h"
 
-
-
-#include "imgui.h"
-#include "imgui_internal.h"
+#include "ots/Log.hpp"
 
 #include "cereal/archives/binary.hpp"
 #include "cereal/archives/xml.hpp"
 #include <sstream>
 #include <fstream>
 #include <filesystem>
-#include <direct.h>
 
 #include "assimp/scene.h"
 #include "assimp/Exporter.hpp"
@@ -20,8 +16,8 @@
 
 intersectionRoadLink* intersection::findLink(int roadGUID)
 {
-    for (int i = 0; i < roadLinks.size(); i++) {
-        if (roadLinks[i].roadGUID == roadGUID) {
+    for (size_t i = 0; i < roadLinks.size(); i++) {
+        if ((int)roadLinks[i].roadGUID == roadGUID) {
             return &roadLinks[i];
         }
     }
@@ -72,11 +68,11 @@ void intersection::updatePosition(float3 _pos, float3 _normal, uint _lod)
 
 void intersection::updateCorner(float3 pos, float3 normal, int idx, int flags)
 {
+    (void)normal;
     int size = (int)roadLinks.size();
 
 
     glm::vec3 dir = pos - this->anchor;
-    float L = glm::length(dir);
     float3 R = glm::cross(this->anchorNormal, dir);
     dir = glm::cross(R, this->anchorNormal);
     float3 posInPlane = this->anchor + dir;
@@ -109,7 +105,7 @@ void intersection::updateCorner(float3 pos, float3 normal, int idx, int flags)
         roadLinks[idx].tangentVector = glm::cross(right, anchorNormal);
         if (roadLinks[idx].tangentVector.x == 0)
         {
-            bool bCM = true;
+            spdlog::warn("roads: intersection::updateCorner zero tangentVector.x");
         }
     }
 
@@ -133,14 +129,14 @@ void intersection::convertToGPU(std::vector<cubicDouble>& _bezier, std::vector<b
     for (uint i = 0; i < size; i++)
     {
         //_index.push_back(bezierLayer(bezier_edge::outside, bezier_edge::center, MATERIAL_EDIT_BLUE, _bezier.size(), false, 0.0f, 0.0f, false, false));
-        _index.push_back(bezierLayer(bezier_edge::outside, bezier_edge::outside, MATERIAL_EDIT_REDDOT, _bezier.size(), false, -0.1f, -0.2f, false, false));
-        _index.push_back(bezierLayer(bezier_edge::center, bezier_edge::center, MATERIAL_EDIT_REDDOT, _bezier.size(), false, 0.1f, 0.2f, false, false));
+        _index.push_back(bezierLayer(bezier_edge::outside, bezier_edge::outside, MATERIAL_EDIT_REDDOT, (uint)_bezier.size(), false, -0.1f, -0.2f, false, false));
+        _index.push_back(bezierLayer(bezier_edge::center, bezier_edge::center, MATERIAL_EDIT_REDDOT, (uint)_bezier.size(), false, 0.1f, 0.2f, false, false));
         _bezier.push_back(lanesTarmac[i * 2]);
 
 
         //_index.push_back(bezierLayer(bezier_edge::outside, bezier_edge::center, MATERIAL_EDIT_GREEN, _bezier.size(), false, 0.0f, 0.0f, false, false));
-        _index.push_back(bezierLayer(bezier_edge::outside, bezier_edge::outside, MATERIAL_EDIT_REDDOT, _bezier.size(), false, -0.1f, -0.2f, false, false));
-        _index.push_back(bezierLayer(bezier_edge::center, bezier_edge::center, MATERIAL_EDIT_REDDOT, _bezier.size(), false, 0.1f, 0.2f, false, false));
+        _index.push_back(bezierLayer(bezier_edge::outside, bezier_edge::outside, MATERIAL_EDIT_REDDOT, (uint)_bezier.size(), false, -0.1f, -0.2f, false, false));
+        _index.push_back(bezierLayer(bezier_edge::center, bezier_edge::center, MATERIAL_EDIT_REDDOT, (uint)_bezier.size(), false, 0.1f, 0.2f, false, false));
         _bezier.push_back(lanesTarmac[i * 2 + 1]);
     }
 }
@@ -155,7 +151,7 @@ void intersection::updateTarmacLanes()
     if (numInter == 4) numTar = 5;
 
 
-    lanesTarmac.resize(numTar * 2);
+    lanesTarmac.resize((size_t)numTar * 2);
 
 
     uint index = 0;
@@ -195,7 +191,7 @@ void intersection::updateTarmacLanes()
         else
         {
             uint idx1 = (uint)roadLinks[j].roadPtr->points.size() - 2;
-            
+
             float width = roadLinks[j].roadPtr->points[idx1].widthLeft + roadLinks[j].roadPtr->points[idx1].widthRight;
 
             if (!roadLinks[j].bOpenCorner)
@@ -250,15 +246,12 @@ void intersection::updateTarmacLanes()
 
             if (roadLinks[j].broadStart)
             {
-                float width = roadLinks[j].roadPtr->points[1].widthLeft + roadLinks[j].roadPtr->points[1].widthRight;
-
                 lanesTarmac[index + 0].data[0][0] = roadLinks[j].roadPtr->points[1].bezier[right].pos_uv();
                 lanesTarmac[index + 0].data[0][1] = roadLinks[j].roadPtr->points[1].bezier[right].backward_uv();
             }
             else
             {
                 uint idx1 = (uint)roadLinks[j].roadPtr->points.size() - 2;
-                float width = roadLinks[j].roadPtr->points[idx1].widthLeft + roadLinks[j].roadPtr->points[idx1].widthRight;
 
                 lanesTarmac[index + 0].data[0][0] = roadLinks[j].roadPtr->points[idx1].bezier[left].pos_uv();
                 lanesTarmac[index + 0].data[0][1] = roadLinks[j].roadPtr->points[idx1].bezier[left].forward_uv();
@@ -284,11 +277,10 @@ void intersection::updateTarmacLanes()
                 lanesTarmac[index + 0].data[1][2] = roadLinks[next].roadPtr->points[roadLinks[next].roadPtr->points.size() - 2].bezier[left].forward_uv();
                 lanesTarmac[index + 0].data[1][3] = roadLinks[next].roadPtr->points[roadLinks[next].roadPtr->points.size() - 2].bezier[left].pos_uv();
             }
-            
+
 
 
             index += 1;  // tjhis skips one unused
         }
     }
 }
-

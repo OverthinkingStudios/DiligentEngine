@@ -1,18 +1,30 @@
-#define CALLEDFROMHLSL
+// 3D road and stamp overlay pass - this is not a bake shader. Unlike the bake
+// path it carries the isQuad straight-lerp branch used by dynamic stamps.
 
 SamplerState gSmpPoint : register(s0);
 SamplerState gSmpLinear : register(s1);
 SamplerState gSmpAniso : register(s2);
 SamplerState gSmpLinearClamp : register(s3);
 
+// gmyTextures_T is declared before materials.hlsli is included: the solve*
+// functions in there sample this array.
 Texture2D<float4> gmyTextures_T[4096];
 
+#define CALLEDFROMHLSL
 #include "materials.hlsli"
 
 struct cubicDouble
 {
 	float4 data[2][4];	//[center, outside][p0, p1, p2, p3]  //128 bytes
 };
+// [2][4] fully contained  float 128, u16 64
+
+// If we save this as a left and a right matrix. and save a float4(t)  Its a single matrix multiply for the answer
+// 200,000 beziers -> (128) 25Mb, lot but not too bad, and probably perfect if split
+// expanded 32X -> 2xfloat4 (32) X 32 = (1024)
+// SO this is SUPER interesting - Turns out beziers MAY NOT be the best way to do this at runtime It is only a 1:8 improvement on memory [32 splits],
+// we could optimally sample on curvature, and use significantly less than 32 splits on average
+// However 4 splits would be same data rate, so maybe still good
 
 struct bezierLayer
 {
@@ -41,12 +53,17 @@ struct splineVSOut
 };
 
 
+
+
+
+
+
 // Cateljau
 inline float4 quadratic_Casteljau(float t, float4 P0, float4 P1, float4 P2)
 {
 	float4 pA = lerp(P0, P1, t);
 	float4 pB = lerp(P1, P2, t);
-	
+
 	return lerp(pA, pB, t);
 }
 
@@ -56,10 +73,10 @@ inline float4 cubic_Casteljau(float t, float4 P0, float4 P1, float4 P2, float4 P
 	float4 pA = lerp(P0, P1, t);
 	float4 pB = lerp(P1, P2, t);
 	float4 pC = lerp(P2, P3, t);
-	
+
 	float4 pD  = lerp(pA, pB, t);
 	float4 pE  = lerp(pB, pC, t);
-	
+
 	return lerp(pD, pE, t);
 }
 
@@ -82,7 +99,7 @@ inline float4 cubic_Casteljau(float t, float4 P0, float4 P1, float4 P2, float4 P
 splineVSOut vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
 {
     splineVSOut output;
-	
+
 	float4 points[2];
     float t = (vId >> 1) / 64.0;
     const cubicDouble s0 = splineData[index];
@@ -104,7 +121,7 @@ splineVSOut vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
         const float w0 = ((indexData[iId].B >> 14) & 0x3fff) * 0.002f - 16.0f;			// -32 .. 33.536m in mm resolution
         output.posW = points[insideLine].xyz + w0 * perpendicular;
 	}
-	
+
 	output.texCoords = float3(1 - (vId & 0x1), points[outsideLine].w, t );
     if (isFlipped) output.texCoords.x *= -1;
 	output.pos =  mul( float4(output.posW, 1), viewproj);
@@ -209,8 +226,8 @@ float4 solveColor(const TF_material _mat, const _uv uv, const float alpha)
 
     if (_mat.useColour)
     {
-        float3 albedo = gmyTextures_T[_mat.baseAlbedoTexture].Sample(gSmpLinear, uv.object).rgb;
-        float3 albedoDetail = gmyTextures_T[_mat.detailAlbedoTexture].Sample(gSmpLinear, uv.world).rgb;
+        float3 albedo = TF_TEX(_mat.baseAlbedoTexture).Sample(gSmpLinear, uv.object).rgb;
+        float3 albedoDetail = TF_TEX(_mat.detailAlbedoTexture).Sample(gSmpLinear, uv.world).rgb;
 
         float3 A = lerp(albedo, 0.5, saturate(_mat.albedoBlend));
         float3 B = lerp(albedoDetail, 0.5, saturate(-_mat.albedoBlend));
@@ -243,7 +260,7 @@ float4 psMain(splineVSOut vIn) : SV_TARGET0
         return editingMaterials(material, vIn.texCoords.xz, vIn.colour.a, vIn.flags);
     }
 
-	
+
 	// uv's
     _uv uv;
     solveUV(MAT, vIn.posW.xz, vIn.texCoords.xy, uv);
@@ -279,4 +296,3 @@ float4 psMain(splineVSOut vIn) : SV_TARGET0
 }
 
 
-	

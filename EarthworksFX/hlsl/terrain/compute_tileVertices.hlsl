@@ -23,7 +23,7 @@ cbuffer gConstants
 #define _PIXSIZE constants.x
 
 
-groupshared uint vCount;
+groupshared uint vCount;    // TODO: declared but never used - written and read nowhere, so remove it
 
 
 
@@ -72,31 +72,16 @@ void main(int2 coord : SV_DispatchThreadId)
     // FIXME move somehwre else it does not belong here
     if (coord.x == 0 && coord.y == 0) {
         uint tileIdx = constants.w;
-        // PORT CHANGE (tile-hole fix): the original took ONE bilinear tap at the
-        // exact tile centre. Terrafector bakes can carve thin sea-level strips
-        // into the elevation RT (flat "50_top" meshes with absolute-elevation
-        // materials, e.g. gutters); when such a strip crosses the centre texel,
-        // the single tap feeds ~0 into tileCenters -> boundingSphere.y -> the
-        // whole tile gets frustum-culled at grazing pitch (the "hole" bug).
-        // Take the median of 5 taps instead, spread so that no 3 points are
-        // collinear: a straight strip can hit at most 2 of them, the median
-        // stays on real terrain.
-        float t0 = gInHgt.SampleLevel(linearSampler, float2(0.5, 0.5), 0);
-        float t1 = gInHgt.SampleLevel(linearSampler, float2(0.5, 0.5) + float2( 28,   8) / 256.0, 0);
-        float t2 = gInHgt.SampleLevel(linearSampler, float2(0.5, 0.5) + float2(-12,  32) / 256.0, 0);
-        float t3 = gInHgt.SampleLevel(linearSampler, float2(0.5, 0.5) + float2(-32, -16) / 256.0, 0);
-        float t4 = gInHgt.SampleLevel(linearSampler, float2(0.5, 0.5) + float2( 20, -28) / 256.0, 0);
-        // median of 5
-        float f = max(min(t0, t1), min(t2, t3));
-        float g = min(max(t0, t1), max(t2, t3));
-        float centerHeight = max(min(t4, f), min(max(t4, f), g));
+        float centerHeight = gInHgt.SampleLevel(linearSampler, float2(0.5, 0.5), 0);
         tileCenters[tileIdx].min = centerHeight;
         tiles[tileIdx].origin.y = centerHeight - (tiles[tileIdx].scale_1024 * 2048);	// Its corner origin rather than middle
         //tiles[tileIdx].origin.y = gHeight[uint2(128, 128)].r - (tile.scale_1024 * 2048);
     }
     
 
-    uint idx;
+    uint idx = 0;   // vertices placed so far. Threads that planted nothing in the stride-4 and
+                    // stride-2 passes stay at 0 and therefore take the stricter 0.1 cutoff at
+                    // the 'lastscale' test below.
 
     if (coord.x <= 28 && coord.y <= 28)
     {

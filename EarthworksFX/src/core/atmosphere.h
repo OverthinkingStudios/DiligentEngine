@@ -1,57 +1,87 @@
 #pragma once
-#include "Falcor.h"
-#include "computeShader.h"
-using namespace Falcor;
+
+// ---------------------------------------------------------------------------
+// Fog volumes and the atmospheric-scattering parameter blocks shared with the
+// HLSL side.
+//
+// The math oddities in this subsystem are CORRECT and deliberate:
+// atan(0.5*h/f) WITHOUT the factor 2 (it wants the half angle), the
+// acumulateFog in/out asymmetry on the shader side, and the setCamera ordering
+// quirk (compute_Params.slice* are copied from the PREVIOUS call's m_Slice*
+// values - steady-state identical, do not reorder).
+// ---------------------------------------------------------------------------
+
+#include "ewTypes.h"
+#include "ewCamera.h"
+#include "ewGpuContext.h"
+#include "ewResources.h"
+#include "ewShader.h"
+
+// Local aliases for the types shared with HLSL, so this header stands on its
+// own instead of depending on terrain.h being included first.
+using atm_float2 = glm::vec2;
+using atm_float3 = glm::vec3;
+using atm_float4 = glm::vec4;
 
 
 struct  fogCloudCommonParams {
 
-    float3 sun_direction;
-    float pad_fog1;
+    // Every member of this struct and of fogAtmosphericParams below is
+    // explicitly zero-initialized. Nothing writes most of them before they
+    // reach the fog compute, and the failure mode is silent rather than loud:
+    // a non-zero parabolicProjection, say, flips the compute into its
+    // parabolic path.
+    atm_float3 sun_direction{ 0, 0, 0 };
+    float pad_fog1 = 0;
 
     float cloudBase = 5000.f;
-    float cloudThickness = 100.f; 
-    float2 paddcloudB;
+    float cloudThickness = 100.f;
+    atm_float2 paddcloudB{ 0, 0 };
 };
 
 struct   fogAtmosphericParams {
-    float3 eye_direction;
-    float uv_offset;
+    atm_float3 eye_direction{ 0, 0, 0 };
+    float uv_offset = 0;
 
-    float3 eye_position;
-    float uv_scale;
+    atm_float3 eye_position{ 0, 0, 0 };
+    float uv_scale = 0;
 
-    float3 dx;
-    float uv_pixSize;
+    atm_float3 dx{ 0, 0, 0 };
+    float uv_pixSize = 0;
 
-    float3 dy;
-    uint numSlices;
+    atm_float3 dy{ 0, 0, 0 };
+    uint32_t numSlices = 0;
 
-    float sliceZero;
-    float sliceMultiplier; // distance to the next slice (multiply with current slice)
-    float sliceStep;	   // size of this slice (multiply with current slice)
-    float slicePADD2;
+    float sliceZero = 0;
+    float sliceMultiplier = 0; // distance to the next slice (multiply with current slice)
+    float sliceStep = 0;	   // size of this slice (multiply with current slice)
+    // TODO: never set and never uploaded - only sliceStep, sliceMultiplier and
+    // sliceZero are sent. Harmless as layout filler, but check the HLSL side does
+    // not expect four floats written here.
+    float slicePADD2 = 0;
 
-    float timer;
-    int numFogLights;
-    float2 paddTime;
+    float timer = 0;
+    int numFogLights = 0;
+    atm_float2 paddTime{ 0, 0 };
 
     // possible temporary near density
-    float2 fogAltitude; //(base, noise)	??? Not sure if base will be sued in the end, get from Fog texture
-    float2 fogDensity;	//(base, noise)
-    float2 fogUVoffset; // animate to simulate wind
-    float fogMip0Size;	// Size of a single pixel on MIP 0, since compute shaders have to explicitely compute mip level
-    float numFogVolumes;
+    atm_float2 fogAltitude{ 0, 0 }; //(base, noise)	??? Not sure if base will be sued in the end, get from Fog texture
+    atm_float2 fogDensity{ 0, 0 };	//(base, noise)
+    atm_float2 fogUVoffset{ 0, 0 }; // animate to simulate wind
+    float fogMip0Size = 0;	// Size of a single pixel on MIP 0, since compute shaders have to explicitely compute mip level
+    float numFogVolumes = 0;
 
-    // Block for the new atmosphere
+    // The member-initializer defaults below ARE the operative sky parameters -
+    // nothing writes them at runtime, there is no GUI for them. Change a value
+    // here and you change the sky.
     // ############################################################################################################################
-    float3 sunColourBeforeOzone{ 1.0f, 1.0f, 1.0f };
+    atm_float3 sunColourBeforeOzone{ 1.0f, 1.0f, 1.0f };
     float haze_Turbidity = 1.5f;
 
-    float3 haze_Colour{ 0.95, 0.95, 0.95 };
+    atm_float3 haze_Colour{ 0.95f, 0.95f, 0.95f };
     float haze_AltitudeKm = 1.2f;
 
-    float3 fog_Colour{ 0.95, 0.95, 0.95 };
+    atm_float3 fog_Colour{ 0.95f, 0.95f, 0.95f };
     float haze_BaseAltitudeKm = 0;
 
     float fog_AltitudeKm = 0.29f;
@@ -59,27 +89,27 @@ struct   fogAtmosphericParams {
     float fog_Turbidity = 8.5f;
     float globalExposure = 1.0f / 20000.0f;
 
-    float3 rain_Colour{ 0.1, 0.1, 0.1 };
+    atm_float3 rain_Colour{ 0.1f, 0.1f, 0.1f };
     float rainFade = 1.0f;
 
     float ozone_Density = 0.7f;
-    float3 ozone_Colour{ 0.65, 1.6, 0.085 };
+    atm_float3 ozone_Colour{ 0.65f, 1.6f, 0.085f };
 
-    float4 refraction{ 0.022, 0.027, 0.03, 0 };
+    atm_float4 refraction{ 0.022f, 0.027f, 0.03f, 0 };
     // ############################################################################################################################
 
     // info for parabolic projection
-    float parabolicProjection;
-    float parabolicMapHalfSize;
-    float parabolicUpDown;
-    float parabolicPADD;
+    float parabolicProjection = 0;
+    float parabolicMapHalfSize = 0;
+    float parabolicUpDown = 0;
+    float parabolicPADD = 0;
 
     // Temporary block - debug sliders for atmosphere
     // ############################################################################################################################
-    float tmp_IBL_scale;
-    float tmp_B;
-    float tmp_C;
-    float tmp_D;
+    float tmp_IBL_scale = 0;
+    float tmp_B = 0;
+    float tmp_C = 0;
+    float tmp_D = 0;
     // ############################################################################################################################
 };
 
@@ -88,7 +118,7 @@ struct FogVolumeParameters {
     int m_x;
     int m_y;
     int m_z;
-    Falcor::ResourceFormat format;
+    Diligent::TEXTURE_FORMAT format;
     bool m_bRGBOut;
     bool bParabolic;
     float _near = 50.f;
@@ -101,61 +131,64 @@ class FogVolume {
 public:
     void onLoad(FogVolumeParameters params);
     void updateFogparameters(fogAtmosphericParams params);
-    void setCamera(Camera::SharedPtr _camera);
-    //void setLights(const std::vector<LightRenderData>& L);
+    void setCamera(ew::Camera::SharedPtr _camera);
 
 public:
     FogVolumeParameters m_params;
-    float m_logEnd;	  // (k-1 / k) / log(far) - for exponential slices
-    float m_oneOverK; // 1.5 / k    - the 0.5 makes up for half pixel offsets
+    float m_logEnd = 0;	  // (k-1 / k) / log(far) - for exponential slices
+    float m_oneOverK = 0; // 1.0 / k. Sometimes documented as 1.5/k ("the 0.5
+                          // makes up for half pixel offsets"), but the shader
+                          // is tuned against the 1.0/k the code computes.
 
-    float m_SliceStep; // Distance between two slices - multiplier
-    float m_SliceZero; // m_start / m_StepMultiplier   - the first slice is closer than the near plane
+    float m_SliceStep = 0; // Distance between two slices - multiplier
+    float m_SliceZero = 0; // m_start / m_StepMultiplier   - the first slice is closer than the near plane
+    // The four members above are zero-initialized because the first setCamera()
+    // copies them into compute_Params BEFORE recomputing them, so frame 1
+    // legitimately reads zeros rather than garbage.
 
-    Texture::SharedPtr inscatter;
-    Texture::SharedPtr inscatter_cloudbase;
-    Texture::SharedPtr inscatter_sky;
+    ew::Texture::SharedPtr inscatter;
+    ew::Texture::SharedPtr inscatter_cloudbase;
+    ew::Texture::SharedPtr inscatter_sky;
 
-    Texture::SharedPtr outscatter;
-    Texture::SharedPtr outscatter_cloudbase;
-    Texture::SharedPtr outscatter_sky;
+    ew::Texture::SharedPtr outscatter;
+    ew::Texture::SharedPtr outscatter_cloudbase;
+    ew::Texture::SharedPtr outscatter_sky;
 
     // parameters for compute shader to generate fog
     fogAtmosphericParams compute_Params;
-    //VolumeFogLight compute_Lights[RENDERER_MAX_FOG_LIGHTS];
 };
 
 
 class atmosphereAndFog{
 public:
-    void onLoad(RenderContext* _renderContext, FILE* _logfile);
-    void computeSunInAtmosphere(RenderContext* _renderContext);
-    void computeVolumetric(RenderContext* _renderContext);
-    void setSunDirection(float3 dir);
-    void setTerrainShadow(Texture::SharedPtr shadow);
-    void setSMOKE(Texture::SharedPtr textures[6][3]);
-    void setSmokeTime(float4 lodOffsets[6][2], float4 lodScales[6]);
+    void onLoad(ew::GpuContext* _renderContext);
+    void computeSunInAtmosphere(ew::GpuContext* _renderContext);
+    void computeVolumetric(ew::GpuContext* _renderContext);
+    void setSunDirection(atm_float3 dir);
+    void setTerrainShadow(ew::Texture::SharedPtr shadow);
+    void setSMOKE(ew::Texture::SharedPtr textures[6][3]);
+    void setSmokeTime(atm_float4 lodOffsets[6][2], atm_float4 lodScales[6]);
     FogVolume& getFar() { return mainFar; }
     FogVolume& getNear() { return mainNear; }
     FogVolume& getParabolic() { return parabolicFar; }
-    
+
 
 public:
-    Texture::SharedPtr  sunlightTexture = nullptr;
+    ew::Texture::SharedPtr  sunlightTexture = nullptr;
     fogAtmosphericParams params;
 
 private:
-    computeShader		compute_sunSlice;
-    
-    Texture::SharedPtr  phaseFunction = nullptr;
+    ew::computeShader		compute_sunSlice;
+
+    ew::Texture::SharedPtr  phaseFunction = nullptr;
     fogCloudCommonParams common;
-    
+
 
     FogVolume mainNear;
     FogVolume mainFar;
     FogVolume parabolicFar;
-    computeShader		compute_Atmosphere;
+    ew::computeShader		compute_Atmosphere;
 
-    Sampler::SharedPtr			sampler_Trilinear;
-    Sampler::SharedPtr			sampler_Clamp;
+    ew::Sampler::SharedPtr			sampler_Trilinear;
+    ew::Sampler::SharedPtr			sampler_Clamp;
 };

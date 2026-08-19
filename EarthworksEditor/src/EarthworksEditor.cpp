@@ -1,6 +1,7 @@
 #include "EarthworksEditor.hpp"
 
 #include "imgui.h"
+#include <spdlog/spdlog.h>
 
 EarthworksEditor::EarthworksEditor()
     : Diligent::EarthworksFXApplicationBase("Earthworks Editor", "earthworks-editor", overthinking::Env::Stage::Dev)

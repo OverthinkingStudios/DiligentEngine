@@ -1,8 +1,18 @@
 #pragma once
 
-#include "Falcor.h"
+// ---------------------------------------------------------------------------
+// Include from terrain.h AFTER the hlsli block; relies on the shared type
+// aliases being in scope. The plain enums below (bezierSide left/middle/right,
+// bezier_edge center/outside, ...) leak their names into every TU that sees
+// terrain.h.
+//
+// cubicDouble is a GPU byte contract: the 128-byte StructuredBuffer element of
+// `splineData` in render_spline(.Terrafector).hlsl AND a cereal payload.
+// bezierLayer is its 8-byte drawable-layer sibling; its bit layout is
+// authoritative in the shader decode macros.
+// ---------------------------------------------------------------------------
+
 #include "terrafector.h"
-using namespace Falcor;
 
 #include "cereal/cereal.hpp"
 #include "cereal/types/map.hpp"
@@ -44,6 +54,8 @@ struct cubicDouble
     }
 };
 CEREAL_CLASS_VERSION(cubicDouble, 100);
+
+static_assert(sizeof(cubicDouble) == 128, "cubicDouble must stay exactly 128 bytes (splineData GPU stride)");
 
 
 
@@ -230,6 +242,8 @@ struct bezierLayer
     uint A;			// flags, material, index [2][14][16]			combine with rootindex in constant buffer
     uint B;			// w0, w1 [4][14][14]
 };
+// The [2][14][16] / [4][14][14] bit counts above are stale: the bezierLayer
+// constructor in roads_physics.cpp and the shader decode macros are the
+// authoritative layout.
 
-
-
+static_assert(sizeof(bezierLayer) == 8, "bezierLayer must stay exactly 8 bytes (indexData GPU stride)");

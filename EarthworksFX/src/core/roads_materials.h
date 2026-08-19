@@ -1,5 +1,10 @@
 #pragma once
 
+// ---------------------------------------------------------------------------
+// roadMaterialGroup / .roadMaterial files are cereal-JSON authoring data: a
+// named stack of terrafector-material layers per road surface.
+// ---------------------------------------------------------------------------
+
 #include "terrafector.h"
 
 
@@ -8,13 +13,13 @@ class roadMaterialLayer
 public:
     roadMaterialLayer() { ; }
     virtual ~roadMaterialLayer() { ; }
-    bool renderGui(Gui* _gui, Gui::Window& _window);
 
     //static std::string rootFolder;
 
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const version)
     {
+        (void)version;
         archive(CEREAL_NVP(displayName));
         archive(CEREAL_NVP(bezierIndex));
         archive(CEREAL_NVP(sideA));
@@ -42,18 +47,16 @@ struct roadMaterialGroup
 {
     std::string				displayName = "please change me";
     std::string				relativePath;
-    Texture::SharedPtr		thumbnail = nullptr;
+    ew::Texture::SharedPtr	thumbnail = nullptr;
 
     std::vector<roadMaterialLayer> layers;
     bool import(std::string _path);
     void save();
-    bool renderGui(Gui* _gui, Gui::Window& _window);
-
-    bool changedForSave = false;
 
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const version)
     {
+        (void)version;
         archive(CEREAL_NVP(displayName));
         archive(CEREAL_NVP(relativePath));
         archive(CEREAL_NVP(layers));
@@ -80,15 +83,10 @@ public:
     void operator=(roadMaterialCache const&) = delete;
 
 public:
-    void renderGui(Gui* _gui, Gui::Window &_window);
-    bool renderGuiSelect (Gui* _gui, Gui::Window& _window);
     void reFindMaterial(roadMaterialGroup &_material);
-    void renameMoveMaterial(roadMaterialGroup& _material);
     uint find_insert_material(std::string _path);
     void reloadMaterials();
     std::string checkPath(std::string _root, std::string _file);
-
-    int selectedMaterial = -1;
 
     std::vector<roadMaterialGroup>	materialVector;
 
@@ -105,6 +103,7 @@ public:
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const version)
     {
+        (void)version;
         archive(CEREAL_NVP(materialVector));
 
         for (auto& mat : materialVector) {
@@ -113,6 +112,3 @@ public:
     }
 };
 CEREAL_CLASS_VERSION(roadMaterialCache, 100);
-
-
-

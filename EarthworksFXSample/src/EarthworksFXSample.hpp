@@ -6,7 +6,7 @@ namespace Diligent
 {
 
 /// EarthworksFX terrain demo. Identical to the base app, plus a small debug
-/// window (debug-grid toggle + camera readout) used during terrain bring-up.
+/// window (debug-grid toggle + camera readout).
 class EarthworksFXSample final : public EarthworksFXApplicationBase
 {
 public:
@@ -18,8 +18,8 @@ protected:
      void OnConfigureSettings(EarthworksFXAppSettings& s) override final;
 
 private:
-    /// App-specific ImGui (debug grid toggle + camera readout). Bring-up aid
-    /// kept out of Earthworks_4 so re-porting that file stays clean.
+    /// App-specific ImGui: debug grid toggle + camera readout. Lives here
+    /// rather than in Earthworks_4 to keep the renderer free of host UI.
     void DrawDebugUI();
 };
 

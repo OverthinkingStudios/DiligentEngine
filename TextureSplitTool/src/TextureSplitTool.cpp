@@ -3,11 +3,15 @@
 #include "imgui.h"
 // #include "GraphicsAccessories.hpp"
 #include "FileWrapper.hpp"
+
+#include <cmath>
+#include <cstdlib>
+#include <fstream>
 #pragma optimize("", off)
 gui _Gui;
 
 earthworksPaths ew_paths;
-std::string earthworksPaths::root = "F:/ESim_NextCloud/eSim-Plantwork/resources/";
+std::string earthworksPaths::root = "C:/dev/git/os/gameroot_dev/terrains/_resources/textures/";
 
 bool earthworksPaths::make_relative(std::string& _path) {
     clean(_path);
@@ -505,11 +509,13 @@ void textureTool::renderGui_TEX() {
             draw_list->AddBezierQuadratic(root_pos + toImVec2_b(T.start) * zoom, root_pos + toImVec2_b(T.bezier) * zoom,
                                           root_pos + toImVec2_b(T.stop) * zoom, (currentTexture == i) ? B : A, 2);
 
-            float2 tangent = Diligent::normalize(T.bezier - T.start);
+            // glm::normalize - float2 is a glm type; the Diligent:: overload for glm
+            // vectors lived in the retired compat layer (legacy/GlmBasicMath.h).
+            float2 tangent = glm::normalize(T.bezier - T.start);
             float2 right = {-tangent.y, tangent.x};
-            float2 tangent2 = Diligent::normalize(T.stop - T.bezier);
+            float2 tangent2 = glm::normalize(T.stop - T.bezier);
             float2 right2 = {-tangent2.y, tangent2.x};
-            float2 tangentb = Diligent::normalize(T.stop - T.start);
+            float2 tangentb = glm::normalize(T.stop - T.start);
             float2 rightb = {-tangentb.y, tangentb.x};
 
             draw_list->AddBezierQuadratic(root_pos + toImVec2_b(T.start + right * T.width) * zoom,

@@ -67,14 +67,14 @@ struct plant
     float unused_01;
 
     // lighting
-    float Ao_depthScale; //??? unused
-    float sunTilt;
-    float bDepth;
-    float bScale;
+    float Ao_depthScale; //??? unused           (original default 0.3f)
+    float sunTilt;                          //  (original default -0.2f)
+    float bDepth;                           //  (original default 20.0f)
+    float bScale;                           //  (original default 0.5f)
 
     // soft shadows
-    float shadowUVScale;
-    float shadowSoftness;
+    float shadowUVScale;                    //  (original default 1.f)
+    float shadowSoftness;                   //  (original default 0.15f)
     // flutter
     float flutter_stength;
     float flutter_freq;

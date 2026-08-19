@@ -1,20 +1,25 @@
 
-#define CALLEDFROMHLSL
-
 SamplerState gSmpPoint : register(s0);
 SamplerState gSmpLinear : register(s1);
 SamplerState gSmpAniso : register(s2);
 SamplerState gSmpLinearClamp : register(s3);
 
+// gmyTextures_T is declared before materials.hlsli is included: the solve*
+// functions in there sample this array.
 Texture2D<float4> gmyTextures_T[4096];
 
+#define CALLEDFROMHLSL
 #include "materials.hlsli"
 
 struct cubicDouble
 {
-    float4 data[2][4];			//[middle, outside][p0, p1, p2, p3]
+	float4 data[2][4];			//[middle, outside][p0, p1, p2, p3]
 };
 
+
+// TODO: The bit counts noted on A and B are stale - the decode macros further down
+// are the authoritative bit layout. They also disagree with render_spline.hlsl's
+// [4][14][16] / [4][14][14] for the same packed layout. Reconcile all three.
 struct bezierLayer
 {
 	uint A;						// flags, material, index [3][13][16]			combine with rootindex in constant buffer
@@ -42,12 +47,14 @@ struct splineVSOut
 };
 
 
+
+
 // Cateljau
 inline float4 quadratic_Casteljau(float t, float4 P0, float4 P1, float4 P2)
 {
 	float4 pA = lerp(P0, P1, t);
 	float4 pB = lerp(P1, P2, t);
-	
+
 	return lerp(pA, pB, t);
 }
 
@@ -57,11 +64,11 @@ inline float4 cubic_Casteljau(float t, float4 P0, float4 P1, float4 P2, float4 P
 	float4 pA = lerp(P0, P1, t);
 	float4 pB = lerp(P1, P2, t);
 	float4 pC = lerp(P2, P3, t);
-	
+
 	float4 pD  = lerp(pA, pB, t);
 	float4 pE  = lerp(pB, pC, t);
-	
-	return lerp(pD, pE, t);   
+
+	return lerp(pD, pE, t);
 }
 
 
@@ -122,17 +129,17 @@ splineVSOut vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
     return output;
 }
 
-	
-	
 
 
-	
-	
-	
-	
-	
-	
-	
+
+
+
+
+
+
+
+
+
 
 
 
@@ -140,7 +147,7 @@ splineVSOut vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
 PS_OUTPUT_Terrafector fixedMaterials(const uint material, const float2 uv, const float4 color, const uint4 flags, const float height)
 {
     PS_OUTPUT_Terrafector output = (PS_OUTPUT_Terrafector)0;
-    
+
     switch (material)
     {
     case MATERIAL_BLEND:
@@ -190,8 +197,8 @@ PS_OUTPUT_Terrafector psMain(splineVSOut vIn)  : SV_TARGET
     _uv uv;
     solveUV(MAT, vIn.posW.xz, vIn.texCoords.xy, uv);
     float alpha = solveAlpha(MAT, uv, vIn.colour.r) * vIn.colour.a;
-	
-    
+
+
     if (MAT.materialType == MATERIAL_TYPE_STANDARD)
     {
         solveElevationColour(output, MAT, uv, alpha, vIn.posW.y);
@@ -223,15 +230,15 @@ PS_OUTPUT_Terrafector psMain(splineVSOut vIn)  : SV_TARGET
                 output.Ecotope3 = lerp(output.Ecotope3, subOutput.Ecotope3, subOutput.Ecotope3.a);
                 output.Ecotope4 = lerp(output.Ecotope4, subOutput.Ecotope4, subOutput.Ecotope4.a);
 
-                
+
             }
         }
         return output;
     }
 
-    
-	
+
+
 	return output;
 }
-	
+
 

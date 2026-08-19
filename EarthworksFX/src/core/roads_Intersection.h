@@ -1,19 +1,11 @@
 #pragma once
 
-#include "Falcor.h"
-using namespace Falcor;
+// ---------------------------------------------------------------------------
+// Corner data is SERIALIZED, so loading a network never re-solves its
+// intersections.
+// ---------------------------------------------------------------------------
 
-#include "cereal/cereal.hpp"
-#include "cereal/types/map.hpp"
-#include "cereal/types/vector.hpp"
-#include "cereal/types/list.hpp"
-#include "cereal/types/array.hpp"
-#include "cereal/types/string.hpp"
-
-
-#include"roads_road.h"
-
-
+#include "roads_road.h"
 
 
 
@@ -68,4 +60,3 @@ public:
     }
 };
 CEREAL_CLASS_VERSION(intersection, 101);
-

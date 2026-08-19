@@ -1,6 +1,8 @@
+#include "terrain.h"
 
+#include "ots/Log.hpp"
 
-#include"roads_bezier.h"
+#include "glm/gtx/compatibility.hpp"    // glm::lerp on vectors
 
 
 
@@ -139,7 +141,7 @@ cubicDouble::cubicDouble(splinePoint a, splinePoint b, bool bRight, float2 A, fl
     else {
         float4 bck = a.bezier[left].backward_uv() - a.bezier[left].pos_uv() + a.bezier[middle].pos_uv();
         float4 fwd = b.bezier[left].forward_uv() - b.bezier[left].pos_uv() + b.bezier[middle].pos_uv();
-        
+
 
         data[0][0] = glm::lerp(a.bezier[middle].pos_uv(), a.bezier[left].pos_uv(), A.x);		// remember to pack UVs here
         data[0][1] = glm::lerp(bck, a.bezier[left].backward_uv(), B.x);
@@ -224,7 +226,7 @@ void splinePoint::solveMiddlePos()
 
         if (!isSanePosition(bezier[middle].pos))
         {
-            bool bCM = true;
+            spdlog::warn("roads: splinePoint::solveMiddlePos produced an insane position");
         }
     }
 }
@@ -315,6 +317,3 @@ int splinePoint::getMaterialIndex(uint _side, uint _slot)
     }
     return 0;
 }
-
-
-

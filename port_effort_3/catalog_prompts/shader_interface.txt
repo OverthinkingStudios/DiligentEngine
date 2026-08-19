@@ -1,0 +1,27 @@
+You are a code analyst for Port Effort 3 in c:\dev\git\os\DiligentEngine (branch port_effort_3). Read port_effort_3\task.md first (S0 ground rules, S1 goal, S5 Concept Catalog). NEVER run any git state-changing command (no commit/add/checkout). Write ONLY your deliverable file. Never modify source files. Do NOT spawn subagents - do the work yourself.
+
+DELIVERABLE: port_effort_3\catalog\shader_interface.md - the authoritative PER-PASS BINDING TABLE for the whole renderer. Other catalog docs describe subsystem semantics; yours is the mechanical contract reference a shader re-porting agent will keep open. Work sequentially; prefer grep + targeted reads over full-file reads to manage context.
+
+ANALYZE: every shader in port_effort_3\source_extract_3\hlsl\ (~46 files) plus the CPU wrappers computeShader.cpp/.h and pixelShader.cpp/.h and the .Vars()-> / setTexture / setBuffer / setBlob / dispatch / draw call sites in source_extract_3 (terrain.cpp, vegetationBuilder.cpp, atmosphere.cpp, terrafector.cpp, Sprites.cpp, Earthworks_4.cpp, ...).
+
+FOR EACH PASS/SHADER produce a table row/block: file, entry points (cs/vs/ps/gs + numthreads), every cbuffer with EXACT member layout including padding members (padding is load-bearing; flag every alignment-sensitive spot), structured buffers/textures/samplers, defines that change compilation, CPU feeder (file:line of the code that sets each resource), draw/dispatch mode (direct or indirect - indirect args are NON-INDEXED 16-byte t_DrawArguments per groundcover_defines.hlsli:42-48; verify per pass), render targets/FBO formats, blend/depth/raster state set by CPU.
+
+ALSO: include-graph section (which hlsli headers are shared contracts between passes); GPU-CPU shared struct list (structs mirrored in C++ - file:line pairs - where layout mismatch = silent corruption); SHORT DXC-pitfalls section: for the ~15 shaders that drifted between extract and EarthworksFX\hlsl\ (biggest: render_vegetation_ribbons 120 lines, compute_volumeFog.hlsli 77), classify each drift (DXC-necessitated / suspicious rewrite worth re-checking) - use diff per file, don't read both fully. Extra context: EarthworksFX\src\compat\FalcorGpu.cpp shows how the previous port bound things.
+
+Completeness wins, but stay mechanical. RETURN: ~15-line summary: pass count, riskiest layout/padding spots, worst DXC drifts, surprises.
+
+CONTEXT SOURCES (read-only): current port EarthworksFX\src\core\ + EarthworksFX\hlsl\ (a previous port of the same code - drift reference), EarthworksFX\BRINGUP_NOTES.md + EarthworksFX\PROJECT_OVERVIEW.md (mine relevant F-findings; do not re-derive). The extract was stripped of editor GUI/glider/cfd - '// STRIP-REVIEW:' tags mark deliberate keeps; pristine original at C:\dev\git\os\Earthworks_4-F5_2\ (STRICTLY READ-ONLY) if you need stripped context.
+
+DOC TEMPLATE (use these sections):
+1. Purpose & data flow (CPU/GPU, per-frame vs async)
+2. Core tricks & clever mechanisms - the things a rewriter MUST NOT lose; each with file:line refs and WHY it matters
+3. Invariants & conventions
+4. Performance-critical details - why this is fast; what change would silently kill perf or visuals
+5. GPU resources & shader interface (buffers/textures/cbuffers incl. layout+PADDING - a past porting agent deleted 'unused' byte padding and broke rendering, padding is load-bearing)
+6. Dependencies: what it consumes/provides to other subsystems
+7. Falcor API surface actually used (types/calls) - input for the port-path decision
+8. Port drift notes: how EarthworksFX's version differs, relevant BRINGUP_NOTES F-findings, known bugs
+9. Bad code / removable candidates (clearly labeled as opinion, never act on it)
+10. Open questions / uncertainties (flag, don't guess)
+
+Audience: a cold-context agent re-porting this to native Diligent + a reviewer checking nothing hyper-tuned was lost. Precision beats prose; tables and file:line citations. RETURN: a ~15-line summary of the most important tricks/invariants you found.

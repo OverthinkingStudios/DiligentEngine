@@ -26,22 +26,32 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Falcor.h"
-#include "computeShader.h"
-#include "pixelShader.h"
-#include "buildings.h"     // PORT NOTE: new far-LOD buildings delegate
 
+// ---------------------------------------------------------------------------
+// The terrain renderer. terrainManager owns the whole pipeline: quadtree tile
+// streaming out of JP2 elevation + orthophotos, the per-tile GPU bake chain
+// (bicubic upsample -> terrafector/road topdown bake -> ecotopes -> normals ->
+// vertices -> jumpflood -> delaunay), the tile/billboard/plant draws, the
+// vegetation hub (plants_Root), terrafectors and the road network, the CPU
+// terrain-shadow solver and the skydome.
+//
+// Not implemented here: the offline bake/export machinery (bake_start/
+// bake_frame/bake_Setup/bake_RenderTopdown/sceneToMax), the road and stamp
+// editing flows, the sprite marker renderer, the render_ribbons grass pass and
+// veghumanShader, cascade shadow maps, and the terrain generator.
+// ---------------------------------------------------------------------------
+
+#include "ewTypes.h"
+#include "ewCamera.h"
+#include "ewGpuContext.h"
+#include "ewResources.h"
+#include "ewShader.h"
+#include "EarthworksDebug.h"
+
+#include <atomic>
 #include <thread>
-#include "Barrier.hpp"
 
-#include"terrafector.h"
-#include "roadNetwork.h"
-#include "Sprites.h"
-#include "ecotope.h"
-#include "atmosphere.h"
 #include "lru_cache.h"
-#include "cascadeShadowMaps.h"
-#include "terrainGenerator.h"
 
 #include "cereal/cereal.hpp"
 #include "cereal/archives/binary.hpp"
@@ -53,89 +63,117 @@
 #include "cereal/types/array.hpp"
 #include "cereal/types/string.hpp"
 
-#include "EarthworksDebug.h"
 #include <fstream>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <list>
+#include <map>
+#include <string>
+#include <vector>
 
-// JOHAN - why does this define exists, what purpose does it serve
-#if defined(EARTHWORKS_WITH_OPENJPH)
-#    if defined(__has_include) && __has_include(<openjph/ojph_codestream.h>)
-#        include <openjph/ojph_arg.h>
-#        include <openjph/ojph_mem.h>
-#        include <openjph/ojph_file.h>
-#        include <openjph/ojph_codestream.h>
-#        include <openjph/ojph_params.h>
-#        include <openjph/ojph_message.h>
-#    else
-#        include <ojph_arg.h>
-#        include <ojph_mem.h>
-#        include <ojph_file.h>
-#        include <ojph_codestream.h>
-#        include <ojph_params.h>
-#        include <ojph_message.h>
-#    endif
+// OpenJPH (JP2 elevation/orthophoto decode) - this include shape works both
+// with the vendored copy and with an installed package.
+#if defined(__has_include) && __has_include(<openjph/ojph_codestream.h>)
+#    include <openjph/ojph_arg.h>
+#    include <openjph/ojph_mem.h>
+#    include <openjph/ojph_file.h>
+#    include <openjph/ojph_codestream.h>
+#    include <openjph/ojph_params.h>
+#    include <openjph/ojph_message.h>
 #else
-#    error "EarthworksFX requires EARTHWORKS_WITH_OPENJPH (OpenJPH via Earthworks)."
+#    include <ojph_arg.h>
+#    include <ojph_mem.h>
+#    include <ojph_file.h>
+#    include <ojph_codestream.h>
+#    include <ojph_params.h>
+#    include <ojph_message.h>
 #endif
 
-#include "vegetationBuilder.h"
- 
-
 #include <future> // Required for std::async and std::future
-#include <thread> // Required for std::this_thread::sleep_for
-#include <memory>
-#include <atomic>
 
-using namespace Falcor;
+// --- HLSL-shared struct definitions ------------------------------------------
+// The .hlsli files below are compiled by BOTH MSVC and DXC. The global aliases
+// stand in for the HLSL built-in type names; they denote the exact same glm
+// types as the ew:: aliases, so mixing with `using namespace ew` stays
+// unambiguous.
+using float2   = glm::vec2;
+using float3   = glm::vec3;
+using float4   = glm::vec4;
+using float4x4 = glm::mat4;
+using uint     = std::uint32_t;
+using uint2    = glm::uvec2;
+using uint4    = glm::uvec4;
+using int2     = glm::ivec2;   // ecotopeGpuConstants::tileXY
 
+#include "hlsl/terrain/terrainDefines.hlsli"
+#include "hlsl/terrain/groundcover_defines.hlsli"
+#include "hlsl/terrain/vegetation_defines.hlsli"
+#include "hlsl/terrain/gpuLights_defines.hlsli"
 
+// After the hlsli block - these headers use the shared structs/aliases above.
+// Order matters: ecotope.h (forward-declares _rootPlant) -> ribbonBuilder.h
+// (packed-vertex builder) -> vegetationBuilder.h (defines _rootPlant AND
+// shaderLightBuffer).
+#include "ecotope.h"
+#include "ribbonBuilder.h"
+#include "vegetationBuilder.h"
 
-//#pragma optimize("", off)
+// Terrafectors + roads. terrafector.h pulls materials.hlsli (the TF_material
+// byte contract, include-guarded); roadNetwork.h pulls the whole roads stack
+// (roads_bezier/road/Intersection/materials/physics).
+#include "terrafector.h"
+#include "roadNetwork.h"
+
 
 // MOVE TO SHDOPW CLASS, but inititlaize data from here
 // MOVE TO TEMP SHADWO CLASS TO BE REPLACED WITH GPU DATA
+//
+// CPU semi-static terrain shadow: an async scanline ray-march over the 4096^2
+// root heightfield producing a "shadow-line height + softness" texture that
+// every lit shader and the fog compute sample analytically. There is NO
+// realtime shadow map in this engine. The solver's sun path is locked to the
+// X axis (sunAng = (-cos a, -sin a, 0), rows-only march) - an accepted
+// constraint.
 struct _shadowEdges
 {
+    // The four fields below are ~270 MB of tables, heap-allocated so they do
+    // not sit inline in the terrainManager object. `edge` has no live reader.
+    _shadowEdges();
     ~_shadowEdges();
-    float height[4096][4096];
-    float Nx[4095][4095];   // temp
-    unsigned char edge[4096][4096];
-    float2 shadowH[4096][4096];
+    _shadowEdges(const _shadowEdges&) = delete;
+    _shadowEdges& operator=(const _shadowEdges&) = delete;
 
-    // Loads the 4096x4096 terrain heightfield; when _buildings is given, its
-    // triangles are overlaid onto height[][] (max per cell) before the slopes
-    // are computed, so the solver casts building shadows exactly like terrain
-    // edges. Call before launchSolveThread() - buildings are static, so no
-    // further synchronization with the solver thread is needed.
-    void load(std::string filename, float _angle, const buildingsRenderer* _buildings = nullptr);
+    float (*height)[4096] = nullptr;
+    float (*Nx)[4095] = nullptr;   // temp
+    unsigned char (*edge)[4096] = nullptr;
+    float2 (*shadowH)[4096] = nullptr;
+
+    void load(std::string filename, float _angle);
     void solve(float _angle, bool dx);
 
     float sunAngle = 0.02f;  // just afetr sunruise
     float dAngle = 0.01f;
-    float3 sunAng;
-    bool shadowReady = false;
-    bool requestNewShadow = false;
-    void launchSolveThread();
-   
-private:
+    float3 sunAng{ 0, 0, 0 };
+    // shadowReady is stored AFTER shadowH/sunAng are written (seq_cst) so the
+    // render thread's handoff always sees complete data.
+    std::atomic<bool> shadowReady{ false };
+    std::atomic<bool> requestNewShadow{ false };
     void solveThread();
-    std::unique_ptr<std::thread> threadShadows;
-    bool threadRunning = false;
+
+    void launchSolveThread();
+    std::thread m_solveThread;
+    std::atomic<bool> m_terminate{ false };
 };
-
-
-
-
-
-
-
-
 
 
 struct _lastFile
 {
     _lastFile() = default;
+    // First-run bootstrap: point at the Steg data relative to the process
+    // working directory (= ACSMP_GAMEROOT).
     _lastFile(const std::filesystem::path& terrain_root, const std::filesystem::path& resources_root);
-    
+
     // these are for quick load
     std::string terrain = "F:/terrains/sonoma/sonoma.terrain";
     std::string road = "X:/resources/terrains/eifel/roads/day6.roadnetwork";
@@ -156,6 +194,7 @@ struct _lastFile
     std::string dir_Terrains = "";
     std::string dir_GIS = "";
 
+    int mode = 0;
 
     template<class Archive>
     void serialize(Archive& _archive, std::uint32_t const _version)
@@ -167,7 +206,7 @@ struct _lastFile
         _archive(CEREAL_NVP(texture));
         _archive(CEREAL_NVP(fbx));
         _archive(CEREAL_NVP(EVO));
-        if (_version > 100)
+        if (_version >= 101)
         {
             _archive(CEREAL_NVP(weed));
             _archive(CEREAL_NVP(twig));
@@ -175,19 +214,23 @@ struct _lastFile
             _archive(CEREAL_NVP(trees));
             _archive(CEREAL_NVP(vegMaterial));
         }
-        if (_version > 101)
+        if (_version >= 102)
         {
             _archive(CEREAL_NVP(stamps));
         }
-        if (_version > 102)
+        if (_version >= 103)
         {
             _archive(CEREAL_NVP(dir_Resource));
             _archive(CEREAL_NVP(dir_Terrains));
             _archive(CEREAL_NVP(dir_GIS));
         }
+        if (_version >= 104)
+        {
+            _archive(CEREAL_NVP(mode));
+        }
     }
 };
-CEREAL_CLASS_VERSION(_lastFile, 103);
+CEREAL_CLASS_VERSION(_lastFile, 104);
 
 
 struct _terrainSettings
@@ -214,12 +257,8 @@ struct _terrainSettings
         _archive(CEREAL_NVP(dirResource));
     }
 
-    void renderGui(Gui* _gui);
 };
 CEREAL_CLASS_VERSION(_terrainSettings, 100);
-
-
-
 
 
 // FOR binary export of tiles
@@ -246,6 +285,10 @@ public:
     }
 
     uint index;
+    // Frame this pool slot was (re)allocated. Guards the async tileCenters
+    // readback against patching a fresh tile's bounding sphere with the height
+    // of the slot's PREVIOUS occupant.
+    uint32_t bornFrame = 0;
     quadtree_tile* parent;
     quadtree_tile* child[4];
 
@@ -285,7 +328,7 @@ enum CameraType {
     CameraType_Cube_3,
     CameraType_Cube_4,
     CameraType_Cube_5,
-    CameraType_Cube_6,    
+    CameraType_Cube_6,
     CameraType_Parabolic_low,       // really just a scale factor, but all round
     CameraType_Parabolic_medium,    // really just a scale factor, but all round
     CameraType_MAX,
@@ -413,7 +456,7 @@ struct jp2Dir
 
 
 
-enum _terrainMode { vegetation, ecotope, terrafector, roads, glider, terrainBuilder, textureTool_mode };
+enum class _terrainMode { vegetation, ecotope, terrafector, roads, glider, terrainBuilder, textureTool };
 
 class terrainManager
 {
@@ -421,82 +464,43 @@ public:
     terrainManager();
     virtual ~terrainManager();
 
-    void onLoad(RenderContext* _renderContext, FILE* _logfile);
+    void onLoad(ew::GpuContext* _renderContext);
     void onShutdown();
-    void onGuiRender_Right_Ecotope(Gui* _gui, Gui::Window& _window);
-    void onGuiRender_Right_Terrafector(Gui* _gui, Gui::Window& _window);
-    void onGuiRender_Right_Roads(Gui* _gui, Gui::Window& _window);
-    void onGuiRender_Right(Gui* pGui, int _header, float2 _screen);
 
-    void onGuiRender_Main_Ecotope(Gui* _gui);
-    void onGuiRender_Main_Terrafector(Gui* _gui);
-    void onGuiRender_Main_Roads(Gui* _gui);
-    void onGuiRender_Main(Gui* pGui, int _header, float2 _screen);
 
-    void onGuiRender(Gui* pGui, int _header, float2 _screen, fogAtmosphericParams* pAtmosphere);
-    void onGuiRender_Debug(Gui* pGui);
-    bool renderGui_Menu = false;
-    bool renderGui_Hud = true;
-    void onGuiMenubar(Gui* pGui);
-
-    
-    void onFrameRender(RenderContext* pRenderContext, const Fbo::SharedPtr& _fbo, Camera::SharedPtr _camera, GraphicsState::Viewport _viewport);
-    bool onKeyEvent(const KeyboardEvent& keyEvent);
-    bool onMouseEvent(const MouseEvent& mouseEvent, glm::vec2 _screenSize, glm::vec2 _mouseScale, glm::vec2 _mouseOffset, Camera::SharedPtr _camera);
-    bool onMouseEvent_Roads(const MouseEvent& mouseEvent, glm::vec2 _screenSize, Camera::SharedPtr _camera);
-    bool onMouseEvent_Stamps(const MouseEvent& mouseEvent, glm::vec2 _screenSize, Camera::SharedPtr _camera);
-    void onHotReload(HotReloadFlags reloaded);
+    void onFrameRender(ew::GpuContext* pRenderContext, const ew::Fbo::SharedPtr& _fbo, ew::Camera::SharedPtr _camera);
+    bool onKeyEvent(const ew::KeyboardEvent& keyEvent);
+    bool onMouseEvent(const ew::MouseEvent& mouseEvent, glm::vec2 _screenSize, glm::vec2 _mouseScale, glm::vec2 _mouseOffset, ew::Camera::SharedPtr _camera);
+    // Not implemented: the onMouseEvent_Roads / onMouseEvent_Stamps / onHotReload editor flows
 
     void init_TopdownRender();
     void allocateTiles(uint numT);			// ??? FIXME pass shader in as well to allocate GPU memory
     void reset(bool _fullReset = false);
-    void loadElevationHash(RenderContext* pRenderContext);
-    void loadImageHash(RenderContext* pRenderContext);
+    void loadElevationHash(ew::GpuContext* pRenderContext);
+    void loadImageHash(ew::GpuContext* pRenderContext);
+
 
     void clearCameras();
     void setCamera(unsigned int _index, glm::mat4 viewMatrix, glm::mat4 projMatrix, float3 position, bool b_use, float _resolution);
 
-    void updateShaderConstants(Texture::SharedPtr _previousFrame, shaderLightBuffer _buffer);
-    bool update(RenderContext* pRenderContext);
+    void updateShaderConstants(ew::Texture::SharedPtr _previousFrame, shaderLightBuffer _buffer);
+    bool update(ew::GpuContext* pRenderContext);
 
-    // Debug aid: world-space rectangles of the current quadtree LEAF tiles, one
-    // float4 per tile as (origin.x, origin.z, size, lod). Feeds the host's debug
-    // ground grid so the live tile splitting is visible on screen.
-    void getDebugTileRects(std::vector<float4>& _out) const
-    {
-        _out.clear();
-        for (const quadtree_tile* t : m_used)
-        {
-            if (!t->child[0])
-                _out.push_back(float4(t->origin.x, t->origin.z, t->size, (float)t->lod));
-        }
-    }
-
-    // Same rects as getDebugTileRects, but only the leaves that passed the
-    // main-camera frustum test in calculateSurfaceFlags (frustumFlags .y bit).
-    // Used to skip building chunks over invisible terrain. Empty when update()
-    // has not run for the current mode - callers treat that as "no info".
-    void getVisibleTileRects(std::vector<float4>& _out) const
-    {
-        _out.clear();
-        for (const quadtree_tile* t : m_used)
-        {
-            if (!t->child[0] && (frustumFlags[t->index].y & (1u << CameraType_Main_Center)))
-                _out.push_back(float4(t->origin.x, t->origin.z, t->size, (float)t->lod));
-        }
-    }
-
-
-    void shadowSetup(shadowMap& _shadow);
-    void shadowRenderFar();
-    void shadowRenderNear();
-    void shadowRenderSoft();
-    void shadowRender(RenderContext* pRenderContext );
-    RenderContext* renderContext;
-    shadowMap ShadowMap;
-
+    // No shadowSetup/shadowRender* and no shadow-map type - terrain shadows come from _shadowEdges below
 
     static _lastFile lastfile;
+
+    /// Explicit terrain to load (directory or *.terrainSettings.json path).
+    /// Set from the command line (`-terrain X`) before onLoad; bypasses
+    /// lastFile.xml when non-empty.
+    static std::string sTerrainOverride;
+
+    /// True once lastFile.xml + terrainSettings resolved and the GPU pools exist.
+    bool isLoaded() const { return m_loaded; }
+    std::string getTerrainName() const { return m_loaded ? settings.name : std::string{}; }
+
+    /// Read-only view of the live quadtree (host debug ground grid).
+    const std::list<quadtree_tile*>& usedTiles() const { return m_used; }
 
 private:
     void calculateSurfaceFlags();
@@ -506,14 +510,14 @@ private:
     void markChildrenForRemove(quadtree_tile* _tile);
 
 public:
-    std::atomic<int> hashCount = 0;
-    Texture::SharedPtr cacheTexture;
+    int hashCount = 0;
+    ew::Texture::SharedPtr cacheTexture;
     uint cacheHash;
     std::future<void> hashFuture;
     std::vector<unsigned short> jphData;
 
-    std::atomic<int> hashCountImage = 0;
-    Texture::SharedPtr cacheTextureImage;
+    int hashCountImage = 0;
+    ew::Texture::SharedPtr cacheTextureImage;
     uint cacheHashImage;
     std::future<void> hashIFuture;
     std::vector<unsigned char> jphImageData;
@@ -524,31 +528,28 @@ private:
     bool hashAndCache(quadtree_tile* pTile);
     bool hashAndCacheImages(quadtree_tile* pTile);
     void setChild(quadtree_tile* pTile, int y, int x);
-    void splitOne(RenderContext* _renderContext);
-    void splitChild(quadtree_tile* _pTile, RenderContext* _renderContext);
-    void splitRenderTopdown(quadtree_tile* _pTile, RenderContext* _renderContext);
+    void splitOne(ew::GpuContext* _renderContext);
+    void splitChild(quadtree_tile* _pTile, ew::GpuContext* _renderContext);
+    void splitRenderTopdown(quadtree_tile* _pTile, ew::GpuContext* _renderContext);
 
-    void bake_start(bool _toMAX);
-    bool bakeToMax;
-    void bake_frame();
-    void bake_Setup(float _size, uint lod, uint y, uint x, RenderContext* _renderContext);
-    void bake_RenderTopdown(float _size, uint lod, uint y, uint x, RenderContext* _renderContext);
-    void sceneToMax();
-    int exportLodMin = 10;
-    int exportLodMax = 10;
+    // Not implemented: the offline EVO export (bake_start/bake_frame/
+    // bake_Setup/bake_RenderTopdown/sceneToMax). It needs a synchronous texture
+    // readback plus a JP2 re-encode. Its bake_RenderTopdown is
+    // splitRenderTopdown with the bSplineAsTerrafector gates always taken - an
+    // offline bake ALWAYS bakes roads; keep that difference exact if it lands.
 
     void updateDynamicRoad(bool _bezierChanged);
     void updateDynamicStamp();
 
     void bezierRoadstoLOD(uint _lod);
 
-    
+
 
     uint                        numTiles = 997;
     std::vector<quadtree_tile>	m_tiles;
     std::list<quadtree_tile*>	m_free;
     std::list<quadtree_tile*>	m_used;
-    uint4 frustumFlags[1024] = {};  // zero-init: "no tile visible" until calculateSurfaceFlags first runs
+    uint4 frustumFlags[1024];
 public:
     bool fullResetDoNotRender = false;
 private:
@@ -558,57 +559,42 @@ private:
     bool debug = false;
 #endif
 
+    bool m_loaded = false;
+
+    /// Monotonic update() counter - pairs with quadtree_tile::bornFrame and
+    /// the readback ring's tag to age-gate bounding-sphere patches.
+    uint32_t m_frameCounter = 0;
+
     std::array<terrainCamera, CameraType_MAX> cameraViews;
     float3 cameraOrigin;
 
-    Texture::SharedPtr compressed_Normals_Array;
-    Texture::SharedPtr compressed_Albedo_Array;
-    Texture::SharedPtr compressed_PBR_Array;
-    Texture::SharedPtr height_Array;
+    ew::Texture::SharedPtr compressed_Normals_Array;
+    ew::Texture::SharedPtr compressed_Albedo_Array;
+    ew::Texture::SharedPtr compressed_PBR_Array;
+    ew::Texture::SharedPtr height_Array;
 public:
-    pixelShader terrainShader;
-    pixelShader terrainSpiteShader;
-    pixelShader triangleShader;
+    ew::pixelShader terrainShader;
+    ew::pixelShader terrainSpiteShader;
+    ew::pixelShader triangleShader;
     _terrainSettings settings;
 
 private:
 
-    Texture::SharedPtr	  spriteTexture = nullptr;
-    Texture::SharedPtr	  spriteNormalsTexture = nullptr;
+    ew::Buffer::SharedPtr       triangleData;        // skydome cube.fbx triangles
+    ew::computeShader		compute_bakeFloodfill;   // loaded but never dispatched from terrain - the live dispatch is vegetationBuilder's billboard bake gutter fill
 
+    // Not implemented: the ribbon (render_ribbons) / veghuman / rappersville
+    // members and bakeFbo_plants.
 
-    pixelShader ribbonShader;
-    uint numLoadedRibbons = 0;  // paraglider only
-    Buffer::SharedPtr       ribbonData[2];  // also paraglider  - split these into seperate block at least, not true groveTree.bChanged writes to this, so duplicate maybe
-    uint bufferidx = 0;
-
-    Buffer::SharedPtr       triangleData_VegHuman;
-    uint                    triCountVegHuman;
-    pixelShader             veghumanShader;
-
-    Buffer::SharedPtr       triangleData;
-    Fbo::SharedPtr		bakeFbo_plants;
-    GraphicsState::Viewport     viewportVegbake;
-    //bool bakeOneVeg = false;
-    BlendState::SharedPtr           blendstateVegBake;
-    computeShader		compute_bakeFloodfill;
-    int ribbonInstanceNumber = 1;
-    float ribbonSpacing = 3.0f;             // the size fo the extents
-    bool spacingFromExtents = true;
-
+    ecotopeSystem			mEcosystem;
 
 public:
-    // JOHAN These are the buildings, and shoulkd also moce to its own class and not bve in here, and not like this.
-    pixelShader         rappersvilleShader;
-    Buffer::SharedPtr   rappersvilleData;
-    //Buffer::SharedPtr   drawArgs_rappersville;
-    int numrapperstri = 0;
-    buildingsRenderer   buildings;     // PORT NOTE: replaces the commented-out rappersville blocks, see buildings.h
+    // The vegetation runtime hub. Public because the app hands it the
+    // atmosphere textures BEFORE terrain.onLoad runs.
+    _rootPlant              plants_Root;
+private:
 
-   bool useFreeCamWhileGliding = false;
-    bool GliderDebugVisuals = false;
-
-    
+public:
     struct
     {
         double terrainCacheTime;
@@ -616,49 +602,38 @@ public:
         double imageCacheTime;
         double imageCacheJPHTime;
         double imageCacheIOTime;
-    } stream;   // IO and feedback
+    } stream = {};   // IO and feedback
 
-    _terrainMode terrainMode = _terrainMode::ecotope;
+    _terrainMode terrainMode = _terrainMode::roads;   // default to a mode that renders terrain (vegetation mode early-outs update())
 private:
     bool hasChanged = false;
 
-    bool requestPopupSettings = false;
-    bool requestPopupDebug = false;
 
     glm::vec3 mouseDirection;
     glm::vec3 mousePosition;
     glm::vec2 mousePositionOld;
     glm::vec2 screenSize;
     glm::vec2 mouseCoord;
-    float mouseVegOrbit = 10;
-    float mouseVegPitch = 0.1f;
-    float mouseVegYaw = 0.0f;
-    float mouseVegRoll = 0.0f;
-    float mouseVegHeight = 0.3f;
-    computeShader compute_TerrainUnderMouse;
+    ew::computeShader compute_TerrainUnderMouse;    // picking - feeds split.feedback.tum_*, used by runtime camera pan/orbit/zoom and by road/stamp editing
 
     std::map<uint32_t, heightMap> elevationTileHashmap;
     struct textureCacheElement {
-        Texture::SharedPtr	  texture = nullptr;
+        ew::Texture::SharedPtr	  texture = nullptr;
     };
     LRUCache<uint32_t, textureCacheElement> elevationCache;
 
     jp2Dir imageDirectory;
+    //std::map<uint32_t, heightMap> imageTileHashmap;
     LRUCache<uint32_t, textureCacheElement> imageCache; // move t indese jp2 calss
 
     terrafectorSystem		terrafectors;
-    ecotopeSystem			mEcosystem;
 
     roadNetwork			    mRoadNetwork;
     splineTest			    splineTest;
-    spriteRender			mSpriteRenderer;
+    // Not implemented: the sprite marker renderer (road/stamp editing markers
+    // plus the static sprite world). The marker calls below are stubbed
+    // in-place.
 
-public:
-    _rootPlant           plants_Root;
-    float               billboardGpuTime;
-private:
-
-    // JOHAN - stamps should really become their own class in their own file
     stampCollection         mRoadStampCollection;   // all of teh terrafector stamps going over roads
     stamp                   mCurrentStamp;
     int                     stampEditPosisiton = 0;
@@ -689,15 +664,13 @@ private:
     void allStamps_to_Terrafector();
 
 
-    bool bSplineAsTerrafector = true;
+    // Mirrored from ew::gDebug.toggles.tfBakeRoads on every update() so roads
+    // can be A/B'd live; that toggle defaults to ON, so the value below only
+    // holds until the first update().
+    bool bSplineAsTerrafector = false;
     bool showRoadOverlay = true;
     bool showRoadSpline = true;
 
-    bool bLeftButton = false;
-    bool bMiddelButton = false;
-    bool bRightButton = false;
-
-    
     struct {
         glm::vec4 box;
         bool show = true;
@@ -714,83 +687,78 @@ private:
 
 
 
-
-
-    struct {
+public:
+    struct
+    {
         uint                bakeSize = 1024;
-        Fbo::SharedPtr		tileFbo;
-        Fbo::SharedPtr		bakeFbo;
+        ew::Fbo::SharedPtr		tileFbo;
+        // Not implemented: bakeFbo, the 1024^2 offline export twin (see the
+        // offline-bake note above)
 
-        Texture::SharedPtr	noise_u16;
+        ew::Texture::SharedPtr	noise_u16;
 
-        computeShader		compute_tileClear;
-        computeShader		compute_tileSplitMerge;
-        computeShader		compute_tileGenerate;
-        computeShader		compute_tilePassthrough;
-        computeShader		compute_tileBuildLookup;
-        computeShader		compute_tileBicubic;		// upsample heights with bicubic filter
-        computeShader		compute_tileEcotopes;
-        computeShader		compute_tileNormals;
-        computeShader		compute_tileVerticis;
-        computeShader		compute_tileJumpFlood;
-        computeShader		compute_tileDelaunay;
-        //computeShader		compute_tileElevationMipmap;
-        computeShader		compute_clipLodAnimatePlants;
+        ew::computeShader		compute_tileClear;
+        ew::computeShader		compute_tileSplitMerge;
+        // (no compute_tileGenerate member - that shader has no live dispatch)
+        ew::computeShader		compute_tilePassthrough;
+        ew::computeShader		compute_tileBuildLookup;
+        ew::computeShader		compute_tileBicubic;		// upsample heights with bicubic filter
+        ew::computeShader		compute_tileEcotopes;
+        ew::computeShader		compute_tileNormals;
+        ew::computeShader		compute_tileVerticis;
+        ew::computeShader		compute_tileJumpFlood;
+        ew::computeShader		compute_tileDelaunay;
+        ew::computeShader		compute_clipLodAnimatePlants;
 
         // BC6H compressor
-        computeShader           compute_bc6h;
-        Texture::SharedPtr      bc6h_texture;
+        ew::computeShader           compute_bc6h;
+        ew::Texture::SharedPtr      bc6h_texture;
 
-        Buffer::SharedPtr       dispatchArgs_plants;    // numRenderViews in size
-        Buffer::SharedPtr       drawArgs_quads;
-        //Buffer::SharedPtr       drawArgs_clippedloddedplants;
-        Buffer::SharedPtr       drawArgs_tiles;         // block based
-        //Buffer::SharedPtr       drawArgs_plants;            // pretty sure this is unused and only dispatchArgs_plants is used
+        ew::Buffer::SharedPtr       dispatchArgs_plants;    // numRenderViews in size
+        ew::Buffer::SharedPtr       drawArgs_quads;
+        ew::Buffer::SharedPtr       drawArgs_tiles;         // block based
 
-        Buffer::SharedPtr       buffer_feedback;
-        Buffer::SharedPtr		buffer_feedback_read;
+        ew::Buffer::SharedPtr       buffer_feedback;
+        ew::ReadbackBuffer::SharedPtr buffer_feedback_read;   // fence-checked ring, 1-2 frames of latency - never stalls
         GC_feedback             feedback;
 
         std::vector<gpuTile>    cpuTiles;
-        Buffer::SharedPtr       buffer_tiles;
-        Buffer::SharedPtr       buffer_tiles_readback;
-        Buffer::SharedPtr       buffer_instance_quads;
-        Buffer::SharedPtr       buffer_instance_plants;
-        Buffer::SharedPtr       buffer_clippedloddedplants;
+        ew::Buffer::SharedPtr       buffer_tiles;
+        ew::Buffer::SharedPtr       buffer_instance_quads;
+        ew::Buffer::SharedPtr       buffer_instance_plants;
+        ew::Buffer::SharedPtr       buffer_clippedloddedplants;     // clipLod xformed_PLANT output (32 MB); no live draw consumes it
 
-        Buffer::SharedPtr       buffer_lookup_terrain[numRenderViews];
-        Buffer::SharedPtr       buffer_lookup_quads[numRenderViews];
-        Buffer::SharedPtr       buffer_lookup_plants[numRenderViews];
+        ew::Buffer::SharedPtr       buffer_lookup_terrain[numRenderViews];
+        ew::Buffer::SharedPtr       buffer_lookup_quads[numRenderViews];
+        ew::Buffer::SharedPtr       buffer_lookup_plants[numRenderViews];
 
-        Buffer::SharedPtr	    buffer_tileCenters;
-        Buffer::SharedPtr		buffer_tileCenter_readback;
+        ew::Buffer::SharedPtr	    buffer_tileCenters;
+        ew::ReadbackBuffer::SharedPtr buffer_tileCenter_readback;  // latency ring, see buffer_feedback_read
         std::array<float4, 2048>		tileCenters;
 
-        Buffer::SharedPtr       buffer_terrain;
+        ew::Buffer::SharedPtr       buffer_terrain;
 
-        Texture::SharedPtr      debug_texture;
-        //Texture::SharedPtr      bicubic_upsample_texture;
-        Texture::SharedPtr      normals_texture;
-        Texture::SharedPtr      vertex_A_texture;
-        Texture::SharedPtr      vertex_B_texture;
-        Texture::SharedPtr      vertex_clear;		                // 0 for fast clear
-        Texture::SharedPtr      vertex_preload;	                    // a pre allocated 1/8 verts
+        ew::Texture::SharedPtr      debug_texture;
+        ew::Texture::SharedPtr      normals_texture;
+        ew::Texture::SharedPtr      vertex_A_texture;
+        ew::Texture::SharedPtr      vertex_B_texture;
+        ew::Texture::SharedPtr      vertex_clear;		                // 0 for fast clear
+        ew::Texture::SharedPtr      vertex_preload;	                    // a pre allocated 1/8 verts
 
-        Texture::SharedPtr	    rootElevation;
+        ew::Texture::SharedPtr	    rootElevation;
 
-        pixelShader             shader_spline3D;
-        pixelShader             shader_splineTerrafector;
-        pixelShader             shader_meshTerrafector;             // these two should merge
-        DepthStencilState::SharedPtr    depthstateCloser;
-        DepthStencilState::SharedPtr    depthstateFuther;
-        DepthStencilState::SharedPtr    depthstateAll;
-        RasterizerState::SharedPtr      rasterstateSplines;
-        BlendState::SharedPtr           blendstateSplines;
-        BlendState::SharedPtr		    blendstateRoadsCombined;
-        // DEBUG (terrafector bring-up): same as blendstateRoadsCombined but with
-        // blending disabled on RT0 (elevation, R32F). Selected at bake time via
-        // ew::gDebug.toggles.tfBakeNoElevationBlend for an A/B test of the hole.
-        BlendState::SharedPtr		    blendstateRoadsCombined_noElevBlend;
+        // The terrafector/road bake + overlay shaders and states, all built in
+        // init_TopdownRender. depthstateCloser/Futher have no user - they are
+        // cheap descs kept for the missing bake paths.
+        ew::pixelShader             shader_spline3D;
+        ew::pixelShader             shader_splineTerrafector;
+        ew::pixelShader             shader_meshTerrafector;             // these two should merge
+        Diligent::DepthStencilStateDesc depthstateCloser;
+        Diligent::DepthStencilStateDesc depthstateFuther;
+        Diligent::DepthStencilStateDesc depthstateAll;
+        Diligent::RasterizerStateDesc   rasterstateSplines;
+        Diligent::BlendStateDesc        blendstateSplines;
+        Diligent::BlendStateDesc        blendstateRoadsCombined;
     } split;
 
     struct
@@ -800,12 +768,12 @@ private:
         uint32_t numStaticSplines = 0;
         uint32_t numStaticSplinesIndex = 0;
         uint32_t numStaticSplinesBakeOnlyIndex = 0;
-        Buffer::SharedPtr bezierData;
-        Buffer::SharedPtr indexData;
-        Buffer::SharedPtr indexDataBakeOnly;
-        Buffer::SharedPtr indexData_LOD4;
-        Buffer::SharedPtr indexData_LOD6;
-        Buffer::SharedPtr indexData_LOD8;
+        ew::Buffer::SharedPtr bezierData;
+        ew::Buffer::SharedPtr indexData;
+        ew::Buffer::SharedPtr indexDataBakeOnly;
+        ew::Buffer::SharedPtr indexData_LOD4;
+        ew::Buffer::SharedPtr indexData_LOD6;
+        ew::Buffer::SharedPtr indexData_LOD8;
         uint startOffset_LOD4[16][16];
         uint numIndex_LOD4[16][16];
         uint startOffset_LOD6[64][64];
@@ -821,23 +789,10 @@ private:
         uint32_t numDynamicSplines = 0;
         uint32_t numDynamicSplinesIndex = 0;
         uint32_t numDynamicStampIndex = 0;
-        Buffer::SharedPtr dynamic_bezierData;
-        Buffer::SharedPtr dynamic_indexData;
+        ew::Buffer::SharedPtr dynamic_bezierData;
+        ew::Buffer::SharedPtr dynamic_indexData;
         uint numIndex = 0;
     }splines;
-
-    struct
-    {
-        std::vector<uint32_t> tileHash;
-        float quality = 0.0002f;
-        int roadMaxSplits = 16;
-        FILE* txt_file = nullptr;
-        bool inProgress = false;
-        std::vector<elevationMap> tileInfoForBinaryExport;
-        std::vector<uint32_t>::iterator itterator;
-        RenderContext* renderContext;
-        Texture::SharedPtr	  copy_texture = nullptr;
-    }bake;
 
     struct
     {
@@ -855,29 +810,28 @@ private:
         glm::vec3   newTarget;
     }mouse;
 public:
-    Sampler::SharedPtr			sampler_Trilinear;
-    Sampler::SharedPtr			sampler_Clamp;
-    Sampler::SharedPtr			sampler_ClampAnisotropic;
-    Sampler::SharedPtr			sampler_Ribbons;
+    ew::Sampler::SharedPtr			sampler_Trilinear;
+    ew::Sampler::SharedPtr			sampler_Clamp;
+    ew::Sampler::SharedPtr			sampler_ClampAnisotropic;
+    ew::Sampler::SharedPtr			sampler_Ribbons;
 
 
     _shadowEdges shadowEdges;
-    Texture::SharedPtr	  terrainShadowTexture;
-
-
+    ew::Texture::SharedPtr	  terrainShadowTexture;
 
 
     struct
     {
         bool show = false;
-        Texture::SharedPtr	  skyTexture;
-        Texture::SharedPtr	  envTexture;
-        Texture::SharedPtr	  dappledLightTexture;
+        ew::Texture::SharedPtr	  skyTexture;
+        ew::Texture::SharedPtr	  envTexture;
+        ew::Texture::SharedPtr	  dappledLightTexture;
     }vegetation;
 
-
+public:
 
     // Zero is not allowed and these are small so stick to 256 maybe
+
     uint lookupSizeTerrain[numRenderViews] =
     { 524288, 524288, 256, 256, 256, 256, 1024, 1024, 1024, 1024, 65536, 65536, 65536, 65536, 65536, 65536, 16384, 32768 };
     // 524288 = 33M triangles
@@ -894,4 +848,5 @@ public:
 
     uint viewMask = main_LEFT | main_CENTER | cascade_0 | cascade_1 | cascade_2 | parabolic_low | parabolic_medium;
 
+    // Not implemented: the terrainGenerator / newTerrainBuilder pipeline tool
 };

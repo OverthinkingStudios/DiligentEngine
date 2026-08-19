@@ -1,7 +1,24 @@
 #pragma once
-#include "Falcor.h"
-#include "computeShader.h"
-#include "pixelShader.h"
+
+// ---------------------------------------------------------------------------
+// vegetationBuilder.h - the procedural plant builders (leaf, stem, clump,
+// flower, tree), their material/texture cache, and the runtime that packs,
+// lods and renders the result.
+//
+// This subsystem is hyper-tuned and easy to wreck. The load-bearing
+// invariants: 32-vertex block unit, inverted startBit plus boundary
+// duplication, 32-byte packed vertex, nested bezier wind pivots, deterministic
+// mt19937 re-seeding, 128 log-spaced depth buckets drawn as 128 indirect
+// draws, One/Zero blending for the opacity-matched set, baked egg lighting.
+//
+// Include from terrain.h AFTER the hlsli-defines block and ribbonBuilder.h -
+// this header relies on the HLSL-shared structs and aliases already being in
+// scope, like ecotope.h does.
+// ---------------------------------------------------------------------------
+
+#include "ewGpuContext.h"
+#include "ewResources.h"
+#include "ewShader.h"
 
 #include "cereal/cereal.hpp"
 #include "cereal/archives/binary.hpp"
@@ -21,9 +38,7 @@
 //#include"hlsl/terrain/vegetation_defines.hlsli"
 //#include"hlsl/terrain/groundcover_defines.hlsli"    // FIXME combine these two
 
-#include "ribbonBuilder.h"
-
-using namespace Falcor;
+// (ribbonBuilder.h comes in through terrain.h, before this header)
 
 #define MAX_PLANT_BLOCKS 1048576
 #define MAX_PLANT_INSTANCES 65536
@@ -32,53 +47,28 @@ using namespace Falcor;
 #define MAX_PLANT_PIVOTS MAX_PLANT_PLANTS * 256
 #define MAX_PLANT_VERTS 524288
 
+// Layout contracts with the HLSL twins (vegetation_defines.hlsli is compiled
+// by both MSVC and DXC; structured-buffer strides are scalar-packed).
+static_assert(sizeof(ribbonVertex8) == 32, "ribbonVertex8 must stay 32 bytes");
+static_assert(sizeof(plant_instance) == 32, "plant_instance must stay 32 bytes");
+static_assert(sizeof(_plant_anim_pivot) == 48, "_plant_anim_pivot must stay 48 bytes");
+static_assert(sizeof(plant) == 384, "plant must stay 384 bytes (80 head + 16x16 lods + 48 rootPivot)");
+static_assert(sizeof(veg_sort) == 16, "veg_sort must stay uint4");
+static_assert(sizeof(vegetation_feedback) == 812, "vegetation_feedback layout drifted");
+static_assert(sizeof(sprite_material) == 60, "sprite_material must match the HLSL structured-buffer stride");
 
 
 
 
-#define CLICK_PART if (ImGui::IsItemClicked()) { _rootPlant::selectedPart = this; _rootPlant::selectedMaterial = nullptr; }
-#define CLICK_MATERIAL if (ImGui::IsItemClicked()) { _rootPlant::selectedPart = nullptr; _rootPlant::selectedMaterial = &mat; }
-#define TOOLTIP_PART(x)  if (ImGui::IsItemHovered()) {ImGui::SetTooltip(x);}
-#define TOOLTIP_MATERIAL(x)  if (ImGui::IsItemHovered()) {ImGui::SetTooltip(x);}
-//#define TREE_MAT(x)  style.Colors[ImGuiCol_HeaderActive] = mat_color; ImGui::TreeNodeEx(x, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_Framed);
-//#define TREE_LEAF(x)  style.Colors[ImGuiCol_HeaderActive] = leaf_color; if(ImGui::TreeNodeEx(x, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_Framed)) 
-
-#define TREE_LINE(x,t,f)  if(ImGui::TreeNodeEx(x, f))
-
-#define textWIDTH 180
+#define textWIDTH 160
 #define itemWIDTH 80
 
-#define R_LENGTH(name,data,t1,t2)    ImGui::PushID(gui_id); \
-                    ImGui::Text(name);    \
-                    ImGui::SameLine(textWIDTH, 0); \
-                    ImGui::SetNextItemWidth(itemWIDTH);    \
-                    if (ImGui::DragFloat("##X", &data.x, 1.f, 0, 2000, "%2.1fmm")) changed = true; \
-                    TOOLTIP(t1); \
-                    ImGui::SameLine(0, 10); \
-                    ImGui::SetNextItemWidth(itemWIDTH);    \
-                    if (ImGui::DragFloat("##Y", &data.y, 0.01f, 0, 1, "%1.2f")) changed = true; \
-                    TOOLTIP(t2); \
-                    ImGui::PopID(); \
-                    gui_id ++;
-
-#define R_LENGTH_EX(name,data, scl, min, max, t1, t2)    ImGui::PushID(gui_id); \
-                    ImGui::Text(name);    \
-                    ImGui::SameLine(textWIDTH, 0); \
-                    ImGui::SetNextItemWidth(itemWIDTH);    \
-                    if (ImGui::DragFloat("##X", &data.x, scl, min, max, "%2.1fmm")) changed = true; \
-                    TOOLTIP(t1); \
-                    ImGui::SameLine(0, 10); \
-                    ImGui::SetNextItemWidth(itemWIDTH);    \
-                    if (ImGui::DragFloat("##Y", &data.y, 0.01f, 0, 1, "%1.2f")) changed = true; \
-                    TOOLTIP(t2); \
-                    ImGui::PopID(); \
-                    gui_id ++;
 
 #define R_FLOAT_EX(name,data, scl, min, max, t1, t2)    ImGui::PushID(gui_id); \
                     ImGui::Text(name);    \
                     ImGui::SameLine(textWIDTH, 0); \
                     ImGui::SetNextItemWidth(itemWIDTH);    \
-                    if (ImGui::DragFloat("##X", &data.x, scl, min, max, "%2.2f")) changed = true; \
+                    if (ImGui::DragFloat("##X", &data.x, scl, min, max, "%2.3f")) changed = true; \
                     TOOLTIP(t1); \
                     ImGui::SameLine(0, 10); \
                     ImGui::SetNextItemWidth(itemWIDTH);    \
@@ -87,30 +77,6 @@ using namespace Falcor;
                     ImGui::PopID(); \
                     gui_id ++;
 
-#define R_CURVE(name,data,t1,t2)    ImGui::PushID(gui_id); \
-                    ImGui::Text(name);    \
-                    ImGui::SameLine(textWIDTH, 0); \
-                    ImGui::SetNextItemWidth(itemWIDTH);    \
-                    if (ImGui::DragFloat("##X", &data.x, 0.01f, -5, 5, "%1.2f")) changed = true; \
-                    TOOLTIP(t1); \
-                    ImGui::SameLine(0, 10); \
-                    ImGui::SetNextItemWidth(itemWIDTH);    \
-                    if (ImGui::DragFloat("##Y", &data.y, 0.01f, 0, 5, "%1.2f")) changed = true; \
-                    TOOLTIP(t2); \
-                    ImGui::PopID(); \
-                    gui_id ++;
-
-
-#define R_VERTS(name,data)    ImGui::PushID(gui_id); \
-                    ImGui::Text(name);    \
-                    ImGui::SameLine(textWIDTH, 0); \
-                    ImGui::SetNextItemWidth(itemWIDTH);    \
-                    if (ImGui::DragInt("##X", &data.x, 0.1f, 2, 100)) changed = true; \
-                    ImGui::SameLine(0, 10); \
-                    ImGui::SetNextItemWidth(itemWIDTH);    \
-                    if (ImGui::DragInt("##Y", &data.y, 0.1f, 3, 32)) changed = true; \
-                    ImGui::PopID(); \
-                    gui_id ++;
 
 #define R_INT(name,data,min,max,tooltip)    ImGui::PushID(gui_id); \
                     ImGui::Text(name);    \
@@ -131,7 +97,6 @@ using namespace Falcor;
                     gui_id ++;
 
 
-#define FONT_TEXT(f, s) ImGui::PushFont(_gui->getFont(f));   ImGui::Text(s);   ImGui::PopFont();
 
 #define CHECKBOX(name, val, tooltip)  ImGui::PushID(gui_id); \
                     ImGui::Text(name);    \
@@ -149,27 +114,28 @@ using namespace Falcor;
 struct shaderLightBuffer
 {
     float3 	sunDirection;
-    int		numLights;
+    int		numLights = 0;
 
     float3 	sunColour;			// unless this becomes a texture lookup
-    float 	padd;
+    float 	padd = 0;
 
     float3  sunRightVector;      // used for volumetric shadow projection code
-    float   padd2;
+    float   padd2 = 0;
 
     float3  sunUpVector;
-    float   padd3;
+    float   padd3 = 0;
 
     // all the fog params
     float2 screenSize;
-    float fog_far_Start;
-    float fog_far_log_F;            //(k-1 / k) / log(far)		FIXME might be k-2 to make up for half pixel offsets
+    float fog_far_Start = 0;
+    float fog_far_log_F = 0;            //(k-1 / k) / log(far)		FIXME might be k-2 to make up for half pixel offsets
 
-    float fog_far_one_over_k;       // 1.0 / k
-    float fog_near_Start;
-    float fog_near_log_F;           //(k-1 / k) / log(far)		FIXME might be k-2 to make up for half pixel offsets
-    float fog_near_one_over_k;      // 1.0 / k
+    float fog_far_one_over_k = 0;       // 1.0 / k
+    float fog_near_Start = 0;
+    float fog_near_log_F = 0;           //(k-1 / k) / log(far)		FIXME might be k-2 to make up for half pixel offsets
+    float fog_near_one_over_k = 0;      // 1.0 / k
 };
+static_assert(sizeof(shaderLightBuffer) == 96, "shaderLightBuffer must stay 96 bytes (cbuffer mirror, padds are load-bearing)");
 
 
 class _plantMaterial;
@@ -183,24 +149,25 @@ public:
     int find_insert_texture(const std::filesystem::path _path, bool isSRGB, bool _forceReload = false);
     std::string clean(const std::string _s);
 
-    void setTextures(ShaderVar& var);
+    // Binds the whole textureVector element-wise as the shader's
+    // textures_T[4096] array.
+    void setTextures(ew::pixelShader& _shader);
 
     void rebuildStructuredBuffer();
 
     std::vector<_plantMaterial>	materialVector;
-    int selectedMaterial = -1;
-    std::vector<Texture::SharedPtr>			textureVector;
+    std::vector<ew::Texture::SharedPtr>			textureVector;
+    // ew::Texture carries no source path, so the paths are kept in a parallel
+    // vector (same indices) for the reload/dedup logic.
+    std::vector<std::filesystem::path>          texturePathVector;
     float texMb = 0;
 
-    void renderGui(Gui* mpGui, Gui::Window& _window);
-    void renderGuiTextures(Gui* mpGui, Gui::Window& _window);
-    bool renderGuiSelect(Gui* mpGui);
 
 public:
     int dispTexIndex = -1;
-    Texture::SharedPtr getDisplayTexture();
+    ew::Texture::SharedPtr getDisplayTexture();
 
-    Buffer::SharedPtr sb_vegetation_Materials = nullptr;
+    ew::Buffer::SharedPtr sb_vegetation_Materials = nullptr;
 
     bool modified = false;
     bool modifiedData = false;
@@ -211,7 +178,6 @@ public:
 class _plantMaterial
 {
 public:
-    void renderGui(Gui* _gui);
 
     static materialCache_plants static_materials_veg;
 
@@ -235,16 +201,14 @@ public:
     bool changedForSave = false;
 
     void import(std::filesystem::path _path, bool _replacePath = true);
-    void import(bool _replacePath = true);
     void save();
     void eXport(std::filesystem::path _path);
-    void eXport();
     void reloadTextures();
-    void loadTexture(int idx);
 
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(albedoName));
         archive(CEREAL_NVP(alphaName));
         archive(CEREAL_NVP(normalName));
@@ -265,7 +229,7 @@ public:
     }
 
 
-    sprite_material _constData;
+    sprite_material _constData = {};    // the hlsli twin carries no default initializers under DXC - zero it explicitly
 };
 CEREAL_CLASS_VERSION(_plantMaterial, 100);
 
@@ -280,6 +244,7 @@ struct _vegetationMaterial {
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(name));
         archive(CEREAL_NVP(displayname));
     }
@@ -310,22 +275,25 @@ struct buildSetting
     }
 
     float3      parentStemDir = { 0, 1, 0 };
-    glm::mat4   root; // expand for the root stem direction as well to avoid growing through
+    glm::mat4   root{ 1.f }; // expand for the root stem direction as well to avoid growing through
     float       numSegments;
     float       pixelSize = 0.001f;  //1 cm
-    int         seed = 1000;
+    int         seed = 100;
     float       node_age = -1.f; // dont use for root    // this one is a node age, like 12, good for building twigs
     float       normalized_age = 1.f;  // this one is a 0..1 age useful for leaves etc
-    bool        isBaking = false;    // for billboard baking
+    bool        isBaking = false;    // for billboard baking  - mainly used to straighten main stems
     bool        doNotAddPivot = false;  // for replacement stems
+
+    bool        includeTip = false;    // stem only
+    bool        excludeDead = true;    // stem only cut the bottom verts
 
     float2      exclusionCylinder = { 0, 0 };
     float3      exclusionNormal = { 0, 1, 0 };
     bool testExclusion(float3 pos)
     {
-        float h = dot(pos, exclusionNormal);
+        float h = glm::dot(pos, exclusionNormal);
         float3 side = pos - (h * exclusionNormal);
-        float r = length(side);
+        float r = glm::length(side);
         float2 RR = {r / exclusionCylinder.x, h / exclusionCylinder.y};
         float AR = glm::length(RR);
         if (AR > 0.7f) return true;
@@ -364,13 +332,12 @@ public:
     float2 albedoScale = { 1, 1 };
     float2 translucencyScale = { 1, 1 };
 
-    void loadFromFile();
     void reload();
-    bool renderGui(uint& gui_id);
 
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(name));
         archive(CEREAL_NVP(path));
         archive_float2(albedoScale);
@@ -381,12 +348,12 @@ CEREAL_CLASS_VERSION(_vegMaterial, 100);
 
 
 
-enum bakeType { BAKE_NONE, BAKE_DIAMOND, BAKE_4, BAKE_N };
+enum bakeType { BAKE_NONE, BAKE_DIAMOND, BAKE_QUAD, BAKE_4, BAKE_N };
 class levelOfDetail
 {
 public:
     levelOfDetail() { ; }
-    levelOfDetail(uint _numPix) {  numPixels = _numPix; pixelSize = 1.f / numPixels;    }
+    levelOfDetail(uint _numPix) {  numPixels = _numPix; pixelSize = 1000.f / numPixels;    }
 
     int numPixels = 100;        // this is the number of height pixels to use for this lod. Used to calculate pixel size - for the upper limit
     float pixelSize = 10.f;      // now in mm going forwardThis is for plant on GPU - determines when to split
@@ -405,6 +372,7 @@ public:
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(numPixels));
         archive(CEREAL_NVP(pixelSize));
 
@@ -433,8 +401,12 @@ public:
     float  alphaPow = 1.f;
     bool bakeAOToAlbedo = true;
     //bool renderGui(uint& gui_id);
-    bool forceDiamond = false;
-    bool faceCamera = false;
+    bool forceDiamond = false;          // DEPRECATED
+    bool faceCamera = true;
+
+    bool includeTip = false;
+    bool clipDead = true;
+    float overshootsEnd = 0.f;  // How much does the branches push past the last node in this bake, its stem only
 
     bool useAlphaInBake = false;
     float2 alphaOval = {0, 0};
@@ -467,40 +439,65 @@ public:
             archive(CEREAL_NVP(pitch));
             archive(CEREAL_NVP(yaw));
         }
+        if (_version >= 102)
+        {
+            archive(CEREAL_NVP(includeTip));
+            archive(CEREAL_NVP(clipDead));
+            archive(CEREAL_NVP(overshootsEnd));
+        }
     }
 };
-CEREAL_CLASS_VERSION(lodBake, 101);
+CEREAL_CLASS_VERSION(lodBake, 102);
 
 
 
+struct extentsCalculator
+{
+    void start(glm::mat4 _view, float3 _end);
+    void push(float3 _pos, float _w);
+    void end();
+    glm::mat4 lerp(float _h);
+    float width() { return extents.x; }
+
+    std::vector<float2>     data;
+
+    glm::mat4               view;
+    float3                  origin;
+    glm::mat4               tip;
+    float2                  extents;
+    int                     count;
+    std::array<float, 4>    du4;
+    std::array<float, 6>    du6;
+};
 
 
+// TODO: debugLastPivots below, and _stemBuilder/_treeBuilder's age, startVerts,
+// leafVerts, tipVerts, numVerts and branchMode, have no initialisers and rely on
+// the owning object being zero-initialised at allocation. Give them defaults.
 class _plantBuilder
 {
 public:
+    virtual ~_plantBuilder() = default;     // derived builders are deleted through shared_ptr<_plantBuilder> - this must stay virtual
     virtual void loadPath() { ; }
     virtual void savePath() { ; }
     //virtual void load() { ; }
     //virtual void save() { ; }
     //virtual void saveas() { ; }
-    virtual bool renderGui() { return false; }
-    void         renderGuiHeader(FileDialogFilterVec &_filters);
-    virtual void treeView() { ; }
     virtual void incrementLods() { ; }
     virtual void decrementLods() { ; }
-    virtual void deleteLod(uint _lod) { ; }
-    virtual void insertLod(uint _lod) { ; }
-    virtual glm::mat4 build(buildSetting _settings, bool _addVerts) { return glm::mat4(1.f); }
-    virtual float2 calculate_extents(glm::mat4 view) { return float2(0, 0); }
-    virtual glm::mat4 getTip(bool includeChildren = true) { return glm::mat4(1.f); }
-    virtual lodBake* getBakeInfo(uint i) { return nullptr; }    // so does nothing if not implimented
-    virtual levelOfDetail* getLodInfo(uint i) { return nullptr; }    // so does nothing if not implimented
+    virtual void deleteLod(uint _lod) { (void)_lod; }
+    virtual void insertLod(uint _lod) { (void)_lod; }
+    virtual glm::mat4 build(buildSetting _settings, bool _addVerts, bool _extents = false) { (void)_settings; (void)_addVerts; (void)_extents; return glm::mat4(1.f); }
+    virtual float2 calculate_extents(glm::mat4 view) { (void)view; return float2(0, 0); }
+    virtual glm::mat4 getTip(bool includeChildren = true) { (void)includeChildren; return glm::mat4(1.f); }
+    virtual glm::mat4 getRoot(bool _cullDead) { (void)_cullDead; return glm::mat4(1.f); }
+    virtual lodBake* getBakeInfo(int i) { (void)i; return nullptr; }    // so does nothing if not implimented
+    virtual levelOfDetail* getLodInfo(uint i) { (void)i; return nullptr; }    // so does nothing if not implimented
 
     std::string name = "not set";
     std::string path = "no terrain_path either";   // relative
-    bool changed = true;
+    bool changed = true;    // DEPRECATED
     bool changedForSave = false;
-    static Gui* _gui;
     bool fileNotFound = true;   // if weload a link and it is not found due to filesystem changes
 
     // lighting information
@@ -512,7 +509,13 @@ public:
     // packing debug info
     uint numInstancePacked = 0;
     uint numVertsPacked = 0;
-    uint numPivots = 0;
+    uint debugTotalVertsPacked = 0;
+    uint debugnumPivots = 0;
+    uint debugLOD = 0;
+    uint debugmaxLOD = 0;
+    float debugSIZE = 0;
+    uint debugBAKETYPE = 0;
+    uint debugLastPivots[4];
     virtual void clear_build_info() { ; }
 
     // ossilations
@@ -535,13 +538,12 @@ public:
     plantType  type = PLANT_END;
     std::shared_ptr<_plantBuilder> plantPtr;
 
-    void loadFromFile();
     void reload();
-    void renderGui(uint& gui_id);
 
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(name));
         archive(CEREAL_NVP(path));
         archive(CEREAL_NVP(type));
@@ -560,7 +562,6 @@ public:
     std::vector<T> data;
     int rnd_idx = 0;
 
-    void renderGui(char* name, uint& gui_id);
     void clear() { data.clear(); }
     T get();
     void reset() { rnd_idx = 0; }
@@ -578,9 +579,7 @@ public:
     float3 params = {1.f, 0.5f, 2.f};           // everywhere
     std::shared_ptr<_plantBuilder> plantPtr;
 
-    void loadFromFile();
     void reload();
-    bool renderGui(uint& gui_id);
 
     bool operator < (const _randomBranch& _b) const
     {
@@ -590,6 +589,7 @@ public:
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(path));
         archive(CEREAL_NVP(name));
         archive(CEREAL_NVP(type));
@@ -605,13 +605,13 @@ public:
     std::array<short, 1024> RND;
 
     void buildArray();
-    bool renderGui(char* name, uint& gui_id);
     void clear() { branchData.clear(); }
     _randomBranch* get(float _val);
 
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(branchData));
         for (auto& M : branchData) M.reload();
         buildArray();
@@ -628,15 +628,9 @@ class _leafBuilder : public _plantBuilder
 public:
     void loadPath();
     void savePath();
-    //void load();
-    //void save();
-    //void saveas();
-    bool renderGui();
-    void treeView();
     void clear_build_info();
-    glm::mat4 build(buildSetting _settings, bool _addVerts);
+    glm::mat4 build(buildSetting _settings, bool _addVerts, bool _extents = false);
 
-    FileDialogFilterVec filters = { {"leaf"} };
 
 private:
     // going to do all this in mm
@@ -664,6 +658,8 @@ private:
     leafPivot   pivotType = pivot_leaf;
     bool useTwoVertDiamond = false;
     float leafLengthSplit = 32.f;            // Number of pixels before we tru to insert a split, still clamped by min max
+    int2  splitSize = { 30, 200 };              // works with numVerts and stem_length to give control on where we split
+    bool pointSprite = false;
 
     bool wideBase = false;   // as in grass leaves that start wide.
     // will be superceded bu full graph draw control soon
@@ -705,15 +701,25 @@ public:
         archive(CEREAL_NVP(leafLengthSplit));
 
         archive_float2(stem_to_leaf_Roll);
+
+        if (_version >= 101)
+        {
+            archive_float2(splitSize);
+        }
+
+        if (_version >= 102)
+        {
+            archive(CEREAL_NVP(pointSprite));
+        }
+
     }
 };
-CEREAL_CLASS_VERSION(_leafBuilder, 100);
+CEREAL_CLASS_VERSION(_leafBuilder, 102);
 
 
 class _flowerRing
 {
 public:
-    void renderGui(bool &changed, bool &changedForSave);
     //glm::mat4 build(buildSetting _settings, bool _addVerts);    //?????????
 
 public:
@@ -721,10 +727,14 @@ public:
     float2  pitch = { 0.f, 0.f };
     float2  offset_mm = { 0.f, 0.f };      // for pea flowers
     float2 radius_mm = { 5.f, 0.1f };
+    float2 range = { 3.14159265359f, 0.f };           // pi means full circle
 
     bool    symmetrical = false;
     float2  angle_offset = { 0.f, 0.f };      // for pea flowers radians
     float2  twist = { 0.f, 0.f };      // for pea flowers
+
+    bool    spherical = false;
+    float3 sphere_size = { 0.1f, 0.1f, 0.1f };
 
     randomVector<_plantRND> petals;
 
@@ -745,9 +755,17 @@ public:
         {
             for (auto& M : petals.data) M.reload();
         }
+
+        if (_version >= 101)
+        {
+            archive_float2(range);
+            archive(CEREAL_NVP(spherical));
+            archive_float3(sphere_size);
+
+        }
     }
 };
-CEREAL_CLASS_VERSION(_flowerRing, 100);
+CEREAL_CLASS_VERSION(_flowerRing, 101);
 
 
 class _flowerBuilder : public _plantBuilder
@@ -758,21 +776,18 @@ public:
     //void load();
     //void save();
     //void saveas();
-    bool renderGui();
-    void treeView();
     void clear_build_info();
     virtual void incrementLods() { lodInfo.resize(lodInfo.size() + 1); }
     virtual void decrementLods() { if (lodInfo.size() > 3) lodInfo.resize(lodInfo.size() - 1); }
     virtual void deleteLod(uint _lod) { lodInfo.erase(lodInfo.begin() + _lod); }
     virtual void insertLod(uint _lod) { lodInfo.emplace(lodInfo.begin() + _lod); }
-    lodBake* getBakeInfo(uint i);
+    lodBake* getBakeInfo(int i);
     levelOfDetail* getLodInfo(uint i);
-    glm::mat4  build_2(buildSetting _settings, uint _bakeIndex, bool _faceCamera);
-    glm::mat4 build(buildSetting _settings, bool _addVerts);
+    glm::mat4  build_2(buildSetting _settings, uint _bakeIndex, bool _faceCamera, bool _diamond);
+    glm::mat4 build(buildSetting _settings, bool _addVerts, bool _extents = false);
     float2 calculate_extents(glm::mat4 view);
     glm::mat4 getTip(bool includeChildren = true);
 
-    FileDialogFilterVec filters = { {"flower"} };
 
 private:
     //Stem has to maintain a minimum of 3 of these or will crash ??? is this tryue
@@ -800,6 +815,7 @@ public:
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive_float2(stem_length);
         archive_float2(stem_width);
         archive_float2(stem_curve);
@@ -831,27 +847,26 @@ class _stemBuilder : public _plantBuilder
 public:
     void loadPath();
     void savePath();
-    //void load();
-    //void save();
-    //void saveas();
-    bool renderGui();
-    void treeView();
     virtual void incrementLods() { lodInfo.resize(lodInfo.size() + 1); }
     virtual void decrementLods() { if (lodInfo.size() > 3) lodInfo.resize(lodInfo.size() - 1); }
     virtual void deleteLod(uint _lod) { lodInfo.erase(lodInfo.begin() + _lod); }
     virtual void insertLod(uint _lod) { lodInfo.emplace(lodInfo.begin() + _lod); }
-    lodBake* getBakeInfo(uint i);//bakeInfo
+    lodBake* getBakeInfo(int i);//bakeInfo
     levelOfDetail* getLodInfo(uint i);
-    glm::mat4  build_2(buildSetting _settings, uint _bakeIndex, bool _faceCamera);
-    glm::mat4  build_4(buildSetting _settings, uint _bakeIndex, bool _faceCamera);
-    glm::mat4  build_n(buildSetting _settings, uint _bakeIndex, bool _faceCamera);
-    void build_leaves(buildSetting _settings, uint _max, bool _addVerts);
-    void build_tip(buildSetting _settings, bool _addVerts);
+    levelOfDetail* getLOD(float _pixelSize, bool _rnd);
+    glm::mat4  build_2(buildSetting _settings, lodBake* pBake, bool _faceCamera, bool _diamond);
+    glm::mat4  build_4(buildSetting _settings, lodBake* pBake, bool _faceCamera);
+    glm::mat4  build_n(buildSetting _settings, lodBake* pBake, bool _faceCamera);
+    void build_leaves(buildSetting _settings, bool _addVerts, bool _extents = false);
+    void build_tip(buildSetting _settings, bool _addVerts, bool _extents = false);
     //void build_extents(buildSetting _settings);
     float2 calculate_extents(glm::mat4 view);
     glm::mat4 getTip(bool includeChildren = true);
-    void build_NODES(buildSetting _settings, bool _addVerts);
-    glm::mat4 build(buildSetting _settings, bool _addVerts);
+    glm::mat4 getRoot(bool _cullDead);
+    void build_NODES(buildSetting _settings, bool _addVerts, bool _extents = false);
+    void build_extents(buildSetting _settings);
+    glm::mat4 build(buildSetting _settings, bool _addVerts, bool _extents = false);
+    void addPivot(buildSetting *p_settings);
     void clear_build_info();
 
 
@@ -865,7 +880,6 @@ public:
     float root_width = 0;
     int     firstLiveSegment = 1;
 
-    FileDialogFilterVec filters = { {"stem"} };
 
     //Stem has to maintain a minimum of 3 of these or will crash
     std::vector<levelOfDetail> lodInfo = { levelOfDetail(30), levelOfDetail(60), levelOfDetail(100), levelOfDetail(300), levelOfDetail(500) };
@@ -875,9 +889,9 @@ public:
     float2  numSegments = { 5.3f, 0.3f };
     float2  max_live_segments = { 10.f, 0.2f };  // curve for width growth
     float2  stem_length = { 50.f, 0.2f };   // in mm
-    float2  stem_width = { 1.f, 0.2f };     // width at the start
-    float2  stem_d_width = { 0.1f, 0.1f };  // width growth per node
-    float2  stem_pow_width = { 0.1f, 0.1f };  // curve for width growth
+    float2  stem_width = { 5.f, 0.2f };     // width at the start
+    float2  stem_d_width = { 1.f, 0.1f };  // width growth per node
+    float2  stem_pow_width = { 1.0f, 0.1f };  // curve for width growth
     float2  stem_curve = { 0.2f, 0.3f };      // radian bend over lenth
     float2  stem_phototropism = { 0.0f, 0.3f };
     float2  node_rotation = { 0.7f, 0.3f };   // like 2 leaves 90 degrees
@@ -916,8 +930,13 @@ public:
 
     bool leaf_age_override = false; // If set false we pass in -1 and teh leaf can set its own age, if true we set the age
 
+    bool isPlantRoot = false;
+
     // feedback
     uint numLeavesBuilt = 0;
+    uint startVerts;
+    uint leafVerts;
+    uint tipVerts;
 
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
@@ -941,7 +960,7 @@ public:
         archive_float2(leaf_rnd);
         archive(CEREAL_NVP(leaf_age_power));
         archive(CEREAL_NVP(twistAway));
-        
+
         archive(CEREAL_NVP(unique_tip));
         archive(CEREAL_NVP(tip.data));
         if (unique_tip) {
@@ -988,24 +1007,30 @@ public:
 
         if (_version >= 101)
         {
-            archive(CEREAL_NVP(lengthFromBranchAge));            
+            archive(CEREAL_NVP(lengthFromBranchAge));
         }
 
         if (_version >= 102)
         {
             archive(CEREAL_NVP(branchPush));
         }
-        
+
+        if (_version >= 103)
+        {
+            archive(CEREAL_NVP(isPlantRoot));
+        }
+
+
     }
 };
-CEREAL_CLASS_VERSION(_stemBuilder, 102);
+CEREAL_CLASS_VERSION(_stemBuilder, 103);
 
 
 
 struct singleClump
 {
     // clump
-    float2  size = { 1.1f, 0.3f };
+    float2  size = { 0.1f, 0.3f };
     float2  aspect = { 1.0f, 0.1f };
     bool radial = true;     // radial or X aligned
 
@@ -1020,6 +1045,7 @@ struct singleClump
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         // clump
         archive_float2(size);
         archive_float2(aspect);
@@ -1047,26 +1073,26 @@ public:
     //void load();
     //void save();
     //void saveas();
-    bool renderGui();
-    void treeView();
     virtual void incrementLods() { lodInfo.resize(lodInfo.size() + 1); }
     virtual void decrementLods() { if (lodInfo.size() > 3) lodInfo.resize(lodInfo.size() - 1); }
     virtual void deleteLod(uint _lod) { lodInfo.erase(lodInfo.begin() + _lod); }
     virtual void insertLod(uint _lod) { lodInfo.emplace(lodInfo.begin() + _lod); }
-    lodBake* getBakeInfo(uint i);//bakeInfo
+    lodBake* getBakeInfo(int i);//bakeInfo
     levelOfDetail* getLodInfo(uint i);
 
     void clear_build_info();
     float2 calculate_extents(glm::mat4 view);
     glm::mat4 getTip(bool includeChildren = true);
-    glm::mat4 build(buildSetting _settings, bool _addVerts);
-    glm::mat4 buildChildren(buildSetting _settings, bool _addVerts);
-    glm::mat4 build_2(buildSetting _settings, uint _bakeIndex, bool _faceCamera);
-    glm::mat4 build_4(buildSetting _settings, uint _bakeIndex, bool _faceCamera);
+    void build_extents(buildSetting _settings);
+    levelOfDetail* getLOD(float _pixelSize, bool _rnd);
+    void addPivot(buildSetting* p_settings);
+    glm::mat4 build(buildSetting _settings, bool _addVerts, bool _extents = false);
+    glm::mat4 buildChildren(buildSetting _settings, bool _addVerts, bool _extents = false);
+    glm::mat4 build_2(buildSetting _settings, lodBake* pBake, bool _faceCamera, bool _diamond);
+    //glm::mat4 build_4(buildSetting _settings, lodBake* pBake, bool _faceCamera);
 
 
 
-    FileDialogFilterVec filters = { {"clump"} };
     std::vector<glm::mat4> ROOTS;
     glm::mat4 START;
     glm::mat4 TIP_CENTER;
@@ -1089,7 +1115,8 @@ public:
     randomVector<_plantRND> children; // age in this conetxt is inside to outside
     */
     bool    hasPivot = false;
-    
+    bool isPlantRoot = false;
+
     std::vector<singleClump> clumps;
 
     template<class Archive>
@@ -1111,7 +1138,7 @@ public:
         for (auto& M : children.data) M.reload();
         */
 
-        
+
         archive(CEREAL_NVP(clumps));
 
         // baking lodding and sway
@@ -1131,13 +1158,16 @@ public:
         archive(CEREAL_NVP(ossilation_power));
         archive(CEREAL_NVP(deepest_pivot_pack_level));
 
-        
+        if (_version >= 101)
+        {
+            archive(CEREAL_NVP(isPlantRoot));
+        }
 
     }
 };
-CEREAL_CLASS_VERSION(_clumpBuilder, 100);
+CEREAL_CLASS_VERSION(_clumpBuilder, 101);
 
-/*
+
 struct _leafNode
 {
     float3 pos;
@@ -1195,6 +1225,7 @@ struct _minimalNode
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive_float3(pos);
         archive(CEREAL_NVP(radius));
         archive_float3(dir);
@@ -1226,6 +1257,7 @@ struct _one_branch
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(parentIndex));
         archive(CEREAL_NVP(parentNode));
         archive(CEREAL_NVP(nodes));
@@ -1236,10 +1268,10 @@ struct _one_branch
         archive_float3(leavesAVS);
         archive_float3(extents);
         archive(CEREAL_NVP(leavesFurthest));
-        
+
 
         archive(CEREAL_NVP(isDead));
-        
+
     }
 };
 CEREAL_CLASS_VERSION(_one_branch, 100);
@@ -1249,7 +1281,7 @@ struct _branchStats
 {
     float   rootPitch;
     float   rootRadius;
-    
+
     int     numLeaves;
     float   leavesPitch;
     float   leavesDistance;
@@ -1258,16 +1290,17 @@ struct _branchStats
 
     //uint pivotDepth = 0;
     //std::array<uint, 4> pivotIndex = {255, 255, 255, 255};
-    
+
 
     std::string name;
 
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(rootPitch));
         archive(CEREAL_NVP(rootRadius));
-        
+
         archive(CEREAL_NVP(numLeaves));
         archive(CEREAL_NVP(leavesPitch));
         archive(CEREAL_NVP(leavesDistance));
@@ -1299,9 +1332,10 @@ struct _branch
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(stats));
         //archive(CEREAL_NVP(pivots)); SHIT, how to write this in a sensible way
-        archive(CEREAL_NVP(branches));        
+        archive(CEREAL_NVP(branches));
     }
 };
 CEREAL_CLASS_VERSION(_branch, 100);
@@ -1317,6 +1351,7 @@ struct _branchCollection
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(branches));
    }
 };
@@ -1331,6 +1366,7 @@ struct _treeRoot
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(branches));
     }
 };
@@ -1377,14 +1413,12 @@ class _treeBuilder : public _plantBuilder
 public:
     void loadPath();
     void savePath();
-    bool renderGui();
-    void treeView();
     virtual void incrementLods() { lodInfo.resize(lodInfo.size() + 1); }
     virtual void decrementLods() { if (lodInfo.size() > 3) lodInfo.resize(lodInfo.size() - 1); }
     virtual void deleteLod(uint _lod) { lodInfo.erase(lodInfo.begin() + _lod); }
     virtual void insertLod(uint _lod) { lodInfo.emplace(lodInfo.begin() + _lod); }
-    lodBake* getBakeInfo(uint i) {
-        if (i < lod_bakeInfo.size()) return &lod_bakeInfo[i];
+    lodBake* getBakeInfo(int i) {
+        if (i < (int)lod_bakeInfo.size()) return &lod_bakeInfo[i];
         else return nullptr;
     }
     levelOfDetail* getLodInfo(uint i) {
@@ -1394,17 +1428,16 @@ public:
 
     void clear_build_info();
     float2 calculate_extents(glm::mat4 view);
-    
-    glm::mat4 build_2(buildSetting _settings, uint _bakeIndex, bool _faceCamera);
-    glm::mat4 build_4(buildSetting _settings, uint _bakeIndex, bool _faceCamera);
-    glm::mat4 build(buildSetting _settings, bool _addVerts);
+
+    glm::mat4 build_2(buildSetting _settings, lodBake* pBake, bool _faceCamera, bool _diamond);
+    glm::mat4 build_4(buildSetting _settings, lodBake* pBake, bool _faceCamera);
+    glm::mat4 build(buildSetting _settings, bool _addVerts, bool _extents = false);
     void build_one_branch(uint _root, uint _idx, buildSetting _settings, bool bottom);
     void build_BRANCH(uint _idx, buildSetting _settings, bool bottom);
 
     glm::mat4 getTip(bool includeChildren = true);
 
 
-    FileDialogFilterVec filters = { {"tree"} };
     std::vector<glm::mat4> ROOTS;
     glm::mat4 START;
     glm::mat4 TIP_CENTER;
@@ -1421,7 +1454,10 @@ public:
     _vegMaterial            trunk_Material;
 
 
+    // Not implemented: the no-argument overload is the editor file-dialog entry
+    // into the Grove OBJ import. The explicit-path overload does the work.
     void loadFromFile();
+    void loadFromFile(const std::filesystem::path& filepath);
     void load_obj();
     void readHeader();
     void read2();
@@ -1496,6 +1532,7 @@ public:
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(CEREAL_NVP(name));
         archive(CEREAL_NVP(path));
 
@@ -1507,7 +1544,7 @@ public:
 
         archive(CEREAL_NVP(trunk_Material));
         trunk_Material.reload();
-        
+
 
         archive(CEREAL_NVP(lod_bakeInfo));
         for (auto& M : lod_bakeInfo) M.material.reload();
@@ -1527,70 +1564,62 @@ public:
 };
 CEREAL_CLASS_VERSION(_treeBuilder, 100);
 
-*/
 
 
 
-class binaryPlantOnDisk
+class exportPlant
 {
 public:
-    _vegMaterial    billboardMaterial;
-    std::map<int, _vegMaterial> materials;
-    std::vector<plant> plantData;           // for laoding onlt
-    std::vector<ribbonVertex8> vertexData;
-    std::vector < _plant_anim_pivot> pivotData;
-
-    uint numP;
-    uint numV;
+    std::vector <_vegMaterial>          billboardMaterials;
+    std::map<int, _vegMaterial>         materials;
+    std::vector<plant>                  plants;
+    std::vector<ribbonVertex8>          vertexbuff;
+    std::vector<_plant_anim_pivot>      pivots;
 
     void onLoad(std::string path, uint vOffset);
 
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
-        archive(billboardMaterial);
-        archive(materials);
-        archive(numP);
-        archive(numV);
+        (void)_version;
+        int p = (int)plants.size();
+        int v = (int)vertexbuff.size();
+        int pvt = (int)pivots.size();
 
+        archive(billboardMaterials);
+        archive(materials);
+
+        archive(p);
+        plants.resize(p);
+        archive(cereal::binary_data(plants.data(), p * sizeof(plant)));
+
+        archive(v);
+        vertexbuff.resize(v);
+        archive(cereal::binary_data(vertexbuff.data(), v * sizeof(ribbonVertex8)));
+
+        archive(pvt);
+        pivots.resize(pvt);
+        archive(cereal::binary_data(pivots.data(), pvt * sizeof(_plant_anim_pivot)));
     }
 };
-CEREAL_CLASS_VERSION(binaryPlantOnDisk, 100);
+CEREAL_CLASS_VERSION(exportPlant, 100);
+
 
 class recentFiles
 {
-    /*
-    struct
-    {
-        bool operator < (const _pathSort& pth) const
-        {
-            return (age < pth.age);
-        }
-
-        std::string path = "";
-        int age = 0;
-    }_pathSort;
-    //void get(std::string pth);
-    std::array<_pathSort, 10> paths;
-
-
-    std::sort(paths.begin(), paths.end(), [](float3 a, float3 b) {
-        // Custom comparison logic
-        return a.x > b.x; // this sorts in ascending order
-        });
-        */
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)archive; (void)_version;
         //  archive(paths);
     }
 };
 CEREAL_CLASS_VERSION(recentFiles, 100);
 
 
-// JOHAN-DEPRECATED - removing this because it belongs
-/*
-//  This is a single "rectangle", can be curved
+
+
+/*  This is a single "rectangle", can be curved*/
 class oneTexture
 {
 public:
@@ -1638,12 +1667,12 @@ public:
     std::string normal;
     std::string translucency;
 
-    Texture::SharedPtr tex_albedo;
-    Texture::SharedPtr tex_alpha;
-    Texture::SharedPtr tex_normal;
-    Texture::SharedPtr tex_translucency;
+    ew::Texture::SharedPtr tex_albedo;
+    ew::Texture::SharedPtr tex_alpha;
+    ew::Texture::SharedPtr tex_normal;
+    ew::Texture::SharedPtr tex_translucency;
 
-    Fbo::SharedPtr	    fbo;
+    ew::Fbo::SharedPtr	    fbo;
 
     bool flipRed = false;
     bool flipGreen = false;
@@ -1659,6 +1688,7 @@ public:
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)_version;
         archive(path);
         archive(albedo);
         archive(alpha);
@@ -1675,8 +1705,93 @@ public:
 CEREAL_CLASS_VERSION(largeTexture, 100);
 
 
-*/
 
+class plant_single
+{
+public:
+    void loadTexture();
+
+    float seasonStart = 0;      // 0, 1, 2, 3  spring summer atumn, winter, 4 snow lights 5 snow heavy
+    std::string path;
+    std::string name;
+    ew::Texture::SharedPtr			texture;
+
+
+    template<class Archive>
+    void serialize(Archive& archive, std::uint32_t const _version)
+    {
+        (void)_version;
+        archive(seasonStart);
+        archive(path);
+        archive(name);
+    }
+};
+CEREAL_CLASS_VERSION(plant_single, 100);
+
+
+class seasons
+{
+public:
+
+    int age_in_years = 1;
+    bool wraparound = true;     // winter plant extend into spring no gap
+    std::vector<plant_single> normal;
+    std::vector<plant_single> damaged;
+    std::vector<plant_single> burnt;
+
+
+    template<class Archive>
+    void serialize(Archive& archive, std::uint32_t const _version)
+    {
+        (void)_version;
+        archive(age_in_years);
+        archive(wraparound);
+
+        archive(normal);
+        archive(damaged);
+        archive(burnt);
+
+    }
+};
+CEREAL_CLASS_VERSION(seasons, 100);
+
+
+
+class plant_species
+{
+public:
+    void sort_on_age();
+
+    std::string name;
+    std::string latin_name;
+    std::string family;
+    std::string alternate_names;
+
+    std::vector<seasons> plant_years_seasons;
+
+
+    template<class Archive>
+    void serialize(Archive& archive, std::uint32_t const _version)
+    {
+        (void)_version;
+        archive(name);
+        archive(latin_name);
+        archive(family);
+        archive(alternate_names);
+
+        archive(plant_years_seasons);
+    }
+};
+CEREAL_CLASS_VERSION(plant_species, 100);
+
+
+
+
+// Then extend _rootPlantg off this
+class _rootPlant_Runtime
+{
+public:
+};
 
 
 
@@ -1684,39 +1799,38 @@ class _rootPlant
 {
 public:
     void onLoad();
-    bool onKeyEvent(const KeyboardEvent& keyEvent);
-    void renderGui_perf(Gui* _gui);
-    void renderGui_lodbake(Gui* _gui);
-    void renderGui_other(Gui* _gui);
-    void renderGui_rightPanel(Gui* _gui);
 
-    // JOHAN-DEPRECATED - texture tool
-    //void initTextureTool();
-    //void GenerateATexture(uint _idx, bool toSRGB);
-    //void exportTextures();
-    //void renderGui_textureTool(Gui* _gui, int _header, float2 _screen, Gui::Window &_hud);
-
-    void renderGui_HUD(Gui* _gui, int _header, float2 _screen);
-    void renderGui_load(Gui* _gui);
-    void renderGui(Gui* _gui, int _header, float2 _screen);
-    void renderGui_Lodding(Gui* _gui);
-    void renderGui_Baking(Gui* _gui);
+    void initTextureTool();
+    void GenerateATexture(uint _idx, bool toSRGB);
+    void exportTextures();
+    // renderGui_Lodding and renderGui_Baking hold the only copy of the lod and
+    // billboard bake orchestration. Nothing calls them yet - the editor flow
+    // that drove them is not implemented.
+    void renderGui_Lodding();
+    void setBakeView(float3 _r, float3 _u, float3 _d);
+    void bakeDirectories();
+    void renderGui_Baking();
     void buildAllLods();
     void build(uint pivotOffset = 0);
     void loadMaterials();
     int importBinary(std::filesystem::path filepath);       // FIXME this needs a cache
-    void importBinary();
     void buildFullResolution();
     std::vector<std::string>	importPathVector;
 
 
-    void bake(std::string _path, std::string _seed, lodBake* _info, glm::mat4 VIEW);
-    int bake_Reload_Count = 0;
-    void updateShaderConstants(Texture::SharedPtr _previousFrame, Texture::SharedPtr shadow, shaderLightBuffer _buffer);
-    void render(RenderContext* _renderContext, const Fbo::SharedPtr& _fbo, GraphicsState::Viewport _viewport,
-        rmcv::mat4  _viewproj, float3 camPos, rmcv::mat4  _view, rmcv::mat4  _clipFrustum, float halfAngle_to_Pixels, bool terrainMode = false);
 
-    RenderContext* renderContext;
+    void bake64kplants(std::string _path);
+    void bake_Setup();
+    void bake_Export();
+    void bake_Export_colour();
+    void bake(std::string _path, std::string _seed, lodBake* _info, glm::mat4 VIEW, bool lod_0 = false);
+    int bake_Reload_Count = 0;
+    void updateShaderConstants(ew::Texture::SharedPtr _previousFrame, ew::Texture::SharedPtr shadow, shaderLightBuffer _buffer);
+    // The matrices arrive TRANSPOSED - upload-ready, the ewCamera.h convention.
+    void render(ew::GpuContext* _renderContext, const ew::Fbo::SharedPtr& _fbo,
+        glm::mat4 _viewproj, float3 camPos, glm::mat4 _view, glm::mat4 _clipFrustum, float halfAngle_to_Pixels, bool terrainMode = false);
+
+    //RenderContext* renderContext;
 
     //??? lodding info, so it needs all the runtime data
 
@@ -1732,13 +1846,14 @@ public:
     float rootPitch = 0.01f; // so we can go sideways to test brancges
     float rootYaw = 0.0f; // so we can go sideways to test brancges
     float rootRoll = 0.0f; // so we can go sideways to test brancges
-    glm::mat4 bakeViewMatrix, bakeViewAdjusted;
+    glm::mat4 bakeViewMatrix{ 1.f }, bakeViewAdjusted{ 1.f };
     packSettings vertex_pack_Settings;
-    float2 extents;
+    float2 extents{ 0.f, 0.f };
 
     // Binary viewer
     int numBinaryPlants = 0;
     int binVertexOffset = 0;
+    int cntV_Offset = 0;
     int binPlantOffset = 0;
     int binPivotOffset = 0;
 
@@ -1746,39 +1861,25 @@ public:
     float windStrength = 1.f;      // m/s
 
     // render and bake
-    Sampler::SharedPtr			sampler_ClampAnisotropic;
-    Sampler::SharedPtr			sampler_Ribbons;
-    Sampler::SharedPtr			sampler_Depth;
-    RasterizerState::SharedPtr      rasterstate;
-    BlendState::SharedPtr           blendstate;
-    BlendState::SharedPtr           blendstate_withAlpha;
-    BlendState::SharedPtr           blendstateBake;
-    pixelShader vegetationShader;
-    pixelShader vegetationShader_GOURAUD;
-    //pixelShader vegetationShader_DEBUG_PIVOTS;
-    //pixelShader vegetationShader_DEBUG_PIXELS;
-    pixelShader vegetationShader_RGB_SAMPLE;
-    pixelShader vegetationShader_DEPTH;
-    pixelShader billboardShader;
-    pixelShader bakeShader;
-    pixelShader textureExtractShader;
-    ShaderVar varVegTextures;
-    ShaderVar varTextures_Gauraud;
-    //ShaderVar varTextures_Debug_Pivots;
-    //ShaderVar varTextures_Debug_Pixels;
-    ShaderVar varTextures_Depth;
-    ShaderVar varTextures_RGBSample;
-    ShaderVar varBBTextures;
-    ShaderVar varBakeTextures;
+    ew::Sampler::SharedPtr			sampler_ClampAnisotropic;
+    ew::Sampler::SharedPtr			sampler_Ribbons;
+    ew::Sampler::SharedPtr			sampler_Depth;
+    Diligent::RasterizerStateDesc   rasterstate;            // cull NONE (load-bearing for all veg passes)
+    Diligent::BlendStateDesc        blendstate;             // One/Zero - the opacity matched set, no ROP blending
+    Diligent::BlendStateDesc        blendstate_withAlpha;   // alpha-to-coverage variant
+    Diligent::BlendStateDesc        blendstateBake;         // 8-target SrcAlphaSaturate accumulation
+    ew::pixelShader vegetationShader;
+    ew::pixelShader vegetationShader_RGB_SAMPLE;
+    ew::pixelShader vegetationShader_DEPTH;
+    ew::pixelShader billboardShader;
+    ew::pixelShader bakeShader;
+    ew::pixelShader textureExtractShader;
 
-    computeShader		compute_bakeFloodfill;
+    ew::computeShader		compute_bakeFloodfill;
 
-    bool showMaterialsPanel = false;
-    bool showLargePanel = false;
     bool bakingView = false;
     float2 bakeViewportTL = float2(600, 200);
     float bakeViewportSize = 700;
-    bool textureTool = false;
     int showBake = 0;   // for bakign view
 
     // render flags
@@ -1791,67 +1892,62 @@ public:
     bool    render_FrontToback = true;
     bool    render_alphaBlend = false;
     void reloadShader();
-    Texture::SharedPtr  sunlightTexture = nullptr;
-    Texture::SharedPtr inscatter;
-    Texture::SharedPtr outscatter;
-    Texture::SharedPtr envTexture;
-    Texture::SharedPtr dappledLightTexture;
+    ew::Texture::SharedPtr  sunlightTexture = nullptr;
+    ew::Texture::SharedPtr inscatter;
+    ew::Texture::SharedPtr outscatter;
+    ew::Texture::SharedPtr envTexture;
+    ew::Texture::SharedPtr dappledLightTexture;
 
     //Beyond PBR
-    Buffer::SharedPtr blockData_preSort;
-    Buffer::SharedPtr blockData;
-    Buffer::SharedPtr instanceData;
-    Buffer::SharedPtr instanceData_Billboards;
-    Buffer::SharedPtr plantData;
-    Buffer::SharedPtr plantpivotData;               // this is loaded from ribbonBuilder, or imported
-    Buffer::SharedPtr vertexData;                   // this is loaded from ribbonBuilder, or imported
-    std::array<plant, 256> plantBuf;
+    ew::Buffer::SharedPtr blockData_preSort;
+    ew::Buffer::SharedPtr blockData;
+    ew::Buffer::SharedPtr instanceData;
+    ew::Buffer::SharedPtr instanceData_Billboards;
+    ew::Buffer::SharedPtr plantData;
+    ew::Buffer::SharedPtr plantpivotData;               // this is loaded from ribbonBuilder, or imported
+    ew::Buffer::SharedPtr vertexData;                   // this is loaded from ribbonBuilder, or imported
+    std::array<plant, 256> plantBuf = {};   // the hlsli twin carries no default initializers under DXC - zero it explicitly
     uint totalBlocksToRender = 0;
     uint unusedVerts = 0;
     void updateMaterialsAndTextures();
-    float gputime;
-    float gputimeBB;   // GPU time
+
+    float gputime = 0;      // no GPU profiler wired up - stays 0
+    float gputimeBB = 0;   // GPU time
     float buildTime = 0;
 
 
-    Buffer::SharedPtr  buffer_gpuSort;
-    Buffer::SharedPtr  buffer_feedback;
-    Buffer::SharedPtr  buffer_feedback_read;
-    vegetation_feedback feedback;
+    ew::Buffer::SharedPtr  buffer_gpuSort;
+    ew::Buffer::SharedPtr  buffer_feedback;
+    ew::ReadbackBuffer::SharedPtr  buffer_feedback_read;   // fence-checked ring: costs 1-2 frames of latency, avoids a full GPU stall per frame
+    vegetation_feedback feedback = {};
+    uint32_t feedbackFrameCounter = 0;  // render() calls; tags the readback ring
+    uint32_t feedbackAgeFrames = 0;     // render()-frames between enqueue and the mapped slot (HUD info; the struct is frame-global counters, no recyclable slots)
     float loddingBias = 1.f;
 
-    Buffer::SharedPtr   drawArgs_vegetation;
-    Buffer::SharedPtr   drawArgs_billboards;
-    computeShader		compute_clearBuffers;
-    computeShader		compute_calulate_lod;
-    computeShader		compute_sortCombine;
+    ew::Buffer::SharedPtr   drawArgs_vegetation;
+    ew::Buffer::SharedPtr   drawArgs_billboards;
+    ew::computeShader		compute_clearBuffers;
+    ew::computeShader		compute_calulate_lod;
+    ew::computeShader		compute_sortCombine;
+    ew::computeShader		compute_sortCombine_POST;
 
     int currentLOD = -1;
     float3 camVector;
-    float pixelSize = 0.f;
-    float pixelmm = 0.f;
-    uint expectedLod = 0;
-    float m_halfAngle_to_Pixels;
 
 
-    //largeTexture textureToolData;
-    
+
+    largeTexture textureToolData;
+
 
     //bool showDebugInShader = false;
     //bool showNumPivots = false;
 
     static _plantBuilder* selectedPart;
-    static _plantMaterial* selectedMaterial;
 
     // randomizer
     static std::mt19937 generator;
     static std::uniform_int_distribution<> rand_int;
 
-    // cleanup for left side
-    bool showPerformance = true;
-    bool showBaking = true;
-    bool showLodding = true;
-    bool showRest = false;
 
     int firstPlant = 0;
     int lastPlant = 10000; // just big
@@ -1861,34 +1957,39 @@ public:
     // Ortho render for sampling
     bool uniformSpread = false;
     bool SAMPLE_MODE = false;
-    Fbo::SharedPtr shadowFbo;
-    Fbo::SharedPtr rgbFbo;
-    rmcv::mat4  _shadow_viewproj;
-    void bakeShadowMap(RenderContext* _renderContext);
+    ew::Fbo::SharedPtr shadowFbo;
+    ew::Fbo::SharedPtr rgbFbo;
+    glm::mat4  _shadow_viewproj{ 1.f };
+    void bakeShadowMap(ew::GpuContext* _renderContext);
     float camRot = 0;
     float camPitch = 0;
     float shadowPitch = 0;
     float3 sunDirectionShadowMap;
-    Texture::SharedPtr RGB_MAP;
+    ew::Texture::SharedPtr RGB_MAP;
     void buildOneMap(float _sunAngle);
-    RenderContext* RC = nullptr;;
-    computeShader	compute_sampleRGBtoPixel;
-    computeShader	compute_sampleRGBtoPixel_ToTexture;
-    Buffer::SharedPtr   rgb_data;
+
+    ew::computeShader	compute_sampleRGBtoPixel;
+    ew::computeShader	compute_sampleRGBtoPixel_ToTexture;
+    ew::Buffer::SharedPtr   rgb_data;
     void buildBDRF();
 
+    // we need to grab information from the render for overlay
+    struct
+    {
+        ew::GpuContext*             context = nullptr;
+        glm::mat4                   viewproj;
+        float3                      cameraPos;
+        float                       half_to_Pixels_SinglePlant; // for origin
+        float                       half_to_Pixels; // for origin
+    }renderInfo;
 
-    struct {
-        int left = 400;
-        int right = 300;
-        int bottom = 500;
-    } layout;
+
+
 
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const _version)
     {
+        (void)archive; (void)_version;
     }
 };
 CEREAL_CLASS_VERSION(_rootPlant, 100);
-
-

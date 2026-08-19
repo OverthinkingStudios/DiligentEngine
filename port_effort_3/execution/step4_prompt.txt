@@ -1,0 +1,24 @@
+You are executing step 4 of the Earthworks port (Path B+) in c:\dev\git\os\DiligentEngine, branch port_effort_3: VEGETATION. Steps 1-3 are done (terrain renders with materials/atmosphere/shadows/HDR on VK + D3D12).
+
+IMPORTANT EXPECTATION: the Steg dataset contains NO plant data (developer-confirmed) - this step is COMPILE/RUN-CORRECTNESS ONLY. Deliverable: the complete vegetation system ported and wired, running dormant without crashes, warnings, or visual regressions; visual validation is deferred until plant data exists. Do NOT invent test data. If the resources dir (<gameroot>/terrains/_resources/vegetation_*) turns out to contain loadable plant binaries after all, loading them is a bonus - guard every load with requireFile-style loud handling, never crash on absence.
+
+READ FIRST, in this order:
+1. port_effort_3\task.md S0 (NEVER commit/push; developer compiles; zero warnings; no subagents)
+2. port_effort_3\execution\plan.md - your task is the "Step 4 spec"; update the step log when done
+3. port_effort_3\execution\bringup_notes.md P1-P10 - especially P5 (age-gate EVERY async readback of recyclable slots - vegetation_feedback has exactly that hazard) and P10 (fullscreen/borrowed rasterizer states)
+4. port_effort_3\catalog\vegetation.md - THE authority. Non-negotiables it documents: 32-vertex block unit (VEG_BLOCK_SIZE); inverted startBit + boundary vertex duplication with leafRoot back-pointer fixups; 32-byte packed vertex (sqrt-encoded radius, 81.487 yaw/pitch quantizer); wind via nested bezier pivots + backwards vertex fetch vertex_buffer[vId-F]; deterministic mt19937 re-seeding (bake seeds 100/101/102, buildAllLods loops LODs BACKWARDS); 128 log-spaced depth buckets (factor 1.07, sizes self-balance one frame behind, requested*2+2024) drawn as 128 indirect draws with per-draw drawIndex - DO NOT collapse into one draw; opacity matched set (One/Zero blend + alphaclip 0.5 + SV_DepthGreaterEqual + JHFAA edge lerp to hdrPreviousFrame); baked egg lighting. A past agent lost 200 fps "improving" this code.
+5. port_effort_3\catalog\shader_interface.md (binding contracts; the extract's render_vegetation_ribbons is NEWER than the legacy port's - extract is authority; padding is load-bearing)
+
+SOURCES: port_effort_3\source_extract_3\earthworks_scene\vegetationBuilder.cpp/.h, vegetationBuilder_Trees.cpp, ribbonBuilder.cpp/.h + hlsl\terrain\compute_clipLodAnimatePlants.hlsl, compute_vegetation_clear/lod/sortCombine.hlsl, render_vegetation_ribbons.hlsl (1212 lines, biggest shader) + PerlinNoise.hpp. Structure-preserving port; keep the STRIP-REVIEW-kept renderGui_Lodding/renderGui_Baking function bodies (they hold the only copy of the lod/billboard bake orchestration) even though nothing calls them yet - mark // STEP4-NOTE editor-deferred. EarthworksFX\legacy\ = techniques reference only (stale content). DiligentCore readable - verify all API calls. Pristine original READ-ONLY.
+
+SCOPE - IN:
+1. vegetationBuilder trio + ribbonBuilder ported to ew:: (plant assembly, Grove OBJ import path, GPU buffer building, instance buffers, runtime render + updateShaderConstants + bakeShadowMap).
+2. Complete ecotope.cpp's STEP3-STUB importBinary (vegetation binary import) now that plant types exist.
+3. terrain.cpp: replace the vegetation stub buffers (stub_drawArgs_plants_veg / stub_feedback_veg / stub_plant_buffer) with plants_Root; wire the clip/lod/animate + clear/lod/sortCombine dispatch chain at its STEP3-STUB positions; vegetation feedback readback via ew::ReadbackBuffer WITH P5 age-gating.
+4. render path: vegetation ribbons + billboards indirect draws (128-bucket scheme), JHFAA consumes hdrPreviousFrame (exists since step 3).
+5. Atmosphere texture handoff to plant shaders per the extract's onLoad wiring (inscatter/outscatter/sunlight - already partially present from step 3's handoff block).
+SCOPE - OUT: plant AUTHORING GUI (editor-deferred), PDF export (stripped), sprites/billboard-marker system Sprites.cpp (step 6), terrafectors/roads (step 5).
+
+CRITICAL RULES: extract = authority, structure-preserving, // PORT-REVIEW on deviations, // STEP4-STUB on deferrals; padding load-bearing; both APIs must run; zero warnings; cannot compile - verify against real headers; every file load loud-and-graceful (dataset has no plant data - the dormant path IS the acceptance path); update plan.md step log + bringup_notes.md (P11+) with new root causes.
+
+RETURN: files created/modified, scope covered vs deferred, design decisions, the ordered morning-after checklist for the developer (what to check in the debug panel to confirm "dormant but healthy": veg dispatch counts 0, no PSO failures in log, fps unchanged), and open questions for when plant data arrives.

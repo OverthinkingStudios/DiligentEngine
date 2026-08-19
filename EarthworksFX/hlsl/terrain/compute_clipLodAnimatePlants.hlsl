@@ -1,6 +1,6 @@
 
 #include "groundcover_defines.hlsli"
-#include "groundcover_functions.hlsli"	
+#include "groundcover_functions.hlsli"
 #include "vegetation_defines.hlsli"
 #include "terrainDefines.hlsli"
 
@@ -30,7 +30,7 @@ cbuffer gConstantBuffer
 
 
 //32 LIKELY BETTER
-[numthreads(64, 1, 1)]			
+[numthreads(64, 1, 1)]
 void main(uint plantId : SV_GroupThreadID, uint blockId : SV_GroupID)
 {
     const uint tileIDX = lu_Tile(tileLookup[blockId]);
@@ -53,11 +53,11 @@ void main(uint plantId : SV_GroupThreadID, uint blockId : SV_GroupID)
         bool inFrust = all(test);
         // FIXME move middle upwards, expand on thsi a bit, as well as teh 4 4 4 4 above
 
-        
-        
+
+
         //feedback_Veg[0].numBillboard = feedback[0].numQuads;
         // extract and save
-        
+
         if (inFrust)
         {
             uint slot = 0;
@@ -70,15 +70,15 @@ void main(uint plantId : SV_GroupThreadID, uint blockId : SV_GroupID)
             instance_out[slotInst].rotation = ROTATION(instance.s_r_idx);
             instance_out[slotInst].plant_idx = idx;
 
-            
-            
+
+
 
             float distance = length(viewBS.xyz); // can use view.z but that causes lod changes on rotation and is less good, although mnore acurate
             float pix = halfAngle_to_Pixels * PLANT.size.y * scale / distance;
             //lodBias
 
             int lod = 0;
-            
+
             for (int i = 0; i < PLANT.numLods; i++)
             {
                 if (pix >= PLANT.lods[i].pixSize)
@@ -92,24 +92,24 @@ void main(uint plantId : SV_GroupThreadID, uint blockId : SV_GroupID)
                 //uint slot = 0;
                 InterlockedAdd(feedback_Veg[0].numLod[lod + 1], 1, slot);
                 InterlockedAdd(feedback[0].numPostClippedPlants, 1, slot); // duplicates numInstanceAddedComputeClipLod just for feedback
-                
-            
+
+
                 if (idx == 0)
                 {
                     //feedback[0].plantZero_pixeSize = pix;
                     //feedback[0].plantZeroLod = lod;
                 }
-            
 
-            
+
+
                 InterlockedAdd(feedback_Veg[0].numBlocks, PLANT.lods[lod].numBlocks, slot);
 
                 //?? WRONG use depth slices
                 InterlockedAdd(drawArgs_Plants[0].instanceCount, PLANT.lods[lod].numBlocks, slot);
                 //drawArgs_Plants[0].vertexCountPerInstance = 8;// VEG_BLOCK_SIZE; // FIXME move to a clear shader once
-            
- 
-            
+
+
+
                 for (int i = 0; i < PLANT.lods[lod].numBlocks; i++)
                 {
                     block_buffer[slot + i].instance_idx = slotInst;

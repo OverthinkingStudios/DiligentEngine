@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<cereal>
+	<lastfile>
+		<cereal_class_version>100</cereal_class_version>
+		<terrain>F:/terrains/sonoma/sonoma.terrain</terrain>
+		<road></road>
+		<roadMaterial>X:/resources/terrafectors_and_road_materials/roads/sidewalk_Asphalt.roadMaterial</roadMaterial>
+		<terrafectorMaterial></terrafectorMaterial>
+		<texture></texture>
+		<fbx></fbx>
+		<EVO>C:/Kunos/acevo_content/content</EVO>
+	</lastfile>
+</cereal>
+

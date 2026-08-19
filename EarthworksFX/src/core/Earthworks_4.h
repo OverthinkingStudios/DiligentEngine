@@ -1,149 +1,103 @@
-/***************************************************************************
- # Copyright (c) 2015-22, NVIDIA CORPORATION. All rights reserved.
- #
- # Redistribution and use in source and binary forms, with or without
- # modification, are permitted provided that the following conditions
- # are met:
- #  * Redistributions of source code must retain the above copyright
- #    notice, this list of conditions and the following disclaimer.
- #  * Redistributions in binary form must reproduce the above copyright
- #    notice, this list of conditions and the following disclaimer in the
- #    documentation and/or other materials provided with the distribution.
- #  * Neither the name of NVIDIA CORPORATION nor the names of its
- #    contributors may be used to endorse or promote products derived
- #    from this software without specific prior written permission.
- #
- # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS "AS IS" AND ANY
- # EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- # PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
- # CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- # EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- # PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- # PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- # OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- **************************************************************************/
 #pragma once
-#include "Falcor.h"
-#include "earthworksScene.h"
-//#include "RenderGraph/RenderGraph.h"
-//#include "Utils/Video/VideoEncoderUI.h"
 
+// ---------------------------------------------------------------------------
+// Earthworks_4 - the terrain renderer's app-level class.
+//
+// Lifecycle the host shell drives: onLoad / onFrameRender (which calls
+// onFrameUpdate itself, first thing) / onResizeSwapChain / onKeyEvent /
+// onMouseEvent / onShutdown.
+//
+// It owns the terrain, the atmosphere (sun LUT + volumetric fog computes), the
+// _shadowEdges CPU shadow-thread handoff, and the HDR pipeline: the scene
+// renders into hdrFbo (R11G11B10F + D24S8), the tonemapper (ACES + colour-cube
+// LUT, a GRAPHICS fullscreen triangle) writes the swap chain, then hdrFbo is
+// blitted HALF-res into hdrPreviousFrame for the next frame's temporal effects
+// (JHFAA).
+// ---------------------------------------------------------------------------
 
+#include <cstdint>
+#include <string>
+#include <vector>
 
-using namespace Falcor;
+#include "ewTypes.h"
+#include "ewCamera.h"
+#include "ewGpuContext.h"
+#include "ewResources.h"
+#include "ewShader.h"
 
-inline float3 global_sun_direction = float3(0.96592582628906f, -0.2588190451f, 0.f);
+#include "EarthworksDebug.h"
 
+#include "terrain.h"
+#include "atmosphere.h"
 
+// Sun direction owned by the app level: written by the shadow-solver thread
+// handoff, read when building the light buffer. Default is 15 degrees above the
+// horizon, coming from +X.
+inline ew::float3 global_sun_direction{0.96593f, -0.25882f, 0.f};
 
-class Earthworks_4 : public IRenderer
+class Earthworks_4
 {
 public:
-    void onLoad(RenderContext* _renderContext) override;
-    void onFrameUpdate(RenderContext* _renderContext);
-    void onFrameRender(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo) override;
-    void onRenderOverlay(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo);
-    void onShutdown() override;
-    void onResizeSwapChain(uint32_t _width, uint32_t _height) override;
-    bool onKeyEvent(const KeyboardEvent& keyEvent) override;
-    bool onMouseEvent(const MouseEvent& mouseEvent) override;
-    void initGui(Gui* _gui);
-    void onGuiRender(Gui* _gui) override;
-    void onGuiMenubar(Gui* _gui);
+    void onLoad(ew::GpuContext* pGpu);
+    void onFrameUpdate(ew::GpuContext* pGpu);
+    void onFrameRender(ew::GpuContext* pGpu, const ew::Fbo::SharedPtr& pTargetFbo);
+    void onShutdown();
+    void onResizeSwapChain(uint32_t width, uint32_t height);
+    bool onKeyEvent(const ew::KeyboardEvent& keyEvent);
+    bool onMouseEvent(const ew::MouseEvent& mouseEvent);
 
+    /// Editor GUI hook - not implemented, the body is empty.
+    void onGuiRender();
+
+    // move to a postprocess class
     void loadColorCube(std::string name);
 
-    // --- DiligentEngine bring-up: let the host app drive the debug grid and
-    // read the camera without owning an ImGui window inside the core renderer.
-    bool&                    debugGridEnabled() { return showDebugGrid; }
-    const Camera::SharedPtr& getCamera() const { return camera; }
+    // --- host-app accessors -------------------------------------------------
+    bool&                        debugGridEnabled() { return showDebugGrid; }
+    const ew::Camera::SharedPtr& getCamera() const { return camera; }
+
+    /// Name of the loaded terrain (terrainSettings.name).
+    std::string getTerrainName() const { return terrain.getTerrainName(); }
+
+    /// Command-line terrain override (`-terrain <dir-or-settings.json>`) -
+    /// forwards to terrainManager; call before onLoad.
+    static void setTerrainOverride(const std::string& pathOrDir) { terrainManager::sTerrainOverride = pathOrDir; }
 
 private:
-    void guiStyle();
+    // --- the terrain + atmosphere subsystems ------------------------------
+    terrainManager terrain;
+    atmosphereAndFog atmosphere;     // make directly available in terrain include there
 
-    // --- debug orientation / movement grid (DiligentEngine bring-up aid) ---
-    // The globe is drawn INTO the HDR FBO with depth-testing so terrain occludes it
-    // (revealing the terrain silhouette); the ground grid is drawn ON TOP afterwards.
-    void                        renderDebugGlobe(RenderContext* _renderContext, const Fbo::SharedPtr& pHdrFbo);
-    void                        renderDebugGroundGrid(RenderContext* _renderContext, const Fbo::SharedPtr& pTargetFbo);
-    void                        setDebugGridConstants(int drawMode);
-    bool                        showDebugGrid = true;
-    GraphicsProgram::SharedPtr  debugGridProgram;
-    GraphicsState::SharedPtr    debugGridState;        // depth disabled (ground grid, on top)
-    GraphicsState::SharedPtr    debugGlobeState;       // depth-tested (globe, occluded by terrain)
-    GraphicsVars::SharedPtr     debugGridVars;
-    Vao::SharedPtr              debugGridVao;
-    static constexpr uint32_t   kMaxDebugTileRects = 1024;  // >= terrainManager tile pool (997)
-    Buffer::SharedPtr           debugTileRectBuffer;   // quadtree leaf rects, refreshed per frame
-    std::vector<float4>         debugTileRects;        // CPU scratch for the upload
-    // Per-tile terrain height so the grid drapes onto the terrain instead of
-    // sitting at y=0 (sampled from the CPU-side shadowEdges heightfield).
-    Buffer::SharedPtr           debugTileHeightBuffer;
-    std::vector<float>          debugTileHeights;
-
-    GraphicsState::Viewport     viewport3d;
-    float2                      screenSize;
-    float2                      screenMouseScale;
-    float2                      screenMouseOffset;
-    Fbo::SharedPtr		        hdrFbo;
-    Fbo::SharedPtr		        tonemappedFbo;
-    Texture::SharedPtr	        hdrPreviousFrame;
-    
-
-    GraphicsState::SharedPtr    graphicsState;
-    Camera::SharedPtr	        camera;
-    
-   terrainManager              terrain;
-    atmosphereAndFog            atmosphere;     // make directly available in terrain include there
-
-    bool showAbout = false;
-    Texture::SharedPtr aboutTex;
-    bool showGui = true;
-    bool firstGUI = true;
-    BlendState::SharedPtr overlayBlendstate;
-
-    earthworksScene scene;
+    // --- HDR pipeline -----------------------------------------------------
+    ew::Fbo::SharedPtr     hdrFbo;
+    ew::Texture::SharedPtr hdrPreviousFrame;   // HALF res - JHFAA temporal feedback
 
     struct
     {
-        pixelShader         tonemapper;
-        Texture::SharedPtr	colorCube;
+        ew::pixelShader        tonemapper;
+        ew::Texture::SharedPtr colorCube;
     } postProcess;
+    // --- debug orientation / movement aids (hlsl/debugGrid.hlsl) -----------
+    // The globe is depth-tested (terrain will occlude it); the ground grid is
+    // drawn on top. One pixelShader instance, depth state flipped per draw
+    // (the PSO cache keeps both variants).
+    void renderDebugGlobe(ew::GpuContext* pGpu, const ew::Fbo::SharedPtr& pFbo);
+    void renderDebugGroundGrid(ew::GpuContext* pGpu, const ew::Fbo::SharedPtr& pFbo);
+    void setDebugGridConstants(int drawMode);
 
-    /*
-    struct
-    {
-        BarrierThrd glider_barrier; // create barrier for threads
-    } glider; */
+    bool            showDebugGrid = true;
+    ew::pixelShader debugGridShader;
+    bool            debugGridLoaded = false;
 
-    struct {
-        bool    vsync = true;
-        bool    minimal = true;
-    } refresh;
+    static constexpr uint32_t kMaxDebugTileRects = 1024; // >= terrain tile pool (997)
+    ew::Buffer::SharedPtr  debugTileRectBuffer;   // one float4 per tile: origin.x, origin.z, size, lod
+    ew::Buffer::SharedPtr  debugTileHeightBuffer; // terrain height per tile (0 for the placeholder grid)
+    std::vector<ew::float4> debugTileRects;
+    std::vector<float>      debugTileHeights;
+    bool                    debugTilesDirty = true;
 
-    struct {
-        int left_width = 300;
-        int right_width = 300;
-        int bottom_width = 500; // damn should have been called height
-        int header_height = 10;
-    } layout;
-
-    template<class Archive>
-    void serialize(Archive& _archive, std::uint32_t const _version)
-    {
-        _archive(CEREAL_NVP(refresh.vsync));
-        _archive(CEREAL_NVP(refresh.minimal));
-
-        if (_version >= 101)
-        {
-            _archive(CEREAL_NVP(layout.left_width));
-            _archive(CEREAL_NVP(layout.right_width));
-            _archive(CEREAL_NVP(layout.bottom_width));
-        }
-    }
+    ew::Camera::SharedPtr camera;
+    ew::float2            screenSize{0.f, 0.f};
+    ew::float2            screenMouseScale{1.f, 1.f};
+    ew::float2            screenMouseOffset{0.f, 0.f};
 };
-CEREAL_CLASS_VERSION(Earthworks_4, 101);
-

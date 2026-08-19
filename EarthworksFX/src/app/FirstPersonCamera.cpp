@@ -23,11 +23,11 @@ void FirstPersonCamera::Update(InputController& Controller, float ElapsedTime)
     if (Controller.IsKeyDown(InputKeys::MoveBackward))
         MoveDirection.z -= 1.0f;
 
-    // Signs flipped for the right-handed scene camera (BRINGUP_NOTES F20):
-    // the FPC's yaw/pitch -> world-direction mapping must stay unchanged
-    // (testflight shots store yaw/pitch), but with the RH projection the
-    // FPC "right" axis now appears on the LEFT of the screen. Flipping the
-    // strafe input keeps D = move toward screen-right.
+    // Signs flipped for the right-handed scene camera: the yaw/pitch ->
+    // world-direction mapping must stay unchanged (testflight shots store
+    // yaw/pitch), but with the RH projection the camera's "right" axis appears
+    // on the LEFT of the screen. Flipping the strafe input keeps D = move
+    // toward screen-right.
     if (Controller.IsKeyDown(InputKeys::MoveRight))
         MoveDirection.x -= 1.0f;
     if (Controller.IsKeyDown(InputKeys::MoveLeft))
@@ -68,11 +68,11 @@ void FirstPersonCamera::Update(InputController& Controller, float ElapsedTime)
         const float fPitchDelta = MouseDeltaY * m_fRotationSpeed;
         if (mouseState.ButtonFlags & MouseState::BUTTON_FLAG_RIGHT)
         {
-            // Yaw sign flipped for the right-handed scene camera (F20), same
-            // reason as the strafe flip above: horizontal screen direction
-            // mirrored, vertical did not (pitch unchanged). The yaw->direction
-            // mapping itself is untouched so stored testflight yaw/pitch
-            // values keep their meaning.
+            // Yaw sign flipped for the right-handed scene camera, same reason
+            // as the strafe flip above: the horizontal screen direction is
+            // mirrored, the vertical one is not (pitch unchanged). The
+            // yaw->direction mapping itself is untouched so stored testflight
+            // yaw/pitch values keep their meaning.
             m_fYawAngle += fYawDelta * m_fHandness;
             m_fPitchAngle += fPitchDelta * -m_fHandness;
             m_fPitchAngle = std::max(m_fPitchAngle, -PI_F / 2.f);
@@ -178,6 +178,9 @@ void FirstPersonCamera::SetProjAttribs(Float32           NearClipPlane,
         XScale = YScale / AspectRatio;
     }
 
+    // TODO: this local Proj is built and then discarded - m_ProjMatrix comes from
+    // float4x4::Projection() below. The XScale/YScale pretransform swap above is
+    // therefore dead and the pretransform case is silently not honoured.
     float4x4 Proj;
     Proj._11 = XScale;
     Proj._22 = YScale;

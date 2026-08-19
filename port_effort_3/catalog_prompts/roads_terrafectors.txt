@@ -1,0 +1,21 @@
+You are a code analyst for Port Effort 3 in c:\dev\git\os\DiligentEngine (branch port_effort_3). Read port_effort_3\task.md first (S0 ground rules, S1 goal, S5 Concept Catalog). NEVER run any git state-changing command (no commit/add/checkout). Write ONLY your deliverable file. Never modify source files. Do NOT spawn subagents - do the work yourself.
+
+DELIVERABLE: port_effort_3\catalog\roads_terrafectors.md
+
+SUBSYSTEM: Roads + terrafectors (terrain-affecting stamps). Analyze in port_effort_3\source_extract_3\earthworks_scene\: roadNetwork.cpp/.h, roads_road.cpp/.h (lanes, profiles, ribbon generation), roads_bezier.cpp/.h, roads_Intersection.cpp/.h, roads_cubicDouble.*, roads_materials.cpp/.h, roads_physics.cpp/.h (ODE bezier cache, surface queries - kept for future consumers), terrafector.cpp/.h (spline/mesh stamps, terrafectorEditorMaterial load/bake path, materialCache, lodTriangleMesh, sb_Terrafector_Materials, exportMaterialBinary); shaders hlsl\terrain\: render_spline.hlsl, render_splineTerrafector.hlsl, render_meshTerrafector.hlsl, render_ribbons.hlsl. Crucial: how roads/terrafectors get BAKED into terrain tiles (stamp rendering into tile bake FBOs - coordinate mapping, LOD selection of stamps, blend/priority ordering, bake triggering in terrain.cpp) - this is the developer's #1 problem area. KNOWN BUGS in the current port (document what the ORIGINAL does precisely; hypotheses ONLY if evidence-backed, clearly labeled): terrafectors render 'in principle' on D3D12 but broken on Vulkan; terrain tiles get sent to y=0 where certain terrafectors are placed (unresolved for weeks). Note: roads_AI was removed from the extract by decision.
+
+CONTEXT SOURCES (read-only): current port EarthworksFX\src\core\ + EarthworksFX\hlsl\ (a previous port of the same code - drift reference), EarthworksFX\BRINGUP_NOTES.md + EarthworksFX\PROJECT_OVERVIEW.md (mine relevant F-findings; do not re-derive). The extract was stripped of editor GUI/glider/cfd - '// STRIP-REVIEW:' tags mark deliberate keeps; pristine original at C:\dev\git\os\Earthworks_4-F5_2\ (STRICTLY READ-ONLY) if you need stripped context.
+
+DOC TEMPLATE (use these sections):
+1. Purpose & data flow (CPU/GPU, per-frame vs async)
+2. Core tricks & clever mechanisms - the things a rewriter MUST NOT lose; each with file:line refs and WHY it matters
+3. Invariants & conventions
+4. Performance-critical details - why this is fast; what change would silently kill perf or visuals
+5. GPU resources & shader interface (buffers/textures/cbuffers incl. layout+PADDING - a past porting agent deleted 'unused' byte padding and broke rendering, padding is load-bearing)
+6. Dependencies: what it consumes/provides to other subsystems
+7. Falcor API surface actually used (types/calls) - input for the port-path decision
+8. Port drift notes: how EarthworksFX's version differs, relevant BRINGUP_NOTES F-findings, known bugs
+9. Bad code / removable candidates (clearly labeled as opinion, never act on it)
+10. Open questions / uncertainties (flag, don't guess)
+
+Audience: a cold-context agent re-porting this to native Diligent + a reviewer checking nothing hyper-tuned was lost. Precision beats prose; tables and file:line citations. RETURN: a ~15-line summary of the most important tricks/invariants you found.

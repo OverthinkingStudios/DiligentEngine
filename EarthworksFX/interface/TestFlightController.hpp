@@ -13,7 +13,7 @@
 //
 // Owned and driven by EarthworksFXApplicationBase when --testflight is on the
 // command line. All logic lives here in the app layer; the ported Earthworks
-// core is only read through ew::gDebug and the public Falcor camera API.
+// core is only read through ew::gDebug and the public ew::Camera API.
 // ---------------------------------------------------------------------------
 
 #include <chrono>
@@ -31,7 +31,7 @@
 #include "DeviceContext.h"
 #include "SwapChain.h"
 
-namespace Falcor
+namespace ew
 {
 class Camera;
 }
@@ -72,10 +72,10 @@ public:
 
     /// Applies a shot to the live cameras. Shared by the run mode and the
     /// ImGui testflights editor ("view" button).
-    static void ApplyShotToCamera(const ew::TestFlightShot& Shot, FirstPersonCamera& Camera, Falcor::Camera* pSceneCamera);
+    static void ApplyShotToCamera(const ew::TestFlightShot& Shot, FirstPersonCamera& Camera, ew::Camera* pSceneCamera);
 
     /// Snapshots the live cameras into a shot ("add current" in the editor).
-    static ew::TestFlightShot CaptureShotFromCamera(const FirstPersonCamera& Camera, const Falcor::Camera* pSceneCamera);
+    static ew::TestFlightShot CaptureShotFromCamera(const FirstPersonCamera& Camera, const ew::Camera* pSceneCamera);
 
     /// Sets one ew::gDebug toggle by json field name. Returns false for unknown names.
     static bool ApplyDebugToggle(const std::string& Name, bool Value);
@@ -95,7 +95,7 @@ public:
 
     /// Per-frame tick, called from the app base before OnUpdate. Applies cameras,
     /// runs the settle/capture state machine, accumulates frame stats.
-    void Update(double CurrTime, double ElapsedTime, FirstPersonCamera& Camera, Falcor::Camera* pSceneCamera, bool SceneReady);
+    void Update(double CurrTime, double ElapsedTime, FirstPersonCamera& Camera, ew::Camera* pSceneCamera, bool SceneReady);
 
     /// Called right before ISwapChain::Present - issues the GPU capture copy.
     void PrePresent();
@@ -143,10 +143,12 @@ private:
         std::vector<uint8_t> rgb; // tightly packed RGB8 at capture size
     };
 
-    void BeginShot(double CurrTime, FirstPersonCamera& Camera, Falcor::Camera* pSceneCamera);
+    void BeginShot(double CurrTime, FirstPersonCamera& Camera, ew::Camera* pSceneCamera);
     void AccumulateFrameStats(double ElapsedTime);
+    // TODO: declared but never defined or called - the capture draining actually
+    // happens in PostPresent(). Remove it or route PostPresent through it.
     bool ProcessCapture(); // returns true when a capture was consumed this frame
-    void AdvanceShot(double CurrTime, FirstPersonCamera& Camera, Falcor::Camera* pSceneCamera);
+    void AdvanceShot(double CurrTime, FirstPersonCamera& Camera, ew::Camera* pSceneCamera);
     void Finalize(double CurrTime);
 
     void WriteShotPng(const ShotRun& Shot) const;

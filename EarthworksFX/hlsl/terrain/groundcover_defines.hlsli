@@ -279,31 +279,31 @@ struct GC_variables
 	uint startIndex;
 };
 
-// NOTE (Diligent/Vulkan port): this struct is compiled by BOTH MSVC (via
-// terrafector.h) and DXC->SPIR-V. SPIR-V aligns float4x4 and float3 members to
-// 16 bytes while glm packs them tightly, so the two layouts silently diverged
-// (GPU stride 1888 vs C++ sizeof 1868) and every CPU readback past p_world was
-// shifted. The padd_align_* members below make the C++ layout match the SPIR-V
-// layout exactly; static_asserts at the end of this file verify it.
+// This struct is compiled by BOTH MSVC (terrain.h) and DXC. SPIR-V aligns
+// float4x4 and float3 members to 16 bytes where glm packs them tightly, so
+// without help the layouts diverge - GPU stride 1888 against C++ sizeof 1868 -
+// and every CPU readback past p_world comes out shifted. The padd_align_*
+// members make both layouts identical; the static_asserts at the end of this
+// file verify the C++ side.
 struct GC_feedback			// to log and read back to debug and test the process
 {
 	uint 	plants_in_frustum;
 	uint	plants_culled;
-	
+
 	uint 	plantparts_in_frustum;
 	uint	plantparts_culled;			// maybe unused
-	
+
 	uint 	particles_in_frustum;
 	uint	particles_culled;			// mayeb unused
-	
+
 	int		xmin;
 	int		xmax;
 	int		zmin;
 	int		zmax;
-	
+
 	uint	padd_align_0;		// SPIR-V aligns the following float4x4 to 16 bytes (offset 48)
 	uint	padd_align_1;
-	
+
 	float4x4	p_world;
 	float4	p_proj;
 	float4	p_up;
@@ -330,10 +330,10 @@ struct GC_feedback			// to log and read back to debug and test the process
 	// lookup params
     uint numLookupBlocks_Quads[numRenderViews];     // These are not really DDBUG they are critical for build to work
     uint numLookupBlocks_Plants[numRenderViews];
-    uint numLookupBlocks_Terrain[numRenderViews];       
-	
+    uint numLookupBlocks_Terrain[numRenderViews];
+
 	uint	padd_align_2;		// SPIR-V aligns the following float3 to 16 bytes (offset 1232)
-	
+
 	// terrain under mouse
 	float3 	tum_Position;
 	uint 	tum_idx;
@@ -368,10 +368,9 @@ struct GC_feedback			// to log and read back to debug and test the process
 };
 
 #ifdef __cplusplus
-// Guard against the C++ mirror of GC_feedback drifting from the SPIR-V layout
-// again. The expected offsets come from the DXC SPIR-V OpMemberDecorate output
-// (see BRINGUP_NOTES.md). If one of these fires after editing the struct,
-// re-dump the offsets with:
+// Guard against the C++ mirror of GC_feedback drifting from the SPIR-V
+// layout. Expected offsets come from the DXC SPIR-V
+// OpMemberDecorate output; re-dump after editing the struct with:
 //   dxc -T cs_6_0 -E main -spirv -fspv-reflect compute_tileClear.hlsl -Fc out.spvasm
 static_assert(offsetof(GC_feedback, p_world) == 48, "GC_feedback::p_world must sit at SPIR-V offset 48");
 static_assert(offsetof(GC_feedback, numTerrainTiles) == 724, "GC_feedback::numTerrainTiles must sit at SPIR-V offset 724");
@@ -385,9 +384,6 @@ static_assert(sizeof(GC_feedback) == 1888, "GC_feedback size must match the SPIR
 
 struct sprite_material
 {
-    // NOTE: HLSL/DXC (unlike the original Slang toolchain) does not allow
-    // default member initializers on struct members. Defaults removed; this
-    // struct is filled from the CPU side, so the values are supplied there.
     int alphaTexture; // a
     int albedoTexture; // rgb
     int normalTexture;
@@ -400,7 +396,7 @@ struct sprite_material
 
     float3 albedoScale[2]; // front and back
     float roughness[2];
-    
+
 };
 
 

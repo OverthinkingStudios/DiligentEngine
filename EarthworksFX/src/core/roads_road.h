@@ -1,7 +1,7 @@
 #pragma once
 
-#include"roads_bezier.h"
-#include"roads_materials.h"
+#include "roads_bezier.h"
+#include "roads_materials.h"
 
 
 
@@ -45,6 +45,7 @@ public:
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const version)
     {
+        (void)version;
         archive(CEREAL_NVP(angle));
         archive(CEREAL_NVP(roadGUID));
         archive(CEREAL_NVP(broadStart));
@@ -201,8 +202,6 @@ public:
     stampPad() { ; }
     virtual ~stampPad() { ; }
 
-    void renderGUI(Gui* _gui) { ; }
-
     std::string materialName;
     int material;
     float width = 1.f;
@@ -211,11 +210,12 @@ public:
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const version)
     {
+        (void)version;
         archive(CEREAL_NVP(materialName));
         archive(CEREAL_NVP(width));
         archive(CEREAL_NVP(height));
 
-        material = roadMaterialCache::getInstance().find_insert_material(materialName);
+        material = (int)roadMaterialCache::getInstance().find_insert_material(materialName);
         terrafectorEditorMaterial::static_materials.rebuildAll();
     }
 };
@@ -244,6 +244,7 @@ public:
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const version)
     {
+        (void)version;
         archive(CEREAL_NVP(material));
         archive(CEREAL_NVP(rotation));
         archive_float3(pos);
@@ -270,10 +271,10 @@ public:
         for (auto& mat : materialMap)
         {
             std::string relative = materialCache::getRelative(mat.second.c_str());
-            
-            spdlog::info("relative   {}", relative.c_str());
+
+            fprintf(terrafectorSystem::_logfile, "       relative   %s\n", relative.c_str());
             std::string cleanPath = terrafectorEditorMaterial::rootFolder + relative;
-            int idx = terrafectorEditorMaterial::static_materials.find_insert_material(cleanPath);
+            int idx = (int)terrafectorEditorMaterial::static_materials.find_insert_material(cleanPath);
             newMap[idx] = relative;
         }
         materialMap.clear();
@@ -296,7 +297,7 @@ public:
     {
         int idx = -1;
         float  minL = 3.f;
-        for (int i=0; i<stamps.size(); i++)
+        for (int i = 0; i < (int)stamps.size(); i++)
         {
             float L = glm::length(stamps[i].pos - _pos);
             if (L < minL)
@@ -318,13 +319,9 @@ public:
     template<class Archive>
     void serialize(Archive& archive, std::uint32_t const version)
     {
+        (void)version;
         archive(materialMap);
         archive(stamps);
     }
 };
 CEREAL_CLASS_VERSION(stampCollection, 100);
-
-
-
-
-

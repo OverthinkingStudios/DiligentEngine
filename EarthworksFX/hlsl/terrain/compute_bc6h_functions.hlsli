@@ -140,8 +140,8 @@ void EncodeP1( inout uint4 block, inout float blockMSLE, float3 texels[ 16 ] )
     float3 refinedBlockMax = blockMin;
     for ( j = 0; j < 16; ++j )
     {
-        // HLSL 2021/DXC: '?:' needs a scalar condition; the comparison here is
-        // per-component (float3), so use the component-wise select() intrinsic.
+        // '?:' needs a scalar condition in HLSL 2021 and the comparison is
+        // per-component, hence select().
         refinedBlockMin = min( refinedBlockMin, select( texels[ j ] == blockMin, refinedBlockMin, texels[ j ] ) );
         refinedBlockMax = max( refinedBlockMax, select( texels[ j ] == blockMax, refinedBlockMax, texels[ j ] ) );
     }

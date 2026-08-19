@@ -84,7 +84,9 @@ bool testTile(uint t, inout float hitDistance)
                         groundcover_feedback[0].tum_Normal = normalize(cross(a, b));
                         //break;
                         found = true;
-                        i == 100000;
+                        // TODO: No early exit - the loop always runs to completion,
+                        // so the last hit along the ray is the one reported and
+                        // overwrites the nearer ones. Wrong if nearest-hit was meant.
                     }
                 }
                 P += mouseDir * H; //(H / mouseDir.y) * 0.1;

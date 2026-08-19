@@ -16,7 +16,8 @@
 #include "FirstPersonCamera.hpp"
 #include "EarthworksFXWindowBase.hpp"
 
-#include "Falcor.h"
+#include "ewGpuContext.h"
+#include "ewResources.h"
 #include "Earthworks_4.h"
 
 namespace Diligent
@@ -35,7 +36,7 @@ struct EarthworksFXAppSettings
     bool FirstPersonCamera = true;
 
     /// When false, the base builds the full rendering environment (device, swap
-    /// chain, ImGui, Falcor device/framework and the Earthworks shader data
+    /// chain, ImGui, the ew:: GPU context and the Earthworks shader data
     /// directories) but does NOT instantiate the Earthworks terrain scene. The
     /// application is then expected to override OnUpdate()/OnRender() and drive
     /// rendering itself, while still having the Earthworks shaders and rendering
@@ -196,20 +197,20 @@ protected:
     /// The Earthworks terrain scene owned by the base. Only valid when scene
     /// creation is enabled (the default); guard with HasEarthworksScene() in apps
     /// that run with EarthworksFXAppSettings::CreateScene == false.
-    /// 
-    /// On the long run, this will likely become a Scene thing and I'm not sure if the ApplicationBase even owns it. but atm it has this nasty self-sufficient behaviour, 
+    ///
+    /// On the long run, this will likely become a Scene thing and I'm not sure if the ApplicationBase even owns it. but atm it has this nasty self-sufficient behaviour,
     /// we should stick to it until we can clean up
     Earthworks_4& GetEarthworks() { VERIFY_EXPR(m_Earthworks); return *m_Earthworks; }
     bool HasEarthworksScene() const { return m_Earthworks != nullptr; }
 
-    /// Falcor render context bound to the immediate device context. Valid from
+    /// ew:: GPU context bound to the immediate device context. Valid from
     /// OnGraphicsReady() onwards, with or without a terrain scene.
-    Falcor::RenderContext& GetRenderContext() { return m_RenderContext; }
+    ew::GpuContext& GetGpuContext() { VERIFY_EXPR(m_GpuContext); return *m_GpuContext; }
 
     /// Swap-chain target FBO. Manual-rendering apps recreate it on resize, e.g.
-    /// SetTargetFbo(Falcor::Fbo::createFromSwapChain(m_pSwapChain)).
-    const Falcor::Fbo::SharedPtr& GetTargetFbo() const { return m_TargetFbo; }
-    void SetTargetFbo(const Falcor::Fbo::SharedPtr& Fbo) { m_TargetFbo = Fbo; }
+    /// SetTargetFbo(ew::Fbo::createFromSwapChain(m_pSwapChain)).
+    const ew::Fbo::SharedPtr& GetTargetFbo() const { return m_TargetFbo; }
+    void SetTargetFbo(const ew::Fbo::SharedPtr& Fbo) { m_TargetFbo = Fbo; }
 
     RefCntAutoPtr<IEngineFactory> m_pEngineFactory;
     RefCntAutoPtr<IRenderDevice> m_pDevice;
@@ -229,21 +230,6 @@ protected:
     void UpdateFirstPersonCameraProjAttribs();
 
 private:
-    /// Falcor FrameworkInterface implementation shared by every EarthworksFX app.
-    class Framework final : public Falcor::FrameworkInterface
-    {
-    public:
-        void SetAverageFrameTimeMs(double ms) { m_AvgFrameTimeMs = ms; }
-        double getAverageFrameTimeMs() const override { return m_AvgFrameTimeMs; }
-
-        Falcor::FrameRate getFrameRate() const override;
-        Falcor::WindowInterface* getWindow() override;
-
-    private:
-        double m_AvgFrameTimeMs = 16.0;
-        Falcor::WindowInterface m_Window;
-    };
-
     void InitializeDiligentEngine(const NativeWindow* pWindow);
     void InitializeGraphicsResources();
     void InitializeEnvironment();
@@ -286,13 +272,10 @@ private:
     int  m_ExitCode             = 0;
 
     // --- Earthworks rendering environment owned by the base -----------------
-    std::unique_ptr<Falcor::EarthworksWrapper> m_FalcorWrapper;
-    std::unique_ptr<Earthworks_4>              m_Earthworks;
-    Falcor::Gui                                m_Gui;
-    Falcor::RenderContext                      m_RenderContext{nullptr};
-    Framework                                  m_Framework;
-    Falcor::Fbo::SharedPtr                     m_TargetFbo;
-    bool                                       m_Initialized = false; // Earthworks scene ready
+    std::unique_ptr<ew::GpuContext> m_GpuContext;
+    std::unique_ptr<Earthworks_4>   m_Earthworks;
+    ew::Fbo::SharedPtr              m_TargetFbo;
+    bool                            m_Initialized = false; // Earthworks scene ready
 };
 
 } // namespace Diligent

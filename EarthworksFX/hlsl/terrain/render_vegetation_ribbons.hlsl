@@ -1,6 +1,5 @@
-
 #include "groundcover_defines.hlsli"
-#include "groundcover_functions.hlsli"		
+#include "groundcover_functions.hlsli"
 #include "vegetation_defines.hlsli"
 #include "../PBR.hlsli"
 
@@ -20,6 +19,7 @@ Texture2D       gAlbedo : register(t0);
 Texture2D       gDappledLight : register(t3);
 Texture2D       highResShadow : register(t4);
 
+// The 4096-entry texture array is bound element by element from the CPU side.
 Texture2D<float4> textures_T[4096];
 
 
@@ -28,7 +28,11 @@ cbuffer gConstantBuffer
     float4x4 view;
     float4x4 viewproj;
     float3 eyePos;
-    
+    float padd1;
+
+    float4 camRight;
+    float4 camUp;
+
     float time;
     float bake_radius_alpha;
     float bake_height_alpha;
@@ -40,6 +44,7 @@ cbuffer gConstantBuffer
     float4x4 shadowViewProj;
 
     uint drawIndex;
+    int toneMap;        // if we are baking - pre apply the tonemapper
 
     float2 bake_AlphaOval;
 };
@@ -57,7 +62,7 @@ struct PSIn
     float3 normal   : NORMAL;       // all in view space HALF feels great
     float3 tangent  : TANGENT;
     float3 binormal : BINORMAL;
-    
+
     float4 diffuseLight : COLOR;    //??? float 4 with shadow in w
     float4 vertexLight  : COLOR1;   //??? I think for gauroad shading and maybe small ligths
     float3 debugColour  : COLOR2;
@@ -72,7 +77,7 @@ struct PSIn
     float3 inscatter    : TEXCOORD4;
     float3 outscatter   : TEXCOORD5;
 
-    
+
 
 #if defined(_BAKE)
     float4 lighting : TEXCOORD10; // uv, sunlight, ao
@@ -86,7 +91,7 @@ struct PSIn
 #define FogDistance         colour.w            // doubled with alpha for baking
 
 // valid as input into Geometry shader
-#define ribbonWidth         pos.x         
+#define ribbonWidth         pos.x
 #define ribbonHeight        pos.y
 #define uScale              pos.z
 
@@ -100,7 +105,7 @@ struct PSIn
 // vertex extraction flags
 #define isCameraFacing  (v.a >> 31)
 #define radius          (v.d & 0xff)
-#define packDiamond     (v.b & 0x1)
+#define packDiamond     (v.b & 0x3)
 #define unpackPosition() float3((v.a >> 16) & 0x3fff, v.a & 0xffff, (v.b >> 18) & 0x3fff)
 
 
@@ -128,7 +133,7 @@ float3x3 rotate_Y(const float yaw)
     return float3x3( c, 0, s,    0, 1, 0,    -s, 0, c );
 }
 #endif
- 
+
 
 
 float3x3 AngleAxis3x3(float angle, float3 axis)
@@ -223,12 +228,12 @@ void bezierPivotSum(_plant_anim_pivot PVT, inout float3 pos, inout float3 binorm
     const float pushScale = 1.f - abs(dot(normalize(PVT.extent), normalize(wind)));
 
     wind /= PVT.stiffness;
-    
+
     //  now ossilate
     float swayStrength = 0.5 * sin(time / PVT.frequency * 1.283 * freq_scale + PVT.offset);
     float sideStrength = 0.4 * sin(time / PVT.frequency * 0.83 * freq_scale + PVT.offset + 1);
     float3 c = b * 2 + (wind * (pushScale + swayStrength)) + (right * length(wind) * sideStrength);
-    
+
     float3 bc = normalize(c - b) * 0.5;
     c = b + bc;
     float scale = (1 / length(c) + 2.5) / 3.5 * S;
@@ -282,7 +287,7 @@ float3 bezierAnimate(inout float3 _position, inout float3 _binormal, inout float
     float3 wind;
     if (animateWind(wind, _instance.position + _position, _instance.position, _instance.rotation))
         return 0; // there is an anomoly at 0, cant do cross product so avoid animating
-        
+
     if (F > 0)
     {
         _plant_anim_pivot PVT;
@@ -325,9 +330,9 @@ float3 bezierAnimate(inout float3 _position, inout float3 _binormal, inout float
 PSIn vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
 {
     PSIn output = (PSIn) 0;
-    
+
 #if defined(_BILLBOARD)
-    
+
     const plant_instance INSTANCE = instance_buffer[vId];
     const plant PLANT = plant_buffer[INSTANCE.plant_idx];
 
@@ -377,32 +382,33 @@ PSIn vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
 
 
 #else
-    
+
     const block_data        BLOCK = block_buffer[iId + sort[drawIndex].offset];
+    //const block_data        BLOCK = block_buffer[iId];
     const plant_instance    INSTANCE = instance_buffer[BLOCK.instance_idx];
     const plant             PLANT = plant_buffer[INSTANCE.plant_idx];
     const ribbonVertex8     v = vertex_buffer[BLOCK.vertex_offset + vId];
-    
+
     output.worldPos = float4(unpackPosition() * PLANT.scale - PLANT.offset, 1); //0.1ms
-    
+
 #if defined(_BAKE)
     float3 rootPos = float3(0, 0, 0);
     float3 p = unpackPosition() * PLANT.scale - PLANT.offset;
     output.pos =  float4(p, 1);
-        
+
     p.y = 0;
     float R = length(p);
     if (R > 0.3f)      output.colour.a = 0;
-    
+
     output.colour.a = 1;
     {
         output.colour.a = 1.f - smoothstep(bake_radius_alpha * 0.95f, bake_radius_alpha, R);
     }
-    output.colour.a *= (1.f - smoothstep(bake_height_alpha * 0.96f, bake_height_alpha, output.pos.y)); //last 10% f16tof32 tip asdouble well
+    //output.colour.a *= (1.f - smoothstep(bake_height_alpha * 0.96f, bake_height_alpha, output.pos.y)); //last 10% f16tof32 tip asdouble well
 
     extractTangent(output, v);
 #endif
-    
+
     float SS = 1 - pow(shadow(output.pos.xyz + INSTANCE.position, 0), 0.25); // Should realyl fo this in VS, just make sunlight zero
 
     extractTangent(output, v);
@@ -410,33 +416,32 @@ PSIn vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
     //extractFlags(output, v);
     output.material_IDX = (v.b >> 8) & 0x2ff; //  material
     //0.06ms
-    
+
     // FIXME WHY IS THE NEXT ONE SO SLOW
 //    output.start_BIT = ((v.a >> 30) & 0x1) +((v.b & 0x1) << 1); //  start bool   we can double pack
     output.start_BIT =  ((v.a >> 30) & 0x1); //  start bool   we can double pack
     //if (vId == 1) output.start_BIT = 0;
-    
-    output.diamond = (v.b & 0x1);
+
+    output.diamond = packDiamond;   //fizme should be unpack
     //0.26 ms thsi is very slow
-    
+
     output.AlbedoScale = 0.1 + ((v.f >> 8) & 0xff) * 0.008;
     output.TranslucencyScale = ((v.f >> 0) & 0xff) * 0.008;
     // then this is free - VERY ODD
-    
-    
-    
-    
+
+
+
 
 #if defined(_BAKE)
     // FIXME I think this is now vbroejkn due to worldPos uses - TS
-    output.worldPos.xyz *= INSTANCE.scale;
-    float3 root = INSTANCE.position;
-    root.y = 0;
-    output.worldPos.xyz += root;
+    //output.worldPos.xyz *= INSTANCE.scale;
+    //float3 root = INSTANCE.position;
+    //root.y = 0;
+    //output.worldPos.xyz += root;
 #else
     output.debugColour = bezierAnimate(output.worldPos.xyz, output.binormal, output.tangent, v, BLOCK.vertex_offset + vId, PLANT, INSTANCE);
     //0.12ms
-    
+
     // this block is 0.2 slowish, but bezier above is quick
     float3x3 rot = rotate_Y(INSTANCE.rotation);
     output.worldPos.xyz = mul(output.worldPos.xyz, rot);
@@ -448,8 +453,8 @@ PSIn vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
     output.tangent = mul(output.tangent, rot);
 #endif
     // then this is basically free again
-    
-    
+
+
     float3 eye = normalize(eyePos - output.worldPos.xyz);
     output.FogDistance = length(eyePos - output.worldPos.xyz);
     float4 screen = mul(output.worldPos, viewproj);
@@ -459,7 +464,7 @@ PSIn vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
     screen.y = 1 - screen.y;
     vs_atmosphere(output.outscatter, output.inscatter, screen.xy, output.FogDistance);
     // 0.2ms
-    
+
     if (isCameraFacing)
     {
         output.tangent = normalize(cross(output.binormal, eye));
@@ -517,10 +522,10 @@ PSIn vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
     float2 RR;
     if (bake_AlphaOval.y > 0)
     {
-        RR.y = output.worldPos.y / bake_AlphaOval.y;
+        RR.y = output.worldPos.y / (bake_AlphaOval.y);
         RR.x = length(output.worldPos.xz) / bake_AlphaOval.x;
         float Aradius = length(RR);
-        output.diffuseLight.a *= (1 - smoothstep(0.8, 1.1, Aradius));
+        output.diffuseLight.a *= (1 - smoothstep(0.90, 1.1, Aradius));
     }
 #endif
 
@@ -529,7 +534,7 @@ PSIn vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
     //InterlockedAdd(feedback_Veg[0].numPixClip, 1, slot);
 
     // 0.2ms
-#if defined(_GOURAUD_SHADING)    
+#if defined(_GOURAUD_SHADING)
     // now light it
     {
         const sprite_material MAT = materials[output.material_IDX];
@@ -543,10 +548,10 @@ PSIn vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
         float ndots = dot(N, sunDirection);
 
         output.vertexLight.rgb = output.diffuseLight.rgb * 3.14 * (saturate(ndots)) * albedo * dappled;
-        
+
         // environment cube light
         output.vertexLight.rgb += 1.16 * gEnv.SampleLevel(gSmpLinear, N * float3(1, 1, -1), 5).rgb * albedo.rgb * pow(output.AmbietOcclusion, 0.3);
-    
+
     // specular sunlight
         float RGH = MAT.roughness[0] + 0.001; //?? frontback
         float pw = 1.f / RGH;
@@ -592,7 +597,7 @@ void gsMain(point PSIn pt[1], inout TriangleStream<PSIn> OutputStream)
     v.Shadow = 0.45;
     v.pos = mul(v.worldPos, viewproj);
     OutputStream.Append(v);
-        
+
     v.uv = float2(0.0 + scale/2, 0.5);
     v.uv = float2(0.0, 0.5);
     v.worldPos.xyz = pt[0].worldPos.xyz - v.tangent * W + 0.5 * v.binormal * H;
@@ -615,22 +620,59 @@ void gsMain( line  PSIn L[2], inout    TriangleStream<PSIn> OutputStream)
     PSIn v;
 
     float W = L[0].ribbonWidth;
-
-    if (L[1].start_BIT)
+    //L[0].diamond = 2;
+    if (L[0].diamond & 0x2)
     {
-        if (L[0].diamond)
+        // Actual camera facing point sprite - TRIANGLE OUT
+
+        PSIn v = L[0];
+
+        float3 eye = -normalize(eyePos - v.worldPos.xyz);
+
+        v.normal = -eye;
+        v.tangent = camRight.xyz;
+        //v.binormal = camUp.xyz;
+        v.binormal =  cross(eye, v.tangent);
+        float4 right = float4(v.tangent * W, 0);
+        float4 up = float4(v.binormal * W, 0);
+        v.tangent = -camRight.xyz;
+
+
+        v.uv = float2(0.0, 0.0);
+        v.worldPos = L[0].worldPos -right + up;
+        v.pos = mul(v.worldPos, viewproj);
+        OutputStream.Append(v);
+
+        v.uv = float2(1.0, 0.0);
+        v.worldPos = L[0].worldPos + right + up;
+        v.pos = mul(v.worldPos, viewproj);
+        OutputStream.Append(v);
+
+        v.uv = float2(0.0, 1.0);
+        v.worldPos = L[0].worldPos - right - up;
+        v.pos = mul(v.worldPos, viewproj);
+        OutputStream.Append(v);
+
+        v.uv = float2(1.0, 1.0);
+        v.worldPos = L[0].worldPos + right - up;
+        v.pos = mul(v.worldPos, viewproj);
+        OutputStream.Append(v);
+    }
+    else if (L[1].start_BIT)
+    {
+        if (L[0].diamond & 0x1)
         {
-            
+
             PSIn v = L[0];
             float scale = 0;//           1 - L[0].uScale;
-            
+
             v.uv = float2(0.5, 1.0);
             v.worldPos = L[0].worldPos;// -0.1 * (L[1].worldPos - L[0].worldPos);
             //v.sunUV.x = dot(v.worldPos.xyz, sunRightVector);
             //v.sunUV.y = dot(v.worldPos.xyz, sunUpVector);
             v.pos = mul(v.worldPos, viewproj);
             OutputStream.Append(v);
-            
+
             // we should really interpolate here, but use start fo now
             v.uv = float2(1.0 + scale / 2, 0.6);
             v.worldPos = L[0].worldPos + 0.4 * (L[1].worldPos - L[0].worldPos) + float4(v.tangent * W * 1.01, 0);
@@ -638,8 +680,8 @@ void gsMain( line  PSIn L[2], inout    TriangleStream<PSIn> OutputStream)
             //v.sunUV.y = dot(v.worldPos.xyz, sunUpVector);
             v.pos = mul(v.worldPos, viewproj);
             OutputStream.Append(v);
-        
-            
+
+
             v.uv = float2(0.0 - scale / 2, 0.6);
             v.worldPos = L[0].worldPos + 0.4 * (L[1].worldPos - L[0].worldPos) - float4(v.tangent * W * 1.01, 0);
             //v.sunUV.x = dot(v.worldPos.xyz, sunRightVector);
@@ -655,11 +697,11 @@ void gsMain( line  PSIn L[2], inout    TriangleStream<PSIn> OutputStream)
             //v.sunUV.y = dot(v.worldPos.xyz, sunUpVector);
             v.pos = mul(v.worldPos, viewproj);
             OutputStream.Append(v);
-            
+
         }
         else
         {
-            
+
             v = L[0];
             v.uv.x = 0.5 - L[0].uv.x;
             v.worldPos = L[0].worldPos - float4(v.tangent * W * 1.01, 0);
@@ -667,7 +709,7 @@ void gsMain( line  PSIn L[2], inout    TriangleStream<PSIn> OutputStream)
             //v.sunUV.y = dot(v.worldPos.xyz, sunUpVector);
             v.pos = mul(v.worldPos, viewproj);
             OutputStream.Append(v);
-            
+
             v.uv.x = 0.5 + L[0].uv.x;
             v.worldPos = L[0].worldPos + float4(v.tangent * W * 1.01, 0);
             //v.sunUV.x = dot(v.worldPos.xyz, sunRightVector);
@@ -692,7 +734,7 @@ void gsMain( line  PSIn L[2], inout    TriangleStream<PSIn> OutputStream)
             //v.sunUV.y = dot(v.worldPos.xyz, sunUpVector);
             v.pos = mul(v.worldPos, viewproj);
             OutputStream.Append(v);
-            
+
         }
     }
 }
@@ -736,6 +778,7 @@ PS_OUTPUT_Bake psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     }
     //alpha *= vOut.colour.a;
     alpha *= vOut.diffuseLight.a;
+    //alpha = 1;
 
     float rnd = 0.1 + 0.8 * rand_1_05(vOut.uv.xy);
     clip(alpha - rnd);
@@ -756,7 +799,7 @@ PS_OUTPUT_Bake psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     //output.albedo = float4(pow(color, 1.0 / 2.2), alpha);
     output.albedo = float4(pow(color, 1.0 / 2.2), 1);
     //output.albedo = float4(1, 0, 0, 1);
-    
+
 
     float3 N = vOut.normal;
     if (MAT.normalTexture >= 0)
@@ -872,11 +915,6 @@ float4 psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
 
 
 
-
-
-
-
-
 /*
 *   -   High chance outDepth is unnesesary, but leave to test some things
 *   -   2.65ms 6M pixels [earlydepthstencil]
@@ -937,7 +975,7 @@ if (vOut.material_IDX >= 0)
     const plant PLANT = plant_buffer[vOut.plant_IDX];
 
     clip(vOut.uv.y - 0.001);    // clip unused part of diamonds
-    
+
     if (MAT.albedoTexture >= 0)
     {
         surface.albedo = textures_T[MAT.albedoTexture].Sample(gSmpLinear, vOut.uv);
@@ -965,7 +1003,7 @@ if (vOut.material_IDX >= 0)
 }
 #endif
 
-    
+
 
 #if defined(_DEBUG_PIXELS)
     {
@@ -990,14 +1028,14 @@ if (vOut.material_IDX >= 0)
     clip(alpha - 0.5);
     alpha = smoothstep(0.5 * 0.9, 0.8, alpha);
 
-    
+
     const float flipNormal = (isFrontFace * 2 - 1);
     surface.normal = vOut.normal *flipNormal;
-    
+
     if (MAT.normalTexture >= 0)
     {
         float3 normalTex = ((textures_T[MAT.normalTexture].Sample(gSmpLinear, vOut.uv).rgb) * 2.0) - 1.0;
-        
+
         normalTex.b = 1 - (normalTex.r * normalTex.r + normalTex.g * normalTex.g);
         surface.normal = normalize((normalTex.r * vOut.tangent) + (normalTex.g * vOut.binormal) + (normalTex.b * vOut.normal * flipNormal));
     }
@@ -1015,7 +1053,7 @@ if (vOut.material_IDX >= 0)
     NAdjusted = pow(NAdjusted, 3.1);
     NAdjusted = surface.normal;
     */
-   
+
     //return float4(NAdjusted, 1);
 
     float3 eye = -normalize(eyePos - vOut.worldPos.xyz);
@@ -1045,24 +1083,33 @@ if (vOut.material_IDX >= 0)
     surface.roughness = MAT.roughness[frontback] + 0.001;
 
     float gray = dot(surface.albedo.rgb, float3(0.229, 0.587, 0.114));
-    surface.translucency = gray* pow(surface.albedo.rgb / gray, 2) *vOut.TranslucencyScale* MAT.translucency;
+    surface.translucency = gray * pow(surface.albedo.rgb / gray, 2) *vOut.TranslucencyScale* MAT.translucency;
     if (MAT.translucencyTexture >= 0)
     {
-        surface.translucency = textures_T[MAT.translucencyTexture].Sample(gSmpLinear, vOut.uv).rgb * vOut.TranslucencyScale * MAT.translucency;
+        //surface.translucency = textures_T[MAT.translucencyTexture].Sample(gSmpLinear, vOut.uv).rgb * vOut.TranslucencyScale * MAT.translucency;
+        surface.translucency *= textures_T[MAT.translucencyTexture].Sample(gSmpLinear, vOut.uv).rgb * 5;
     }
 
     float3 color = pbr_Vegetation(surface, vOut.diffuseLight.rgb * dappled, 1.0);
     // float3 color = pbr_Vegetation(surface, vOut.diffuseLight.rgb, 1.0);
     //color *= 0.1;
     color += vOut.otherLights * surface.albedo.rgb;
-    color = clamp(color, 0, 10000); // just large but gets rid of NaN
-    color *= vOut.outscatter;
-    color += vOut.inscatter;
-    //atmosphere(color, vOut.pos.xy, vOut.FogDistance);
-    JHFAA_alpha(color, alpha, vOut.pos.xy); // 3% roughly
+
+
+    if (toneMap > 0.5)
+    {
+        color = saturate(smoothstep(-3, 1, log(color * 4.8)));
+        //color = saturate(color * 1.8);
+    }
+    else
+    {
+        color = clamp(color, 0, 10000); // just large but gets rid of NaN
+        color *= vOut.outscatter;
+        color += vOut.inscatter;
+        JHFAA_alpha(color, alpha, vOut.pos.xy); // 3% roughly
+    }
 
     return float4(color, 1);
-    
 }
 
 #endif

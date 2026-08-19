@@ -1,6 +1,5 @@
-
 #include "groundcover_defines.hlsli"
-#include "groundcover_functions.hlsli"		
+#include "groundcover_functions.hlsli"
 #include "vegetation_defines.hlsli"
 #include "terrainDefines.hlsli"
 #include "../render_Common.hlsli"
@@ -13,6 +12,7 @@ SamplerState gSampler;
 //TextureCube gEnv : register(t1);
 //Texture2D gPreviousFrame : register(t2);
 
+// The 4096-entry texture array is bound element by element from the CPU side.
 Texture2D<float4> textures_T[4096];
 
 
@@ -80,7 +80,7 @@ GSOut vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
     GSOut output = (GSOut)0;
     //return output;
 
-    
+
     uint tileIDX = lu_Tile(tileLookup[iId]);
     uint numQuad = lu_Used(tileLookup[iId]);
     uint tileStart = lu_Index(tileLookup[iId], numQuadsPerTile, 64);
@@ -94,10 +94,10 @@ GSOut vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
 
         float3 P = unpack_pos(plant.xyz, tiles[tileIDX].origin, tiles[tileIDX].scale_1024);
         output.pos = float4(P, 1);
-        
-        
 
-        
+
+
+
         output.uv.z = SCALE(plant.s_r_idx);
         output.index = PLANT_INDEX(plant.s_r_idx);
 
@@ -113,7 +113,7 @@ GSOut vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
         atmosphereUV.y = (1 - atmosphereUV.y) * 0.5;
         output.outscatter = gAtmosphereOutscatter.SampleLevel(gSmpLinearClamp, atmosphereUV, 0).rgb;
         output.inscatter = gAtmosphereInscatter.SampleLevel(gSmpLinearClamp, atmosphereUV, 0).rgb;
-        
+
 
 
         output.eye = normalize(P - eye.xyz);
@@ -152,7 +152,7 @@ void gsMain(point GSOut sprite[1], inout TriangleStream<GSOut> OutputStream)
 
     v.uv.xy = float2(0.5, -0.1);
     v.pos = mul(sprite[0].pos + float4(0, Y * 1.1, 0, 0), viewproj);
-    OutputStream.Append(v);    
+    OutputStream.Append(v);
 }
 
 
@@ -168,37 +168,37 @@ float4 psMain(GSOut vOut) : SV_TARGET
     const sprite_material MAT = materials[ plant_buffer[vOut.index].billboardMaterialIndex ];
 
     float4 albedo = textures_T[MAT.albedoTexture].Sample(gSmpLinearClamp, vOut.uv.xy);
-    
+
     float alpha = pow(albedo.a, MAT.alphaPow);
     //if (alpha < 0.5) return float4(1, 0, 0, 1);
     clip(alpha - 0.5);
     alpha = smoothstep(0.3, 0.8, alpha);
     albedo.rgb *= MAT.albedoScale[0] * 2.f;
-    
+
     float3 N = vOut.normal;
     if (MAT.normalTexture >= 0)
     {
         float3 normalTex = ((textures_T[MAT.normalTexture].Sample(gSmpLinearClamp, vOut.uv.xy).rgb) * 2.0) - 1.0;
         N = (normalTex.r * vOut.tangent) + (normalTex.g * vOut.binormal) + (normalTex.b * vOut.normal);
     }
-    
+
     float ndoth = saturate(dot(N, normalize(sunDirection + vOut.eye)));
     float ndots = dot(N, sunDirection);
 
-    
+
     // sunlight
     float3 color = vOut.diffuseLight * 3.14 * (saturate(ndots)) * albedo.rgb;
-    
-    
+
+
     // environment cube light
     color += 0.539 * gEnv.SampleLevel(gSampler, N * float3(1, 1, -1), 0).rgb * albedo.rgb;// * pow(vOut.AmbietOcclusion, 0.3);
-    
+
     // specular sunlight
    float RGH = MAT.roughness[0] + 0.001;
    float pw = 15.f / RGH;
    color += pow(ndoth, pw) * 0.6  * vOut.diffuseLight * (1 - RGH);
-   
-    // translucent light    
+
+    // translucent light
     float3 TN = vOut.normal;
     float3 trans = vOut.diffuseLight * 3.14 * (saturate(-ndots)) * MAT.translucency;
     {
@@ -212,17 +212,17 @@ float4 psMain(GSOut vOut) : SV_TARGET
     color += trans * (gray * pow(albedo.rgb / gray, 1.6)) * vOut.diffuseLight * 2;
 
 
-    
+
     // Apply atmopsphere
     color.rgb *= vOut.outscatter;
     color.rgb += vOut.inscatter;
-       
-    // apply JHFAA to edges    
+
+    // apply JHFAA to edges
     if (alpha < 0.9)
     {
         float3 prev = gPreviousFrame.Sample(gSmpLinearClamp, vOut.pos.xy / screenSize).rgb;
         color = lerp(prev, color, alpha);
     }
-           
+
     return float4(color, 1);
 }

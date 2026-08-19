@@ -1,5 +1,16 @@
 #pragma once
 
+// ---------------------------------------------------------------------------
+// Bezier surface queries for physics. The incremental cache design (persistent
+// t_idx, distanceTillNextSearch) is the whole point of this code: it assumes
+// the query point moves a little at a time, so do not call it with random
+// positions.
+//
+// TODO: Known defect: ODE_bezier::bezierBounding is populated NOWHERE in this tree,
+// so the queries run against an empty vector. The population code either lives
+// in an out-of-tree consumer or was lost.
+// ---------------------------------------------------------------------------
+
 #include "terrafector.h"
 #include "roads_bezier.h"
 
@@ -74,7 +85,7 @@ struct bezierSegment
 struct cacheItem
 {
     uint counter = 999999;		// for LRU-ish, start big
-    int bezierIndex = -1;	// points back to 
+    int bezierIndex = -1;	// points back to
     bezierSegment points[numBezierCache + 1];
 };
 
@@ -224,8 +235,3 @@ public:
     bezierCache cache;
     bool needsReCache = false;
 };
-
-
-
-
-

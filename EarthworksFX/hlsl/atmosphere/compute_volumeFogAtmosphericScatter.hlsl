@@ -1,7 +1,7 @@
 
 #include "compute_volumeFog.hlsli"
 
-// NOTE: backing storage images are RGBA16F (4 components). Vulkan 1.3
+// The backing storage images are RGBA16F (4 components). Vulkan 1.3
 // (VUID-vkCmdDispatch-OpImageWrite-08795) requires OpImageWrite to supply at
 // least as many components as the view format, so these UAVs must be float4
 // and every store is padded to float4.

@@ -1,6 +1,7 @@
 #include "EarthworksFXApplicationBase.hpp"
 
 #include <algorithm>
+#include <cmath>      // fabsf
 #include <cstring>
 #include <filesystem>
 
@@ -47,31 +48,6 @@
 namespace Diligent
 {
 
-namespace
-{
-
-/// Scopes Falcor's global framework pointer for the duration of an Earthworks
-/// call, restoring the previous value afterwards.
-class ScopedFalcorFramework
-{
-public:
-    explicit ScopedFalcorFramework(Falcor::FrameworkInterface* pFramework)
-    {
-        m_Prev = Falcor::gpFramework;
-        Falcor::SetFalcorFramework(pFramework);
-    }
-
-    ~ScopedFalcorFramework()
-    {
-        Falcor::SetFalcorFramework(m_Prev);
-    }
-
-private:
-    Falcor::FrameworkInterface* m_Prev = nullptr;
-};
-
-} // namespace
-
 EarthworksFXApplicationBase::EarthworksFXApplicationBase(const std::string& Title,
                                                            const std::string& AppDataFolder,
                                                            overthinking::Env::Stage Stage)
@@ -86,13 +62,10 @@ EarthworksFXApplicationBase::~EarthworksFXApplicationBase()
     // Tear the Earthworks scene down (and its GPU resources) while the device is
     // still alive, before the swap chain / device are released below.
     if (m_Initialized)
-    {
-        ScopedFalcorFramework scope{&m_Framework};
         m_Earthworks->onShutdown();
-    }
     m_TargetFbo.reset();
     m_Earthworks.reset();
-    m_FalcorWrapper.reset();
+    m_GpuContext.reset();
 
     m_pImGuiOwner.reset();
     m_pImGui = nullptr;
@@ -118,13 +91,13 @@ void EarthworksFXApplicationBase::ModifyEngineInitInfo(const ModifyEngineInitInf
     Attribs.EngineCI.Features.DepthClamp     = DEVICE_FEATURE_STATE_OPTIONAL;
     Attribs.SCDesc.ColorBufferFormat         = TEX_FORMAT_BGRA8_UNORM_SRGB;
 
-    // F21: vsync-off must actually uncap the FPS on Vulkan. Diligent recreates
-    // the VkSwapchain when Present(0) is first called and prefers MAILBOX as
-    // the non-vsync mode, but with the default BufferCount = 2 mailbox
-    // degenerates to vsync cadence: one image is on the display, the other
-    // waits in the mailbox slot, so vkAcquireNextImageKHR blocks until vblank.
-    // A third image keeps one always free to render into. (D3D12 is unaffected
-    // either way: DXGI flip-model + sync interval 0 uncaps with any count.)
+    // vsync-off must actually uncap the FPS on Vulkan. Diligent recreates the
+    // VkSwapchain when Present(0) is first called and prefers MAILBOX as the
+    // non-vsync mode, but with the default BufferCount = 2 mailbox degenerates
+    // to vsync cadence: one image is on the display, the other waits in the
+    // mailbox slot, so vkAcquireNextImageKHR blocks until vblank. A third image
+    // keeps one always free to render into. (D3D12 is unaffected either way:
+    // DXGI flip-model + sync interval 0 uncaps with any count.)
     if (Attribs.DeviceType == RENDER_DEVICE_TYPE_VULKAN)
         Attribs.SCDesc.BufferCount = 3;
 
@@ -201,6 +174,15 @@ AppBase::CommandLineStatus EarthworksFXApplicationBase::ProcessCommandLine(int a
 #endif
                              };
                          return ArgsParser.ParseEnum("mode", 'm', DeviceTypeEnumVals, m_DeviceType);
+                     });
+
+    // Explicit terrain to load (directory or *.terrainSettings.json); bypasses
+    // lastFile.xml.
+    ArgsParser.Parse("terrain", 't',
+                     [&](const char* ArgVal) {
+                         if (ArgVal != nullptr && ArgVal[0] != '\0')
+                             Earthworks_4::setTerrainOverride(ArgVal);
+                         return true;
                      });
 
     int Width = 0;
@@ -337,9 +319,9 @@ void EarthworksFXApplicationBase::InitializeDiligentEngine(const NativeWindow* p
                 LOG_ERROR_AND_THROW("Failed to load Direct3D12");
             m_pEngineFactory = pFactoryD3D12;
 
-            // Same rationale as the Vulkan branch (BRINGUP_NOTES F12): in Debug
-            // builds Diligent turns validation failures into a MODAL MessageBox
-            // on the render thread, which looks like a freeze. Log instead.
+            // Same rationale as the Vulkan branch below: in Debug builds
+            // Diligent turns validation failures into a MODAL MessageBox on the
+            // render thread, which looks like a freeze. Log instead.
             pFactoryD3D12->SetBreakOnError(false);
 
             EngineD3D12CreateInfo EngineCI;
@@ -347,12 +329,19 @@ void EarthworksFXApplicationBase::InitializeDiligentEngine(const NativeWindow* p
             if (m_ValidationLevel >= 0)
                 EngineCI.SetValidationLevel(static_cast<VALIDATION_LEVEL>(m_ValidationLevel));
 
-            // D3D12 analog of the Vulkan F13 fix (see BRINGUP_NOTES F18): all
-            // compat-layer variables are DYNAMIC, so EVERY CommitShaderResources
-            // (i.e. every draw) allocates fresh GPU-visible descriptors from the
-            // DYNAMIC region of the descriptor heap, and the sprite/ribbon/
-            // vegetation shaders declare Texture2D textures_T[4096] -> ~4100
-            // CBV/SRV/UAV descriptors PER DRAW. Unlike Vulkan (whose descriptor
+            // The 8-MRT terrafector bake blend (RT0 elevation =
+            // One/InvSrcAlpha, RT1-7 SrcAlpha/InvSrcAlpha) needs
+            // IndependentBlendEnable; Diligent's feature default is DISABLED.
+            // Trivially supported on D3D12 - request it for parity with the
+            // Vulkan branch (where it maps to a real VkPhysicalDeviceFeature).
+            EngineCI.Features.IndependentBlend = DEVICE_FEATURE_STATE_ENABLED;
+
+            // Every shader variable in the ew:: shader layer is DYNAMIC, so
+            // EVERY CommitShaderResources (i.e. every draw) allocates fresh
+            // GPU-visible descriptors from the DYNAMIC region of the descriptor
+            // heap, and the sprite/ribbon/vegetation shaders declare
+            // Texture2D textures_T[4096] -> ~4100 CBV/SRV/UAV descriptors PER
+            // DRAW. Unlike Vulkan (whose descriptor
             // pools grow on demand), the D3D12 shader-visible heap is ONE fixed
             // heap sized here; the default dynamic region (8192) is exhausted by
             // the second big-array draw of the first frame. When that happens in
@@ -439,9 +428,29 @@ void EarthworksFXApplicationBase::InitializeDiligentEngine(const NativeWindow* p
             // One descriptor set for such a PSO needs >4096 sampled-image
             // descriptors, but Diligent's default DYNAMIC pool only holds 2048
             // in total -> vkAllocateDescriptorSets fails as soon as those
-            // passes start drawing (unlocked by the F11 texture-array fix).
+            // passes start drawing.
             EngineCI.DynamicDescriptorPoolSize.NumSampledImageDescriptors = 32768;
             EngineCI.MainDescriptorPoolSize.NumSampledImageDescriptors    = 16384;
+
+            // DeviceFeatures::IndependentBlend defaults to DISABLED, and
+            // EngineFactoryVk only enables the Vulkan `independentBlend` device
+            // feature when the state is ENABLED. Without it the 8-MRT
+            // terrafector bake blend (RT0 elevation = One/InvSrcAlpha override
+            // vs SrcAlpha/InvSrcAlpha on RT1-7) is invalid Vulkan and the
+            // terrafectors break. Universally supported on desktop; ENABLED
+            // (hard failure) beats OPTIONAL (silent brokenness on the day it
+            // is missing).
+            EngineCI.Features.IndependentBlend = DEVICE_FEATURE_STATE_ENABLED;
+
+            // The terrafector shaders index gmyTextures_T[4096] with per-pixel
+            // material indices, decorated NonUniformResourceIndex
+            // (materials.hlsli TF_TEX). On Vulkan that SPIR-V NonUniform
+            // decoration is only legal when the descriptor-indexing feature
+            // chain is enabled, which EngineFactoryVk ties to
+            // ShaderResourceRuntimeArrays (default DISABLED); without it the
+            // terrafectors render white. D3D12 needs nothing - its factory
+            // force-enables this feature unconditionally.
+            EngineCI.Features.ShaderResourceRuntimeArrays = DEVICE_FEATURE_STATE_ENABLED;
 
             EngineCI.AdapterId = FindAdapter(pFactoryVk, EngineCI.GraphicsAPIVersion);
             ModifyEngineInitInfo({pFactoryVk, m_DeviceType, EngineCI, m_SwapChainInitDesc});
@@ -514,36 +523,31 @@ void EarthworksFXApplicationBase::CreateImGui()
 
 void EarthworksFXApplicationBase::InitializeEnvironment()
 {
-    // The full Earthworks rendering environment minus the terrain scene: Falcor
-    // device + framework, shader/data search paths, render context and the swap
-    // chain target FBO. Always created, so manual-rendering apps still get the
-    // Earthworks shaders and rendering behaviour.
-    m_FalcorWrapper = std::make_unique<Falcor::EarthworksWrapper>();
+    // The full Earthworks rendering environment minus the terrain scene: the
+    // ew:: GPU context (device pointers + shader/data search paths) and the
+    // swap chain target FBO. Always created, so manual-rendering apps still
+    // get the Earthworks shaders and rendering behaviour.
+    m_GpuContext = std::make_unique<ew::GpuContext>(m_pDevice, m_pImmediateContext, m_pSwapChain, m_pEngineFactory);
 
-    Falcor::SetFalcorDevice(m_pDevice, m_pImmediateContext, m_pSwapChain, m_pEngineFactory);
-    Falcor::SetFalcorFramework(&m_Framework);
-    Falcor::addDataDirectory(std::filesystem::current_path(), true);
-    Falcor::addDataDirectory(std::filesystem::current_path() / "terrains", false);
-    Falcor::addDataDirectory(std::filesystem::current_path() / "EarthworksFX", true);
+    m_GpuContext->addDataDirectory(std::filesystem::current_path(), true);
+    m_GpuContext->addDataDirectory(std::filesystem::current_path() / "terrains", false);
+    m_GpuContext->addDataDirectory(std::filesystem::current_path() / "EarthworksFX", true);
 
-    m_RenderContext = Falcor::RenderContext{m_pImmediateContext};
-    m_TargetFbo     = Falcor::Fbo::createFromSwapChain(m_pSwapChain);
+    m_TargetFbo = ew::Fbo::createFromSwapChain(m_pSwapChain);
 }
 
 void EarthworksFXApplicationBase::InitializeScene()
 {
-    ScopedFalcorFramework scope{&m_Framework};
-
     m_Earthworks = std::make_unique<Earthworks_4>();
-    m_Earthworks->onLoad(&m_RenderContext);
+    m_Earthworks->onLoad(m_GpuContext.get());
 
     const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
     m_Earthworks->onResizeSwapChain(SCDesc.Width, SCDesc.Height);
 
     if (const auto& cam = m_Earthworks->getCamera())
     {
-        m_FirstPersonCamera.SetPos(cam->getPosition());
-        m_FirstPersonCamera.SetLookAt(cam->getTarget());
+        m_FirstPersonCamera.SetPos(ew::toDiligent(cam->getPosition()));
+        m_FirstPersonCamera.SetLookAt(ew::toDiligent(cam->getTarget()));
         m_FirstPersonCamera.SetMoveSpeed(50.f);
         m_FirstPersonCamera.Update(m_InputController, 0.f);
     }
@@ -646,10 +650,6 @@ void EarthworksFXApplicationBase::Update(double CurrTime, double ElapsedTime)
         m_LastFPSTime       = CurrTime;
     }
 
-    // Keep the Falcor framework's frame time current for both scene and manual
-    // rendering (Earthworks shaders read it via gpFramework).
-    m_Framework.SetAverageFrameTimeMs(m_fSmoothFPS > 0.f ? 1000.0 / static_cast<double>(m_fSmoothFPS) : 16.0);
-
     if (m_pImGui)
     {
         const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
@@ -667,8 +667,8 @@ void EarthworksFXApplicationBase::Update(double CurrTime, double ElapsedTime)
 
         if (TestFlightActive)
         {
-            Falcor::Camera* pSceneCamera = m_Earthworks ? m_Earthworks->getCamera().get() : nullptr;
-            const bool      SceneReady   = m_CreateScene ? m_Initialized : true;
+            ew::Camera* pSceneCamera = m_Earthworks ? m_Earthworks->getCamera().get() : nullptr;
+            const bool  SceneReady   = m_CreateScene ? m_Initialized : true;
             m_TestFlight->Update(CurrTime, ElapsedTime, m_FirstPersonCamera, pSceneCamera, SceneReady);
         }
 
@@ -765,7 +765,7 @@ void EarthworksFXApplicationBase::DrawTestFlightsUI()
             s_Scanned = true;
         }
 
-        Falcor::Camera* pSceneCamera = HasEarthworksScene() ? GetEarthworks().getCamera().get() : nullptr;
+        ew::Camera* pSceneCamera = HasEarthworksScene() ? GetEarthworks().getCamera().get() : nullptr;
 
         // --- flight selection ------------------------------------------------
         const char* Preview = (s_Selected >= 0 && s_Selected < static_cast<int>(s_Flights.size()))
@@ -796,7 +796,7 @@ void EarthworksFXApplicationBase::DrawTestFlightsUI()
             ew::TestFlight NewFlight;
             NewFlight.name = s_NewName;
             if (HasEarthworksScene())
-                NewFlight.terrain = terrainManager::lastfile.terrain;
+                NewFlight.terrain = GetEarthworks().getTerrainName();
             if (m_pSwapChain)
             {
                 const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
@@ -907,7 +907,7 @@ void EarthworksFXApplicationBase::DrawTestFlightsUI()
                 // Stamp the currently loaded terrain so the flight is traceable
                 // to the world it was authored on.
                 if (HasEarthworksScene())
-                    s_Flight.terrain = terrainManager::lastfile.terrain;
+                    s_Flight.terrain = GetEarthworks().getTerrainName();
                 const fs::path Path = TestFlightController::GetFlightsDir() / (s_Flights[static_cast<size_t>(s_Selected)] + ".json");
                 std::string    Error;
                 if (ew::SaveTestFlight(Path.string(), s_Flight, Error))
@@ -1003,12 +1003,79 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         ImGui::Checkbox("terrain update (stream/clip/lod)", &t.terrainUpdate);
         ImGui::Checkbox("atmosphere (sun + volumetric)", &t.atmosphere);
 
+        // CPU terrain-shadow solver (_shadowEdges): sun elevation + re-solve.
+        ImGui::SetNextItemWidth(200);
+        ImGui::DragFloat("shadow sun angle", &t.shadowSunAngle, 0.01f, 0.f, 3.14f, "%1.2f");
+        ImGui::SameLine();
+        if (ImGui::Button("re-solve"))
+            t.shadowResolve = true;
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Re-runs the background CPU shadow solve at this sun elevation\n(radians, east-west path). Takes a few seconds; the sun direction\nand shadow texture swap together when it finishes.");
+
+        ImGui::SeparatorText("Terrafectors / roads");
+        ImGui::Checkbox("bake roads into tiles", &t.tfBakeRoads);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("bSplineAsTerrafector: rasterize the road network into the tile bake\n"
+                              "(flattens terrain under roads via the RT0 elevation blend).\n"
+                              "Defaults ON so the live bake is exercised.\n"
+                              "Affects newly split tiles - use 'rebake all tiles' to apply everywhere.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("rebake all tiles"))
+            t.tfRebake = true;
+        // TODO: the tooltip below says the overlay is off while roads are baked, but
+        // tfShowRoadSpline defaults to true alongside tfBakeRoads = true and the
+        // gating lives in the renderer, so this shows a checked box with no effect.
+        ImGui::Checkbox("3D road overlay", &t.tfShowRoadSpline);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("render_spline translucent ribbons over the terrain - the fastest\n"
+                              "'did the road network load' check. Only draws while roads are\n"
+                              "NOT baked as terrafectors ('bake roads' off).");
+
+        if (ImGui::TreeNode("bake stages (draw order = priority)"))
+        {
+            ImGui::Checkbox("1 mesh bakeLow", &t.tfStageBakeLow);
+            ImGui::Checkbox("2 road bakeOnly (flatten)", &t.tfStageRoadBakeOnly);
+            ImGui::Checkbox("3 mesh bakeHigh", &t.tfStageBakeHigh);
+            ImGui::Checkbox("4 mesh terrafectors", &t.tfStageMeshes);
+            ImGui::Checkbox("5 GIS overlay", &t.tfStageOverlay);
+            ImGui::Checkbox("6 road LOD bins", &t.tfStageRoadBins);
+            ImGui::Checkbox("7 stamps", &t.tfStageStamps);
+            ImGui::Checkbox("8 _top combiners", &t.tfStageTop);
+            ImGui::TextDisabled("stages apply to newly split tiles; rebake to apply everywhere");
+            ImGui::TreePop();
+        }
+
+        {
+            if (ImGui::Button("probe next 8 bakes"))
+                t.tfBakeElevationStatsLeft = 8;
+            ImGui::SameLine();
+            ImGui::Text("left: %d", t.tfBakeElevationStatsLeft);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Reads the elevation-centre texel back before/after each of the\n"
+                                  "next N tile bakes (full GPU stall, debug only) and logs it.\n"
+                                  "A good height collapsing to ~0 = the old y=0 bug signature.");
+            ImGui::Checkbox("A/B: disable RT0 elevation blend", &t.tfBakeNoElevationBlend);
+            const bool y0sig = fabsf(m.tfProbeBefore) > 50.f && fabsf(m.tfProbeAfter) < 1.f;
+            ImGui::TextColored(y0sig ? ImVec4(1.f, 0.3f, 0.2f, 1.f) : ImVec4(0.7f, 0.7f, 0.7f, 1.f),
+                               "last probe: lod %u  centre %.1f -> %.1f%s",
+                               m.tfProbeLod, m.tfProbeBefore, m.tfProbeAfter,
+                               y0sig ? "  y=0 SIGNATURE" : "");
+        }
+
         ImGui::SeparatorText("Post / overlay");
         ImGui::Checkbox("bypass HDR (scene direct to swapchain)", &t.bypassHdr);
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("ON: terrain/globe render straight into the swap chain; the HDR\nbuffer and tonemapper are out of the loop entirely.\nOFF: original path (scene -> hdrFbo -> tonemapper -> swapchain).");
+            ImGui::SetTooltip("ON: terrain/globe render straight into the swap chain; the HDR\nbuffer and tonemapper are out of the loop entirely.\nOFF: normal path (scene -> hdrFbo -> tonemapper -> swapchain).");
         if (t.bypassHdr) ImGui::BeginDisabled();
         ImGui::Checkbox("tonemapper", &t.tonemapper);
         {
@@ -1083,6 +1150,14 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         ImGui::Text("terrain tris      : %u", m.gpuTerrainTris);
         ImGui::Text("billboard quads   : %u", m.gpuQuads);
 
+        // With no plant data in the scene these read 0 while the dispatch
+        // chain still runs - dormant, not broken.
+        ImGui::SeparatorText("Vegetation (feedback)");
+        ImGui::Text("instances / blocks: %u / %u", m.vegInstances, m.vegBlocks);
+        ImGui::Text("frustum discards  : %u", m.vegFrustDiscard);
+        ImGui::Text("billboards (13=sentinel): %u", m.vegBillboards);
+        ImGui::Text("feedback age      : %u frames", m.vegFeedbackAge);
+
         ImGui::SeparatorText("Tile split");
         ImGui::TextColored(m.cameraMainInUse ? ImVec4(0.5f, 1.f, 0.5f, 1.f) : ImVec4(1.f, 0.4f, 0.2f, 1.f),
                            "main camera in use: %s", m.cameraMainInUse ? "yes" : "NO");
@@ -1107,12 +1182,10 @@ void EarthworksFXApplicationBase::OnRender()
     if (!m_Initialized)
         return;
 
-    ScopedFalcorFramework scope{&m_Framework};
-
     if (!m_TargetFbo)
-        m_TargetFbo = Falcor::Fbo::createFromSwapChain(m_pSwapChain);
+        m_TargetFbo = ew::Fbo::createFromSwapChain(m_pSwapChain);
 
-    m_Earthworks->onFrameRender(&m_RenderContext, m_TargetFbo);
+    m_Earthworks->onFrameRender(m_GpuContext.get(), m_TargetFbo);
 }
 
 void EarthworksFXApplicationBase::OnUpdate(double CurrTime, double ElapsedTime, bool DoUpdateUI)
@@ -1129,10 +1202,7 @@ void EarthworksFXApplicationBase::OnUpdate(double CurrTime, double ElapsedTime, 
         SyncInput();
 
     if (DoUpdateUI && ew::gDebug.toggles.earthworksGui)
-    {
-        ScopedFalcorFramework scope{&m_Framework};
-        m_Earthworks->onGuiRender(&m_Gui);
-    }
+        m_Earthworks->onGuiRender();
 }
 
 void EarthworksFXApplicationBase::OnWindowResized(Uint32 Width, Uint32 Height)
@@ -1140,9 +1210,8 @@ void EarthworksFXApplicationBase::OnWindowResized(Uint32 Width, Uint32 Height)
     if (!m_Initialized)
         return;
 
-    ScopedFalcorFramework scope{&m_Framework};
     m_Earthworks->onResizeSwapChain(Width, Height);
-    m_TargetFbo = Falcor::Fbo::createFromSwapChain(m_pSwapChain);
+    m_TargetFbo = ew::Fbo::createFromSwapChain(m_pSwapChain);
 }
 
 void EarthworksFXApplicationBase::SyncFirstPersonCameraToEarthworks()
@@ -1152,8 +1221,8 @@ void EarthworksFXApplicationBase::SyncFirstPersonCameraToEarthworks()
         return;
 
     const auto& fpc = m_FirstPersonCamera;
-    cam->setPosition(fpc.GetPos());
-    cam->setTarget(fpc.GetPos() + fpc.GetWorldAhead() * 100.f);
+    cam->setPosition(ew::toGlm(fpc.GetPos()));
+    cam->setTarget(ew::toGlm(fpc.GetPos() + fpc.GetWorldAhead() * 100.f));
 }
 
 void EarthworksFXApplicationBase::SyncInput()
@@ -1161,49 +1230,37 @@ void EarthworksFXApplicationBase::SyncInput()
     const MouseState mouse = m_InputController.GetMouseState();
 
     // The Win32 InputController reports client-space pixels, but the Earthworks
-    // camera code expects Falcor-style normalized [0,1] screen coordinates
-    // (it gates on 'pos.x > 0 && pos.x < 1'), so normalize here.
+    // camera code expects normalized [0,1] screen coordinates (it gates on
+    // 'pos.x > 0 && pos.x < 1'), so normalize here.
     const SwapChainDesc& scDesc = m_pSwapChain->GetDesc();
     const float width  = scDesc.Width  > 0 ? static_cast<float>(scDesc.Width)  : 1.f;
     const float height = scDesc.Height > 0 ? static_cast<float>(scDesc.Height) : 1.f;
 
-    Falcor::MouseEvent event{};
-    event.pos = Falcor::float2{static_cast<float>(mouse.PosX) / width,
-                               static_cast<float>(mouse.PosY) / height};
+    ew::MouseEvent event{};
+    event.pos = ew::float2{static_cast<float>(mouse.PosX) / width,
+                           static_cast<float>(mouse.PosY) / height};
 
     int buttons = 0;
     if (mouse.ButtonFlags & MouseState::BUTTON_FLAG_LEFT)
-        buttons |= static_cast<int>(Falcor::MouseEvent::Buttons::Left);
+        buttons |= static_cast<int>(ew::MouseEvent::Buttons::Left);
     if (mouse.ButtonFlags & MouseState::BUTTON_FLAG_RIGHT)
-        buttons |= static_cast<int>(Falcor::MouseEvent::Buttons::Right);
+        buttons |= static_cast<int>(ew::MouseEvent::Buttons::Right);
     if (mouse.ButtonFlags & MouseState::BUTTON_FLAG_MIDDLE)
-        buttons |= static_cast<int>(Falcor::MouseEvent::Buttons::Middle);
-    event.buttons = static_cast<Falcor::MouseEvent::Buttons>(buttons);
-
-    ScopedFalcorFramework scope{&m_Framework};
+        buttons |= static_cast<int>(ew::MouseEvent::Buttons::Middle);
+    event.buttons = static_cast<ew::MouseEvent::Buttons>(buttons);
 
     // The camera rotate/pan/orbit code runs on Move events and reads live button
     // state via ImGui::IsMouseDown(), so always deliver a Move (this also lets it
     // track drag deltas frame-to-frame). Deliver Wheel as a separate event.
-    event.type = Falcor::MouseEvent::Type::Move;
+    event.type = ew::MouseEvent::Type::Move;
     m_Earthworks->onMouseEvent(event);
 
     if (mouse.WheelDelta != 0.f)
     {
-        event.type       = Falcor::MouseEvent::Type::Wheel;
-        event.wheelDelta = Falcor::float2{0.f, mouse.WheelDelta};
+        event.type       = ew::MouseEvent::Type::Wheel;
+        event.wheelDelta = ew::float2{0.f, mouse.WheelDelta};
         m_Earthworks->onMouseEvent(event);
     }
-}
-
-Falcor::FrameRate EarthworksFXApplicationBase::Framework::getFrameRate() const
-{
-    return Falcor::FrameRate{};
-}
-
-Falcor::WindowInterface* EarthworksFXApplicationBase::Framework::getWindow()
-{
-    return &m_Window;
 }
 
 void EarthworksFXApplicationBase::Render()

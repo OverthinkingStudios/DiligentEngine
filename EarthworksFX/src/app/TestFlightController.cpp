@@ -15,7 +15,7 @@
 #include "JPEGCodec.h"
 #include "PNGCodec.h"
 
-#include "Falcor.h"
+#include "ewCamera.h"
 #include "EarthworksDebug.h"
 #include "FirstPersonCamera.hpp"
 #include "InputController.hpp"
@@ -180,7 +180,7 @@ std::filesystem::path TestFlightController::ResolveFlightPath(const std::string&
     return GetFlightsDir() / (NameOrPath + ".json");
 }
 
-void TestFlightController::ApplyShotToCamera(const ew::TestFlightShot& Shot, FirstPersonCamera& Camera, Falcor::Camera* pSceneCamera)
+void TestFlightController::ApplyShotToCamera(const ew::TestFlightShot& Shot, FirstPersonCamera& Camera, ew::Camera* pSceneCamera)
 {
     Camera.SetPos(float3{Shot.posX, Shot.posY, Shot.posZ});
     Camera.SetRotation(Shot.yaw, Shot.pitch);
@@ -196,14 +196,14 @@ void TestFlightController::ApplyShotToCamera(const ew::TestFlightShot& Shot, Fir
         const float FovY = Shot.fovYDeg * kPi / 180.f;
         if (FovY > 0.001f && FovY < kPi)
         {
-            // Falcor convention: FOV is encoded as focal length over film-back height.
+            // The scene camera encodes FOV as focal length over film-back height.
             const float FrameH = pSceneCamera->getFrameHeight();
             pSceneCamera->setFocalLength(0.5f * FrameH / std::tan(FovY * 0.5f));
         }
     }
 }
 
-ew::TestFlightShot TestFlightController::CaptureShotFromCamera(const FirstPersonCamera& Camera, const Falcor::Camera* pSceneCamera)
+ew::TestFlightShot TestFlightController::CaptureShotFromCamera(const FirstPersonCamera& Camera, const ew::Camera* pSceneCamera)
 {
     ew::TestFlightShot Shot;
     const float3 Pos = Camera.GetPos();
@@ -321,7 +321,7 @@ void TestFlightController::OnGraphicsReady(IRenderDevice* pDevice, ISwapChain* p
 
 // --- per-frame -----------------------------------------------------------------
 
-void TestFlightController::Update(double CurrTime, double ElapsedTime, FirstPersonCamera& Camera, Falcor::Camera* pSceneCamera, bool SceneReady)
+void TestFlightController::Update(double CurrTime, double ElapsedTime, FirstPersonCamera& Camera, ew::Camera* pSceneCamera, bool SceneReady)
 {
     m_LastCurrTime = CurrTime;
     if (m_RunStartSec < 0.0)
@@ -441,9 +441,7 @@ void TestFlightController::Update(double CurrTime, double ElapsedTime, FirstPers
     }
 }
 
-#pragma optimize("", off)
-
-void TestFlightController::BeginShot(double CurrTime, FirstPersonCamera& Camera, Falcor::Camera* pSceneCamera)
+void TestFlightController::BeginShot(double CurrTime, FirstPersonCamera& Camera, ew::Camera* pSceneCamera)
 {
     const int                 ShotIdx = m_ShotOrder[m_CurrentShot];
     const ew::TestFlightShot& Def     = m_Flight.shots[static_cast<size_t>(ShotIdx)];
@@ -488,7 +486,7 @@ void TestFlightController::AccumulateFrameStats(double ElapsedTime)
     Run.maxMs = std::max(Run.maxMs, Ms);
 }
 
-void TestFlightController::AdvanceShot(double CurrTime, FirstPersonCamera& Camera, Falcor::Camera* pSceneCamera)
+void TestFlightController::AdvanceShot(double CurrTime, FirstPersonCamera& Camera, ew::Camera* pSceneCamera)
 {
     ++m_CurrentShot;
     if (m_CurrentShot >= m_ShotOrder.size())

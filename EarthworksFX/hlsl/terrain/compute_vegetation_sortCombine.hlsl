@@ -1,5 +1,5 @@
 #include "groundcover_defines.hlsli"
-#include "groundcover_functions.hlsli"		
+#include "groundcover_functions.hlsli"
 #include "vegetation_defines.hlsli"
 
 
@@ -33,18 +33,21 @@ void main(uint idx : SV_DispatchThreadId)
 
 #else
 
-// lets see AMD recommends 256, seems I have opick too small vlaues in tehpast - TEST
 [numthreads(1, 1, 1)]
 void main(uint idx : SV_DispatchThreadId)
 {
+
+#if defined(_PRE)
+
     uint slot = 0;
     uint newPos = 0;
     for (int i = 0; i < 128; i++)
     {
-        DrawArgs_Plants[i].startInstanceLocation = sort[i].offset;
+        DrawArgs_Plants[i].startInstanceLocation = 0;// sort[i].offset; // DOESN NOTHING UNTIL Shader Model 6.8
         DrawArgs_Plants[i].instanceCount = sort[i].current;
     }
 
+#else
 
     uint offset = 0;
     for (int i = 0; i < 128; i++)
@@ -55,6 +58,9 @@ void main(uint idx : SV_DispatchThreadId)
         sort[i].current = 0;
         sort[i].requested = 0;
     }
+
+#endif
+
 }
 
 #endif

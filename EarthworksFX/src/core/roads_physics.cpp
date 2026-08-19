@@ -1,8 +1,4 @@
-
-#include"roads_physics.h"
-#include "imgui.h"
-#include "imgui_internal.h"
-
+#include "terrain.h"
 
 
 extern void cubic_Casteljau_Full(float t, glm::vec3 P0, glm::vec3 P1, glm::vec3 P2, glm::vec3 P3, glm::vec3& pos, glm::vec3& vel, glm::vec3& acc);
@@ -16,16 +12,15 @@ extern glm::vec3 del_cubic_Casteljau(float t0, float t1, bezierPoint* A, bezierP
     --------------------------------------------------------------------------------------------------------------------*/
 bezierLayer::bezierLayer(bezier_edge inner, bezier_edge outer, uint _material, uint bezierIndex, bool _left, float w0, float w1, bool startSeg, bool endSeg)
 {
-    if (bezierIndex == 0) {
-        bool bCM = true;
-    }
     A = 0;
     B = 0;
 
-    A = (inner << 31) + (outer << 30);
+    A = ((uint)inner << 31) + ((uint)outer << 30);
     // leaves 2 bits free for now
 
-    // max 4095 materials
+    // TODO: max 4095 materials - but 0x7ff is 2047, not 4095. Check whether material
+    // counts ever approach 2048, and reconcile with the stale bit-layout annotations
+    // in roads_bezier.h.
     A += (_material & 0x7ff) << 17;
     A += bezierIndex & 0x1ffff;
 
@@ -34,11 +29,11 @@ bezierLayer::bezierLayer(bezier_edge inner, bezier_edge outer, uint _material, u
     w1 += 16.0f;
     w0 = __min(32.0f, __max(0.0f, w0));
     w1 = __min(32.0f, __max(0.0f, w1));
-    B = (((int)(w0 * 500.0f)) << 14) + ((int)(w1 * 500.0f));
+    B = (((uint)(w0 * 500.0f)) << 14) + ((uint)(w1 * 500.0f));
 
-    if (startSeg)	B += 1 << 31;
-    if (endSeg)		B += 1 << 30;
-    if (_left)      B += 1 << 28;
+    if (startSeg)	B += 1u << 31;
+    if (endSeg)		B += 1u << 30;
+    if (_left)      B += 1u << 28;
 }
 
 
@@ -218,8 +213,6 @@ void physicsBezier::binary_export(FILE* file)
 }
 
 
-std::vector<physicsBezierLayer> layers;
-
 
 
 
@@ -229,7 +222,7 @@ uint bezierCache::findEmpty()
 {
     uint maxAge = 0;
     uint slot = 0;
-    for (int i = 0; i < cache.size(); i++) {
+    for (uint i = 0; i < cache.size(); i++) {
         if (cache[i].counter > maxAge) {
             slot = i;
             maxAge = cache[i].counter;
@@ -254,7 +247,7 @@ void bezierCache::solveStats()
     what the hell does everything point at ??? ;-) */
 void bezierCache::cacheSpline(physicsBezier* pBezier, uint cacheSlot)
 {
-    pBezier->cacheIndex = cacheSlot;
+    pBezier->cacheIndex = (int)cacheSlot;
 
     cache[cacheSlot].counter = 0;
 
@@ -298,7 +291,7 @@ void bezierCache::clear()
 bezierOneIntersection::bezierOneIntersection(glm::vec2 P, uint boundingIndex)
 {
     pos = P;
-    boundIndex = boundingIndex;
+    boundIndex = (int)boundingIndex;
     bHit = false;
     distanceTillNextSearch = 0;
     cacheIndex = -1;
@@ -340,7 +333,7 @@ void bezierFastGrid::allocate(float sz, uint numX, uint numY)
     //lookup.resize(nX * nY);
     //data.reserve(); maybe not, too hard to guess, messes with binary load
 
-    buidData.resize(nX * nY);
+    buidData.resize((size_t)nX * nY);
     maxHash = (nX * nY) - 1;
 }
 
@@ -357,7 +350,7 @@ void bezierFastGrid::populateBezier()
     of no particular consequince*/
 inline uint bezierFastGrid::getHash(glm::vec2 pos)
 {
-    return ((int)floor((pos.y) / size + offset.y) * nX) + (int)floor((pos.x) / size + offset.x);
+    return ((uint)((int)floor((pos.y) / size + offset.y) * (int)nX)) + (uint)(int)floor((pos.x) / size + offset.x);
 }
 
 
@@ -383,7 +376,7 @@ void bezierFastGrid::insertBezier(glm::vec2 pos, float radius, uint index)
     {
         for (int x = min.x; x <= max.x; x++)
         {
-            buidData[y * nX + x].push_back(index);
+            buidData[(size_t)y * nX + x].push_back(index);
         }
     }
 
@@ -399,7 +392,7 @@ void bezierFastGrid::binary_import(FILE* file)
     fread(&nY, 1, sizeof(uint), file);
     fread(&maxHash, 1, sizeof(uint), file);
 
-    buidData.resize(nX * nY);
+    buidData.resize((size_t)nX * nY);
     for (uint y = 0; y < (nX * nY); y++) {
         uint numBezier;
         fread(&numBezier, 1, sizeof(uint), file);
@@ -547,6 +540,10 @@ bool ODE_bezier::intersectBezier(bezierOneIntersection* pI)
     C->counter = 0;
 
     d0 = C->points[pI->t_idx].planeTangent.distance(pI->pos);
+    // TODO: this backward walk reads C->points[pI->t_idx] after the decrement, so
+    // index -1 is read once before the loop exits; the forward loop below tests
+    // t_idx <= numBezierCache while indexing points[t_idx + 1] of numBezierCache + 1
+    // entries. Both are one-past reads, unreachable while bezierBounding stays empty.
     while ((pI->t_idx > -1) && (d0 < 0.0f)) {
         pI->t_idx--;
         d0 = C->points[pI->t_idx].planeTangent.distance(pI->pos);
@@ -654,6 +651,7 @@ bool ODE_bezier::testBounds(bezierOneIntersection* pI)
 
 void ODE_bezier::blendLayers(bezierIntersection* pI)
 {
+    (void)pI;
 }
 
 
@@ -686,5 +684,3 @@ void ODE_bezier::buildGridFromBezier()
         gridLookup.insertBezier(bezierBounding[i].center, bezierBounding[i].radius, i);
     }
 }
-
-

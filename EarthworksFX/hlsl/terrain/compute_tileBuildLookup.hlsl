@@ -26,6 +26,7 @@ RWStructuredBuffer<GC_feedback>			feedback;
 #include "viewRenderData_lookupBuffers.hlsli"
 
 
+
 cbuffer gConstants
 {
 	uint4 frustumflags[1024];
@@ -51,6 +52,9 @@ void packTile(uint _t, uint _view)
     uint startBlock = 0;
     uint slot = 0;
     uint totalTriangles = tiles[_t].numTriangles;
+    // TODO: (total >> 6) + 1 always allocates at least one block, plus an extra one
+    // whenever the total is an exact multiple of 64. Same in packBillboard and
+    // packPlants below. May be deliberate.
     uint numBlocks = (totalTriangles >> 6) + 1;									// FIXME hardcoded
     
     InterlockedAdd(feedback[0].numLookupBlocks_Terrain[_view], numBlocks, startBlock);
@@ -82,6 +86,9 @@ void packBillboard(uint _t, uint _view)
     uint numBlocks = (totalQuads >> 6) + 1;		// FIXME hardcoded move to header
 
     InterlockedAdd(feedback[0].numLookupBlocks_Quads[_view], numBlocks, startBlock);
+    // TODO: startBlock takes the output of both InterlockedAdds, so this one
+    // overwrites the first and the loop below indexes off DrawArgs_Quads.instanceCount
+    // instead of numLookupBlocks_Quads. packTile and packPlants use a separate slot.
     InterlockedAdd(DrawArgs_Quads[_view].instanceCount, numBlocks, startBlock);
 
     // can we pre-create all of these blocks ad do a larger memcopy here instead of a loop
@@ -167,12 +174,12 @@ void main(uint dispatchId : SV_DispatchThreadId)
 
         for (int view = 0; view < numRenderViews; view++)
         {
-            if (surfaceFlags & viewMask & (1 << view))
+            if (surfaceFlags & viewMask & (1u << view))
             {
                 packTile(t, view);
             }
 
-            if ((surfaceFlags & viewMask & (1 << view)) && (tiles[t].numQuads > 0))
+            if ((surfaceFlags & viewMask & (1u << view)) && (tiles[t].numQuads > 0))
             {
                 packBillboard(t, view);
             }

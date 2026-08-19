@@ -1,0 +1,15 @@
+You are executing step 8 of the Earthworks port (Path B+) in c:\dev\git\os\DiligentEngine, branch port_effort_3: PARITY WRAP + RETIREMENT. All porting steps (1-7) are done and developer-verified. This step turns "it works" into "the port is DONE": verification against the S1 goal, loose-end sweep, documentation truth, and the legacy retirement proposal.
+
+READ FIRST: port_effort_3\task.md (S1 goal is the acceptance test: stable terrain+vegetation+shadows+terrafectors+roads at comparable-or-better fps); port_effort_3\execution\plan.md (all step logs); port_effort_3\execution\bringup_notes.md (all P entries); TESTFLIGHTS.md.
+
+SCOPE:
+1. STUB/marker sweep: grep the live tree (EarthworksFX\src, EarthworksFX\hlsl, apps) for STEP2-STUB/STEP3-STUB/.../STEP7-STUB, PORT-REVIEW, STRIP-REVIEW, FIXME2025. Produce a table: marker, file:line, verdict (resolved-remove / intentional-keep with reason / needs-work item for the backlog). Apply the removals/rewordings; the needs-work list goes into the backlog section below.
+2. Parity checklist vs the S1 goal, feature by feature (terrain, vegetation [dormant - no data], shadows, terrafectors, roads, atmosphere, HDR, buildings, testflights, debug panel): status, evidence (which step log / developer verification), gaps. Honest - a gap is a finding, not a failure.
+3. Documentation truth pass: rewrite the CLAUDE.md files (root + EarthworksFX - they are git-excluded, local-only) to describe the NEW reality (ew:: layer, fresh core, port complete, legacy status); update EarthworksFX docs pointers (BRINGUP_NOTES.md/PROJECT_OVERVIEW.md/MIGRATION.md stay as historical reference of the PREVIOUS port - mark them as such, do not modify their content); make port_effort_3\execution\bringup_notes.md the living root-cause log going forward.
+4. Legacy retirement PROPOSAL (do not delete anything): what EarthworksFX\legacy\ still earns its disk space for (reference value per remaining backlog item) vs what can go; same for port_effort_3\source_extract_3 (the port's diff-anchor - probably keep) and the catalog (keep - it documents the engine). Developer decides.
+5. Backlog handoff, in task.md or a new backlog.md: editor functionality re-port (deferred, pristine tree + STRIP-REVIEW tags are the source), plant data creation (developer task), bindless materials (if step 5 deferred it), camera.bin/presets persistence, VK vsync if step 6 left residue, any step-6 core-optimization proposals awaiting sign-off, remaining perf gap items.
+6. Propose (text only, developer executes): squash/tag suggestion for the branch milestone, and what a merge-to-master would need.
+
+RULES: no commits (developer does the final ones); zero warnings stays; verification claims must cite evidence (step log entries, developer confirmations) - never assert an untested feature works; update plan.md marking step 8 and the overall plan status.
+
+RETURN: the parity table, the marker-sweep summary (counts + notable keeps), the backlog, the retirement proposal, and the single-paragraph "state of the port" suitable for the developer to paste into a project readme.

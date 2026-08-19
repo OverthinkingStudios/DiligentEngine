@@ -1,4 +1,12 @@
-// Diligent/glslang: bind lookup tables as separate globals (no resource arrays).
+// Per-view tile lookup buffers, declared one by one: 3 kinds x 18
+// (numRenderViews) RWStructuredBuffers, indexed through the switch-based
+// Store helpers at the bottom of this file. HLSL has no arrays of RW buffer
+// resources, hence the explicit declarations.
+//
+// Only the producer (compute_tileBuildLookup) needs all 54 at once. The
+// consumers - render_Tiles, render_tile_sprite, compute_clipLodAnimatePlants -
+// bind a single per-view buffer under the name "tileLookup" at draw time.
+// Everything here is bound by NAME from terrainManager::onLoad.
 
 RWStructuredBuffer<tileLookupStruct> viewRenderData_terrainLookup_0;
 RWStructuredBuffer<tileLookupStruct> viewRenderData_terrainLookup_1;

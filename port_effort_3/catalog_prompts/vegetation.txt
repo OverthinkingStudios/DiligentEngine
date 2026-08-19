@@ -1,0 +1,21 @@
+You are a code analyst for Port Effort 3 in c:\dev\git\os\DiligentEngine (branch port_effort_3). Read port_effort_3\task.md first (S0 ground rules, S1 goal, S5 Concept Catalog). NEVER run any git state-changing command (no commit/add/checkout). Write ONLY your deliverable file. Never modify source files. Do NOT spawn subagents - do the work yourself.
+
+DELIVERABLE: port_effort_3\catalog\vegetation.md
+
+SUBSYSTEM: Vegetation - the largest subsystem. Analyze in port_effort_3\source_extract_3\earthworks_scene\: vegetationBuilder.cpp/.h + vegetationBuilder_Trees.cpp (procedural plant assembly from serialized parameters, Grove OBJ import, ribbon/vertex packing, LOD/billboard baking incl. the STRIP-REVIEW-kept renderGui_Lodding/renderGui_Baking whose bodies hold the bake orchestration - bake-backwards order, seeds 100-102, exclusionCylinder=alphaOval -, GPU buffer building, instance buffers, runtime render + updateShaderConstants + bakeShadowMap), ribbonBuilder.cpp/.h, ecotope.cpp/.h (placement definitions feeding tiles), Sprites.cpp/.h + Sprite_defines.h (billboard/marker system, blocks, indirect args, frustum culling); shaders hlsl\terrain\: compute_clipLodAnimatePlants, compute_vegetation_clear/lod/sortCombine, render_vegetation_ribbons.hlsl (1212 lines - the biggest shader), vegetation_defines.hlsli, groundcover_defines/functions.hlsli, render_sprite/sprite.hlsl. How terrain.cpp drives it - interface only. This code is hyper-tuned; a past agent lost 200 fps 'improving' vegetation.
+
+CONTEXT SOURCES (read-only): current port EarthworksFX\src\core\ + EarthworksFX\hlsl\ (a previous port of the same code - drift reference), EarthworksFX\BRINGUP_NOTES.md + EarthworksFX\PROJECT_OVERVIEW.md (mine relevant F-findings; do not re-derive). The extract was stripped of editor GUI/glider/cfd - '// STRIP-REVIEW:' tags mark deliberate keeps; pristine original at C:\dev\git\os\Earthworks_4-F5_2\ (STRICTLY READ-ONLY) if you need stripped context.
+
+DOC TEMPLATE (use these sections):
+1. Purpose & data flow (CPU/GPU, per-frame vs async)
+2. Core tricks & clever mechanisms - the things a rewriter MUST NOT lose; each with file:line refs and WHY it matters
+3. Invariants & conventions
+4. Performance-critical details - why this is fast; what change would silently kill perf or visuals
+5. GPU resources & shader interface (buffers/textures/cbuffers incl. layout+PADDING - a past porting agent deleted 'unused' byte padding and broke rendering, padding is load-bearing)
+6. Dependencies: what it consumes/provides to other subsystems
+7. Falcor API surface actually used (types/calls) - input for the port-path decision
+8. Port drift notes: how EarthworksFX's version differs, relevant BRINGUP_NOTES F-findings, known bugs
+9. Bad code / removable candidates (clearly labeled as opinion, never act on it)
+10. Open questions / uncertainties (flag, don't guess)
+
+Audience: a cold-context agent re-porting this to native Diligent + a reviewer checking nothing hyper-tuned was lost. Precision beats prose; tables and file:line citations. RETURN: a ~15-line summary of the most important tricks/invariants you found.

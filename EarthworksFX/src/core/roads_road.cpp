@@ -1,9 +1,15 @@
-#include "roads_road.h"
+// The spline solver constants in here - 0.145, the x2 tangent scale, 0.333,
+// 1.4, (theta-1.7)*3 - are hyper-tuned by eye against real road geometry. They
+// look arbitrary because they are; DO NOT clean them up.
+//
+// Not implemented: saveType/loadSelected/loadCompleteRoad are file-dialog
+// editor flows and only log.
 
+#include "terrain.h"
 
+#include "ots/Log.hpp"
 
-#include "imgui.h"
-#include "imgui_internal.h"
+#include "glm/gtx/compatibility.hpp"    // glm::lerp on vectors; cubic_Casteljau below finds it via ADL
 
 #include "cereal/archives/binary.hpp"
 #include "cereal/archives/xml.hpp"
@@ -15,10 +21,7 @@
 
 //#pragma optimize("", off)
 
-glm::vec3 lerp(const glm::vec3& a, const glm::vec3& b, float t)
-{
-    return glm::mix(a, b, t);
-}
+
 
 void cubic_Casteljau_Full(float t, glm::vec3 P0, glm::vec3 P1, glm::vec3 P2, glm::vec3 P3, glm::vec3& pos, glm::vec3& vel, glm::vec3& acc)
 {
@@ -155,16 +158,8 @@ void roadSection::setAIOnly(bool AI)
 
 
 
-#define MATERIAL_EDIT_SELECT 2040
-#define MATERIAL_EDIT_GREEN 2041
-#define MATERIAL_EDIT_BLUE 2042
-#define MATERIAL_EDIT_WHITEDOT 2043
-#define MATERIAL_EDIT_REDDOT 2044
-
-
-#define MATERIAL_BLEND 2045
-#define MATERIAL_SOLID 2046
-#define MATERIAL_CURVATURE 2047
+// MATERIAL_EDIT_* / MATERIAL_BLEND / MATERIAL_SOLID / MATERIAL_CURVATURE come
+// from materials.hlsli - they are shared with the shaders, not local #defines.
 
 
 
@@ -184,11 +179,6 @@ void roadSection::convertToGPU_Realistic(std::vector<cubicDouble>& _bezier, std:
         // right - Inner - Thsi is the only bezier associated
         for (uint i = 0; i < numSegments; i++)
         {
-            float w1 = points[i].lanesRight[lane1].laneWidth * 0.5f;
-            float w2 = points[i + 1].lanesRight[lane1].laneWidth * 0.5f;
-
-            uint feedback = (uint)_bezier.size();
-
             points[i].right_Geom_Idx[0] = (uint)_bezier.size();
             _bezier.push_back(cubicDouble(points[i], points[i + 1]));
         }
@@ -200,7 +190,6 @@ void roadSection::convertToGPU_Realistic(std::vector<cubicDouble>& _bezier, std:
 
             for (uint i = 0; i < numSegments; i++)
             {
-                bool isBridge = points[i].isBridge;
                 material = __min(maxMaterial, points[i].matCenter[1]);
 
                 if (material >= 0)
@@ -216,7 +205,6 @@ void roadSection::convertToGPU_Realistic(std::vector<cubicDouble>& _bezier, std:
         {
             for (uint i = 0; i < numSegments; i++)
             {
-                float w = points[i].lanesLeft[2].laneWidth * 0.5f;
                 _index.push_back(bezierLayer(bezier_edge::center, bezier_edge::outside, MATERIAL_EDIT_WHITEDOT, points[i].right_Geom_Idx[0], true, 0, 0));
             }
         }
@@ -233,7 +221,6 @@ void roadSection::convertToGPU_Realistic(std::vector<cubicDouble>& _bezier, std:
     // right - Inner
     for (uint i = 0; i < numSegments; i++)
     {
-        uint feedback = (uint)_bezier.size();
         points[i].right_Geom_Idx[0] = (uint)_bezier.size();
         _bezier.push_back(cubicDouble(points[i], points[i + 1], true));
     }
@@ -301,10 +288,6 @@ void roadSection::convertToGPU_Realistic(std::vector<cubicDouble>& _bezier, std:
                 for (auto& layer : roadMaterialCache::getInstance().materialVector[material].layers)
                 {
                     _index.push_back(bezierLayer((bezier_edge)layer.sideA, (bezier_edge)layer.sideB, layer.materialIndex, points[i].right_Geom_Idx[layer.bezierIndex], false, layer.offsetA, layer.offsetB, isBridge, isBridge));
-                    if ((int)points[i].right_Geom_Idx[layer.bezierIndex] < GUID)
-                    {
-                        bool bCM = true;
-                    }
                 }
             }
 
@@ -344,6 +327,9 @@ void roadSection::convertToGPU_Realistic(std::vector<cubicDouble>& _bezier, std:
                     case innerTurn:		material = __min(maxMaterial, points[i].matRight[splinePoint::matName::innerTurn]); side = bezier_edge::center; laneToDisplay = lane1;	 break;
                     case lane1:			material = __min(maxMaterial, points[i].matRight[splinePoint::matName::lane1]); break;
                     case lane2:			material = __min(maxMaterial, points[i].matRight[splinePoint::matName::lane2]); break;
+                    // TODO: lane3 maps to matName::lane2 in all four copies of this
+                    // switch (right/left, paint/wear), so lane3 never gets its own
+                    // material slot. The doubt above suggests it may be deliberate.
                     case lane3:			material = __min(maxMaterial, points[i].matRight[splinePoint::matName::lane2]); break;
                     case outerTurn:		material = __min(maxMaterial, points[i].matRight[splinePoint::matName::outerTurn]);		laneToDisplay = laneNr;	 break;
                     case outerShoulder: material = __min(maxMaterial, points[i].matRight[splinePoint::matName::shoulder]);		side = bezier_edge::center; break;
@@ -466,6 +452,9 @@ void roadSection::convertToGPU_Realistic(std::vector<cubicDouble>& _bezier, std:
                 }
             }
 
+            // TODO: sidewalk and gutter below pass _left = false to bezierLayer while
+            // verge and tarmac on this same LEFT side pass true. Possibly a
+            // copy-paste slip.
             // sidewalk
             material = __min(maxMaterial, points[i].matLeft[splinePoint::matName::sidewalk]);
             if (material >= 0)
@@ -554,7 +543,7 @@ void roadSection::convertToGPU_Realistic(std::vector<cubicDouble>& _bezier, std:
             bool isBridge = points[i].isBridge;
 
 
-            // inner shoulder 
+            // inner shoulder
             if (rightLaneInUse[innerShoulder])
             {
                 material = __min(maxMaterial, points[i].matCenter[1]);
@@ -579,7 +568,7 @@ void roadSection::convertToGPU_Realistic(std::vector<cubicDouble>& _bezier, std:
             }
 
             material = __min(maxMaterial, points[i].matCenter[0]);
-            uint materialStripes = __min(maxMaterial, points[i].matCenter[1]);
+            int materialStripes = __min(maxMaterial, points[i].matCenter[1]);
             if (material >= 0 && (materialStripes >= 0))
             {
                 for (auto& layer : roadMaterialCache::getInstance().materialVector[material].layers)
@@ -619,7 +608,6 @@ void roadSection::convertToGPU_Realistic(std::vector<cubicDouble>& _bezier, std:
             {
 
                 // middle
-                uint feedback = points[i].right_Geom_Idx[0];
                 _index.push_back(bezierLayer(bezier_edge::center, bezier_edge::center, MATERIAL_EDIT_WHITEDOT, points[i].right_Geom_Idx[0], false, -0.05f, 0.05f));
                 // edge
                 _index.push_back(bezierLayer(bezier_edge::outside, bezier_edge::outside, MATERIAL_EDIT_WHITEDOT, points[i].right_Geom_Idx[0], false, -0.05f, 0.05f));
@@ -662,13 +650,13 @@ void roadSection::solveStart()
 
             // tests
             if (!isSaneVector(startLink->cornerTangent_A)) {
-                bool bCM = true;
+                spdlog::warn("roads: solveStart insane cornerTangent_A (road {})", GUID);
             }
             if (!isSaneVector(startLink->tangentVector)) {
-                bool bCM = true;
+                spdlog::warn("roads: solveStart insane tangentVector (road {})", GUID);
             }
             if (!isSaneVector(startLink->cornerTangent_B)) {
-                bool bCM = true;
+                spdlog::warn("roads: solveStart insane cornerTangent_B (road {})", GUID);
             }
 
             points[0].bezier[left].pos = startLink->corner_A;
@@ -725,14 +713,14 @@ void roadSection::solveEnd()
         if (endLink) {
 
             // tests
-            if (!isSaneVector(endLink->cornerTangent_A)) {
-                bool bCM = true;
+            if (!isSaneVector(endLink->cornerTangent_B)) {
+                spdlog::warn("roads: solveEnd insane cornerTangent_B (road {})", GUID);
             }
             if (!isSaneVector(endLink->tangentVector)) {
-                bool bCM = true;
+                spdlog::warn("roads: solveEnd insane tangentVector (road {})", GUID);
             }
-            if (!isSaneVector(endLink->cornerTangent_B)) {
-                bool bCM = true;
+            if (!isSaneVector(endLink->cornerTangent_A)) {
+                spdlog::warn("roads: solveEnd insane cornerTangent_A (road {})", GUID);
             }
 
             int idx = (int)points.size() - 1;
@@ -786,60 +774,26 @@ void roadSection::solvePercentages()
 
 void roadSection::saveType(int index)
 {
-    std::filesystem::path path;
-    FileDialogFilterVec filters = { {"roadType"} };
-    if (saveFileDialog(filters, path))
-    {
-        std::ofstream os(path, std::ios::binary);
-        cereal::BinaryOutputArchive archive(os);
-
-        points[index].serializeType(archive);
-    }
+    // Not implemented: file-dialog editor flow (save dialog + serializeType).
+    (void)index;
+    spdlog::warn("roads: roadSection::saveType is an editor flow - not implemented");
 }
 
 
 
 void roadSection::loadSelected(int index)
 {
-    std::filesystem::path path;
-    FileDialogFilterVec filters = { {"roadType"} };
-    if (openFileDialog(filters, path))
-    {
-        std::ifstream is(path, std::ios::binary);
-        cereal::BinaryInputArchive archive(is);
-
-        points[index].serializeType(archive);
-        points[index].solveMiddlePos();
-        lastEditedPoint = points[index];
-
-        solveRoad();
-    }
+    // Not implemented: file-dialog editor flow (open dialog + serializeType).
+    (void)index;
+    spdlog::warn("roads: roadSection::loadSelected is an editor flow - not implemented");
 }
 
 
 
 void roadSection::loadCompleteRoad()
 {
-    std::filesystem::path path;
-    FileDialogFilterVec filters = { {"roadType"} };
-    if (openFileDialog(filters, path))
-    {
-        std::ifstream is(path, std::ios::binary);
-        cereal::BinaryInputArchive archive(is);
-
-        splinePoint loadPnt;
-        loadPnt.serializeType(archive);
-        lastEditedPoint = loadPnt;
-
-        for (auto& pnt : points) {
-            pnt.centerlineType = loadPnt.centerlineType;
-            pnt.lanesLeft = loadPnt.lanesLeft;
-            pnt.lanesRight = loadPnt.lanesRight;
-            pnt.solveMiddlePos();
-        }
-
-        solveRoad();
-    }
+    // Not implemented: file-dialog editor flow (open dialog + serializeType).
+    spdlog::warn("roads: roadSection::loadCompleteRoad is an editor flow - not implemented");
 }
 
 
@@ -868,19 +822,15 @@ void roadSection::optimizeTangents(int lane)
         bezierPoint* pntThis = &pnt->bezier[lane];
         // tests
         if (!isSaneVector(pntThis->pullBack)) {
-            bool bCM = true;
             pntThis->pullBack = float3(0, 0, 0);
         }
         if (!isSaneVector(pntThis->pullForward)) {
-            bool bCM = true;
             pntThis->pullForward = float3(0, 0, 0);
         }
         if (!isSaneVector(pntThis->tangentForward)) {
-            bool bCM = true;
             pntThis->tangentForward = glm::normalize(pnt->anchor - end->anchor);
         }
         if (!isSaneVector(pntThis->tangentBack)) {
-            bool bCM = true;
             pntThis->tangentBack = glm::normalize(pnt->anchor - end->anchor);
         }
 
@@ -911,10 +861,6 @@ void roadSection::optimizeSpacing(int lane)
         pntThis = &pnt->bezier[lane];
         pntNext = &next->bezier[lane];
 
-        float straightLength = glm::length(pntThis->pos - pntNext->pos);
-        float min = straightLength * 0.1f;
-        float max = __min(pntThis->length * 0.5f, straightLength * 0.7f);
-
         float da = glm::length(del_cubic_Casteljau(0.00f, 0.10f, pntThis, pntNext));
         float dm = glm::length(del_cubic_Casteljau(0.45f, 0.55f, pntThis, pntNext));
         float db = glm::length(del_cubic_Casteljau(0.90f, 1.00f, pntThis, pntNext));
@@ -936,20 +882,19 @@ void roadSection::optimizeSpacing(int lane)
 
 void roadSection::solveUV(int lane)
 {
-    float L = points.back().bezier[middle].totalLength;
     float repeats = points.back().bezier[middle].totalLength / uvScale;		// all repeats come from the middle, so same amount left middle and right
     if (isIntergerUV)
     {
         repeats = ceil(repeats);
         repeats = __max(1.0f, repeats);
     }
-    
+
     float rDistance = points.back().bezier[lane].totalLength / repeats;
     rDistance = __max(1.0f, rDistance);
 
     if (isnan(rDistance))
     {
-        bool bCM = true;
+        spdlog::warn("roads: solveUV rDistance NaN (road {})", GUID);
     }
     float startLength = 0.0f;
     float dU = 0;
@@ -959,7 +904,7 @@ void roadSection::solveUV(int lane)
         pnt.bezier[lane].u = startLength / rDistance;
         if (isnan(pnt.bezier[lane].u))
         {
-            bool bCM = true;
+            spdlog::warn("roads: solveUV u NaN (road {})", GUID);
         }
 
         pnt.bezier[lane].u_back = pnt.bezier[lane].u - dU * 0.3333f;
@@ -1008,7 +953,6 @@ void roadSection::solveWidthFromLanes()
             pnt.solveMiddlePos();
         }
 
-        glm::vec3 tang = pnt.bezier[middle].tangentForward;
         float3 perp = glm::normalize(glm::cross(pnt.anchorNormal, pnt.bezier[middle].tangentForward));	// FIXME AVERAGE of tangents - BUT MIDDLE SHOULD ALWUS be ok
         switch (pnt.constraint) {
         case e_constraint::none:
@@ -1099,7 +1043,7 @@ void roadSection::solveEnergyAndLength(int lane, int _min, int _max)
     bezierPoint* pntThis, * pntNext;
 
     int index = 0;
-    float inspectLength;
+    float inspectLength = 0;
     for (pnt = points.begin(), next = ++points.begin(); next != points.end(); pnt++, next++, index++)
     {
         pntThis = &pnt->bezier[lane];
@@ -1135,10 +1079,10 @@ void roadSection::solveEnergyAndLength(int lane, int _min, int _max)
                 pB += glm::cross((bezierPoints[64 - step - i] - bezierPoints[64 - 2 * step - i]), (bezierPoints[64 - i] - bezierPoints[64 - step - i]));
             }
             if (!isSaneVector(pF)) {
-                bool bCM = true;
+                spdlog::warn("roads: solveEnergyAndLength insane pF (road {})", GUID);
             }
             if (!isSaneVector(pB)) {
-                bool bCM = true;
+                spdlog::warn("roads: solveEnergyAndLength insane pB (road {})", GUID);
             }
             pntThis->pullForward = glm::cross(pF, pntThis->tangentForward);
             pntNext->pullBack = glm::cross(pB, pntNext->tangentBack);
@@ -1176,7 +1120,6 @@ void roadSection::solveEnergyAndLength(int lane, int _min, int _max)
 
 
         if (isnan(pntThis->length)) {
-            bool bCM = true;
             pntThis->length = 1;
         }
 
@@ -1186,8 +1129,7 @@ void roadSection::solveEnergyAndLength(int lane, int _min, int _max)
     }
 
     if (inspectLength == 0) {
-        int cnt = (int)points.size();
-        bool bCM = true;
+        spdlog::warn("roads: solveEnergyAndLength total length 0 (road {}, {} points)", GUID, (int)points.size());
     }
 }
 
@@ -1243,13 +1185,14 @@ void roadSection::solveRoad(int index)
 
 void roadSection::setCenterline(uint type) {
     for (auto& pnt : points) {
-        pnt.centerlineType = type;
+        pnt.centerlineType = (int)type;
     }
 }
 
 
 
 splinePoint roadSection::lastEditedPoint;
+std::vector<intersection>* roadSection::static_global_intersectionList = nullptr;   // never assigned in live code (only commented-out uses); defined so the symbol links
 void roadSection::pushPoint(float3 p, float3 n, uint _lod)
 {
     clearSelection();
@@ -1373,7 +1316,7 @@ float roadSection::getDistance() {
         std::vector<splinePoint>::iterator it = points.begin();
         glm::vec3 P = it->anchor;
 
-        for (int i = 1; i < points.size(); i++) {
+        for (size_t i = 1; i < points.size(); i++) {
             it++;
             distance += length(it->anchor - P);
             P = it->anchor;
@@ -1397,11 +1340,11 @@ bool roadSection::testAgainstPoint(splineTest* testdata, bool includeEnd) {
     //testdata->testDistance = 100000.0f;
     int offset = 0;
     if (!includeEnd) offset = 1;
-    for (int i = offset; i < points.size() - offset; i++)
+    for (int i = offset; i < (int)points.size() - offset; i++)
     {
-        float3 offset = points[i].anchor - testdata->pos;
-        offset.y = 0;	// test only in XZ plane
-        float D = glm::length(offset);
+        float3 off = points[i].anchor - testdata->pos;
+        off.y = 0;	// test only in XZ plane
+        float D = glm::length(off);
         if (D < testdata->testDistance)
         {
             testdata->testDistance = D;
@@ -1415,12 +1358,13 @@ bool roadSection::testAgainstPoint(splineTest* testdata, bool includeEnd) {
         }
 
     }
+    (void)second;
 
     if (!bThisVertex) {
         //testdata->testDistance = 100000.0f;
         // now, are we between points
         // recalculate this SIOMPLY FROM FIRST IT CAN BE EITHER SIDE
-        for (int i = offset; i < points.size() - 1 - offset; i++)
+        for (int i = offset; i < (int)points.size() - 1 - offset; i++)
         {
             float3 A = points[i].anchor;
             float3 B = points[i + 1].anchor;
@@ -1428,14 +1372,13 @@ bool roadSection::testAgainstPoint(splineTest* testdata, bool includeEnd) {
             float D = glm::length(B - A);
             float3 Pa = testdata->pos - A;
             float Dl = glm::dot(Pa, dir);
-            float dMid = glm::length(testdata->pos - (A + B) * 0.5f);
             float dPerp = glm::length(Pa - dir * Dl);
 
             if ((Dl < 0) && (i == 0)) {
                 // before
             }
 
-            if ((Dl > D) && (i == points.size() - 2)) {
+            if ((Dl > D) && (i == (int)points.size() - 2)) {
                 // after
             }
 
@@ -1494,7 +1437,6 @@ void roadSection::findUVTile(glm::vec3 p, glm::vec3 c1, glm::vec3 c2, glm::vec3 
 
         glm::vec3 E1 = cubic_Casteljau(U0, c1, b1, b4, c4);
         glm::vec3 E2 = cubic_Casteljau(U0, c2, b2, b3, c3);
-        glm::vec3 Ne = glm::cross(glm::vec3(0, 1, 0), glm::normalize(E2 - E1));
         glm::vec3 De = glm::normalize(E2 - E1);
         float V0 = glm::dot(p - E1, De) / glm::length(E2 - E1);
 

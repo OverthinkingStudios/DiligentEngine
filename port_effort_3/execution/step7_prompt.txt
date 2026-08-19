@@ -1,0 +1,15 @@
+You are executing step 7 of the Earthworks port (Path B+) in c:\dev\git\os\DiligentEngine, branch port_effort_3: TERRAINGENERATOR SUBSYSTEM. Steps 1-6 are done. This subsystem is a FIRST-CLASS port by developer decision (task.md S3 strip decisions) but LOW URGENCY - it was deliberately sequenced last before the wrap.
+
+WHAT IT IS: the terrain raw-data generation pipeline (GIS/heightmap/orthophoto -> elevations.txt + jp2 tiles + directory layout that terrainManager streams). Lives in the TerrainGenerator tool app; the core is earthworks_scene\terrainGenerator.cpp/.h in the extract. ITS IMGUI GUI SURVIVES (developer decision: "nice to have the old GUI survive with minimal edits" - it is the tool's own frontend, NOT the stripped editor GUI).
+
+READ FIRST: port_effort_3\task.md S0 (no commits; developer compiles; zero warnings; no subagents); port_effort_3\execution\plan.md "Step 7 spec" + step log; port_effort_3\execution\bringup_notes.md (all P entries; P2 data-path conventions matter here - this code WRITES the layout P2 reads); port_effort_3\catalog\conventions_app_wiring.md S8 (file formats: elevations.txt line format, jp2 directory, .root files) + S9 (threading: terrainGenerator has two detached converter threads - port them owned+joined per the P-pattern used for shadowEdges).
+
+SOURCES: port_effort_3\source_extract_3\earthworks_scene\terrainGenerator.cpp/.h (1601/319 lines incl. ~155 ImGui calls - KEEP the GUI, minimal edits: it references imGuiHelper.h which was stripped - either port the needed guiHelper macros locally into the tool or inline them; fonts via the shell's ImGui), terrain_root .bil/.hgt handling, OpenJPH encode paths (P3: current OpenJPH signatures), GDAL usage if present (check what the extract actually calls - the old GDAL EXPORT tooling in terrain.cpp was stripped as replaced-by-terrainGenerator; this file IS the replacement).
+TARGET: the TerrainGenerator app (TerrainGenerator/) hosts it via the shell; wire like the other tools; terrainBuilder mode in terrainManager stays out (editor-deferred) - the TOOL drives the generator.
+
+SCOPE - IN: full terrainGenerator class (pipeline + its GUI), tool-app wiring, thread lifecycle per P-pattern, requireFile-style loud IO, round-trip validation hooks (a generated mini-terrain must load in terrainManager - document the manual test recipe for the developer using -terrain).
+SCOPE - OUT: terrain_Builder_GIS (deleted dead code), EarthworksEditor functionality (deferred).
+
+RULES: extract = authority; structure-preserving; // PORT-REVIEW / // STEP7-STUB markers; zero warnings; cannot compile - verify against real headers (DiligentCore readable); update plan.md step log + bringup_notes.md.
+
+RETURN: files created/modified, GUI edits made (should be minimal), the developer's round-trip test recipe (generate tiny terrain -> load with -terrain), deferred items.

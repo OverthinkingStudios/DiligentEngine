@@ -4,11 +4,22 @@
 
 #include "EarthworksFXApplicationBase.hpp"
 
+// The retired Falcor compat header (now EarthworksFX/legacy/Falcor.h) used to
+// provide imgui, cereal and the global math-type aliases transitively; include
+// them explicitly and alias the ew:: equivalents from the native layer.
+#include "imgui.h"
 
+#include "ewTypes.h"
 
+#include "cereal/cereal.hpp"
+#include "cereal/archives/json.hpp"
+#include "cereal/types/array.hpp"
+#include "cereal/types/string.hpp"
+#include "cereal/types/vector.hpp"
 
-
-
+using float2 = ew::float2;
+using int2   = ew::int2;
+using uint   = ew::uint;
 
 #include "TextureLoader.h"
 #include "TextureUtilities.h"
@@ -17,8 +28,12 @@
 #include <string>
 #include <array>
 #include <vector>
-/*
-* this comes from Earthworks, precicely terrafectors although it should be in common
+// this comes from Earthworks, precicely terrafectors although it should be in common
+// (previously reached this tool transitively via the Falcor-era terrafector.h;
+// defined locally since the native gpu layer no longer pulls it in.
+// STEP4: src/core/terrafector.h defines them again and reaches this TU through
+// EarthworksFXApplicationBase.hpp -> terrain.h - guard against redefinition)
+#ifndef archive_float2
 #define archive_float2(v)         \
     {                             \
         archive(CEREAL_NVP(v.x)); \
@@ -37,7 +52,7 @@
         archive(CEREAL_NVP(v.z)); \
         archive(CEREAL_NVP(v.w)); \
     }
-    */
+#endif  // archive_float2
 ImFont* font_small;
 ImFont* font_normal;
 ImFont* font_H1;
@@ -227,40 +242,11 @@ class render_target {
 
 
 /*  This is a single "rectangle", can be curved*/
-class oneTexture {
-    public:
-    int texWidth = 1;  // these are on teh small end but multiply by 4 still block based
-    int texHeight = 2;
-    int numMips = 5;
-    float2 start = float2(0.5f, 0.5f);
-    float2 stop = float2(0.5f, 0.4f);
-    float2 bezier = float2(0.f, 0.f);
-    float width = 0.05f;  // all in UV coordinates
-    float bezierOffset = 0.f;
-
-    std::array<float, 9> offset = {0, 0, 0, 0, 0, 0, 0, 0, 0};
-    std::array<float, 9> extents = {1, 1, 1, 1, 1, 1, 1, 1, 1};
-
-    float2 a, b, c, d;
-
-    template <class Archive>
-    void serialize(Archive& archive, unsigned int const _version) {
-        archive(texWidth);
-        archive(texHeight);
-        archive_float2(start);
-        archive_float2(stop);
-        archive_float2(bezier);
-        archive(width);
-
-        archive(offset);
-        archive(extents);
-
-        if (_version >= 101) {
-            archive(bezierOffset);
-        }
-    }
-};
-CEREAL_CLASS_VERSION(oneTexture, 101);
+// STEP4: the class definition that used to live here (field- and
+// serialization-identical, CEREAL version 101) now reaches this TU through
+// EarthworksFXApplicationBase.hpp -> terrain.h -> vegetationBuilder.h (the
+// vegetation texture-tool is the code this tool split off from). The local
+// copy was removed to avoid the class redefinition.
 
 enum texTypes { tex_albedo, tex_alpha, tex_normal, tex_translucency, tex_displacement };
 
@@ -372,7 +358,7 @@ CEREAL_CLASS_VERSION(textureTool, 100);
 
 /// TextureSplitTool - an EarthworksFX app that runs WITHOUT a terrain scene
 /// (EarthworksFXAppSettings::CreateScene == false). It still gets the complete
-/// rendering environment (device, swap chain, ImGui, Falcor device/framework and
+/// rendering environment (device, swap chain, ImGui, the ew:: gpu layer and
 /// the Earthworks shaders), and drives all rendering itself.
 ///
 /// Every overridable base hook is declared here - most are empty - so this class
@@ -409,7 +395,7 @@ protected:
     void OnUpdate(double current_time, double elapsed_time, bool do_update_ui) override;
 
     /// Swap-chain resize. Recreate size-dependent targets here, e.g.
-    /// SetTargetFbo(Falcor::Fbo::createFromSwapChain(m_pSwapChain)).
+    /// SetTargetFbo(ew::Fbo::createFromSwapChain(m_pSwapChain)).
     void OnWindowResized(Diligent::Uint32 Width, Diligent::Uint32 Height) override;
 
     /// App ImGui pass. Call DrawCommonUI() to keep the shared overlay.

@@ -1,4 +1,4 @@
-// Debug orientation / movement aids for the EarthworksFX -> DiligentEngine bring-up.
+// Debug orientation and movement aids.
 //
 // Two independent primitives, each generated entirely from SV_VertexID (no vertex or
 // index buffer required) and selected by `drawMode`:

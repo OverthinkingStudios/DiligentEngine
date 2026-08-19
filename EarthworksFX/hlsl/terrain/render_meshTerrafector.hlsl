@@ -1,11 +1,13 @@
 //#include "terrainCommon.hlsli"
 #include "../render_Common.hlsli"
 
-#define CALLEDFROMHLSL
-
+// gmyTextures_T is declared before materials.hlsli is included: the solve*
+// functions in there sample this array.
 Texture2D<float4> gmyTextures_T[4096];
 
+#define CALLEDFROMHLSL
 #include "materials.hlsli"
+
 
 struct triVertex
 {
@@ -115,16 +117,6 @@ PS_OUTPUT_Terrafector fixedMaterials(const uint material, const float2 uv, const
 
 
 
-// TEMP DEBUG (terrafector bring-up, tile-hole): a mesh-terrafector fragment is
-// writing alpha~1 with elevation~0 into the bake, flattening the tile to sea
-// level. Tag exactly those writes with -(1000 + materialIndex) so the TFBAKE
-// trace readback names the guilty material as a negative centre value.
-void dbgTagSuspicious(inout PS_OUTPUT_Terrafector o, const uint material)
-{
-    if (o.Elevation.a > 0.9 && abs(o.Elevation.r) < 1.0)
-        o.Elevation.r = -(1000.0 + (float) material);
-}
-
 PS_OUTPUT_Terrafector psMain(splineVSOut vIn) : SV_TARGET
 {
     PS_OUTPUT_Terrafector output = (PS_OUTPUT_Terrafector) 0;
@@ -133,9 +125,7 @@ PS_OUTPUT_Terrafector psMain(splineVSOut vIn) : SV_TARGET
 
     if (material > 2030)
     {
-        output = fixedMaterials(material, vIn.texCoords.xz, vIn.colour, vIn.flags, vIn.posW.y);
-        dbgTagSuspicious(output, material);
-        return output;
+        return fixedMaterials(material, vIn.texCoords.xz, vIn.colour, vIn.flags, vIn.posW.y);
     }
 
 
@@ -149,7 +139,6 @@ PS_OUTPUT_Terrafector psMain(splineVSOut vIn) : SV_TARGET
     if (MAT.materialType == MATERIAL_TYPE_STANDARD)
     {
         solveElevationColour(output, MAT, uv, alpha, vIn.posW.y);
-        dbgTagSuspicious(output, material);
         return output;
     }
 
@@ -181,7 +170,6 @@ PS_OUTPUT_Terrafector psMain(splineVSOut vIn) : SV_TARGET
 
             }
         }
-        dbgTagSuspicious(output, material);
         return output;
     }
 
@@ -189,5 +177,4 @@ PS_OUTPUT_Terrafector psMain(splineVSOut vIn) : SV_TARGET
 
     return output;
 }
-
 

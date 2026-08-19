@@ -6,9 +6,9 @@
 // metrics (see TestFlightController in src/app).
 //
 // DELIBERATELY engine-agnostic: standard library + nlohmann json only, no
-// Diligent/Falcor/glm types. This header (and the json format it defines) is
-// meant to be dropped into the original Falcor project unchanged, so the same
-// flights can be shot there to produce ground-truth reference images.
+// Diligent or glm types. This header, and the json format it defines, can be
+// dropped into another renderer unchanged so the same flights can be shot
+// there to produce ground-truth reference images.
 // ---------------------------------------------------------------------------
 
 #include <fstream>

@@ -1,18 +1,33 @@
-/*
-#include "vegetationBuilder.h"
-#include "imgui.h"
-#include "PerlinNoise.hpp"          //https://github.com/Reputeless/PerlinNoise/blob/master/PerlinNoise.hpp
+// vegetationBuilder_Trees.cpp - the _treeBuilder half of the vegetation
+// system: Grove OBJ stream-import, cutting the result into reusable branch
+// assets, and the canopy cubemap that bakes their lighting.
+//
+// The OBJ carries no tree topology - it is a flat triangle stream. Nodes,
+// branch starts, side branches, leaves and dead ends are all inferred
+// geometrically while streaming (ring planarity, node radii, point-in-cylinder
+// tests), which is why the reader is a small state machine over readVertex().
+
+#include "terrain.h"    // brings in the hlsli-shared structs/aliases and vegetationBuilder.h
+
+#include <algorithm>
+#include <chrono>
+#include <cstdlib>      // __min/__max (MSVC macros)
+
+#include "glm/gtx/compatibility.hpp"
+#include "glm/gtc/matrix_transform.hpp"
+
+#include "ots/Log.hpp"
 
 using namespace std::chrono;
+
+// Load-bearing until the underlying issue is understood - do not remove.
+// This TU only runs at build time, so it costs no frame time.
+#ifdef _MSC_VER
 #pragma optimize("", off)
+#endif
 
 //extern bool anyChange;
-#define TOOLTIP(x)  if (ImGui::IsItemHovered()) {ImGui::SetTooltip(x);}
 
-//ImVec4 selected_color = ImVec4(0.4f, 0.1f, 0.0f, 1);
-//ImVec4 stem_color = ImVec4(0.05f, 0.02f, 0.0f, 1);
-//ImVec4 leaf_color = ImVec4(0.01f, 0.04f, 0.01f, 1);
-//ImVec4 mat_color = ImVec4(0.0f, 0.01f, 0.07f, 1);
 
 extern ribbonBuilder _ribbonBuilder;
 
@@ -54,7 +69,7 @@ void _cubemap::toCube(float3 _v)
 
 float3 _cubemap::toVec(int face, int y, int x)
 {
-    float3 V;
+    float3 V(0.f);
     float S = cubeHalfSize + 1.f;
     float SS = (float)cubeHalfSize;
     switch (face)
@@ -94,6 +109,10 @@ float3 _cubemap::toVec(int face, int y, int x)
     return glm::normalize(V);
 }
 
+/*
+float3 _cubemap::toVec(glm::int3 c)
+{
+} */
 
 
 float _cubemap::sampleDistance(float3 _v)
@@ -107,14 +126,14 @@ void _cubemap::clear()
 {
     for (int f = 0; f < 6; f++)
     {
-        for (int y = 0; y < cubeHalfSize * 2 + 2; y++)
+        for (int yy = 0; yy < cubeHalfSize * 2 + 2; yy++)
         {
-            for (int x = 0; x < cubeHalfSize * 2 + 2; x++)
+            for (int xx = 0; xx < cubeHalfSize * 2 + 2; xx++)
             {
-                data[f][y][x].d = 0;
-                data[f][y][x].cone = 0;
-                data[f][y][x].sum = 0;
-                data[f][y][x].dir = float3(0, 0, 0);
+                data[f][yy][xx].d = 0;
+                data[f][yy][xx].cone = 0;
+                data[f][yy][xx].sum = 0;
+                data[f][yy][xx].dir = float3(0, 0, 0);
             }
         }
     }
@@ -135,22 +154,22 @@ void _cubemap::solveEdges()
     float max = 0;
     for (int f = 0; f < 6; f++)
     {
-        for (int y = 0; y < cubeHalfSize * 2 + 2; y++)
+        for (int yy = 0; yy < cubeHalfSize * 2 + 2; yy++)
         {
-            for (int x = 0; x < cubeHalfSize * 2 + 2; x++)
+            for (int xx = 0; xx < cubeHalfSize * 2 + 2; xx++)
             {
-                max = __max(max, data[f][y][x].d);
+                max = __max(max, data[f][yy][xx].d);
             }
         }
     }
 
     for (int f = 0; f < 6; f++)
     {
-        for (int y = 0; y < cubeHalfSize * 2 + 2; y++)
+        for (int yy = 0; yy < cubeHalfSize * 2 + 2; yy++)
         {
-            for (int x = 0; x < cubeHalfSize * 2 + 2; x++)
+            for (int xx = 0; xx < cubeHalfSize * 2 + 2; xx++)
             {
-                data[f][y][x].d = __max(data[f][y][x].d, max * 0.5f);
+                data[f][yy][xx].d = __max(data[f][yy][xx].d, max * 0.5f);
             }
         }
     }
@@ -167,27 +186,28 @@ void _cubemap::solve()
 {
     for (int f = 0; f < 6; f++)
     {
-        for (int y = 1; y < cubeHalfSize * 2 + 1; y++)
+        for (int yy = 1; yy < cubeHalfSize * 2 + 1; yy++)
         {
-            for (int x = 1; x < cubeHalfSize * 2 + 1; x++)
+            for (int xx = 1; xx < cubeHalfSize * 2 + 1; xx++)
             {
-                if (x == 8 && y == 8)
+                if (xx == 8 && yy == 8)
                 {
                     bool bCM = true;
+                    (void)bCM;
                 }
-                float3 V = toVec(f, y, x);
+                float3 V = toVec(f, yy, xx);
                 float3 U = float3(0, 1, 0);
                 if ((face == 2) || (face == 3)) {
                     U = float3(0, 0, 1);
                 }
 
-                float3 R = normalize(cross(U, V));
-                U = cross(V, R);
+                float3 R = glm::normalize(glm::cross(U, V));
+                U = glm::cross(V, R);
 
-                float scale = 0.4f; // about 30 degrees
-                float3 v1 = V - U * scale;
-                float3 v2 = V + (U * scale * 0.5f) + (R * scale * 0.8616f);
-                float3 v3 = V + (U * scale * 0.5f) - (R * scale * 0.8616f);
+                float scale2 = 0.4f; // about 30 degrees
+                float3 v1 = V - U * scale2;
+                float3 v2 = V + (U * scale2 * 0.5f) + (R * scale2 * 0.8616f);
+                float3 v3 = V + (U * scale2 * 0.5f) - (R * scale2 * 0.8616f);
 
                 float d1 = sampleDistance(v1);
                 float d2 = sampleDistance(v2);
@@ -197,10 +217,10 @@ void _cubemap::solve()
                 v3 *= d3;
 
                 float3 middle = (v1 + v2 + v3) * 0.333333f;
-                float CONE = (data[f][y][x].d - length(middle)) / data[f][y][x].d;
+                float CONE = (data[f][yy][xx].d - glm::length(middle)) / data[f][yy][xx].d;
 
-                data[f][y][x].dir = normalize(cross(v2 - v1, v3 - v1));
-                data[f][y][x].cone = CONE;
+                data[f][yy][xx].dir = glm::normalize(glm::cross(v2 - v1, v3 - v1));
+                data[f][yy][xx].cone = CONE;
             }
         }
     }
@@ -216,7 +236,7 @@ float4 _cubemap::light(float3 _p, float* _depth)
     }
 
     toCube(_p - virtualCenter);
-    *_depth = data[face][y][x].d - length(_p - virtualCenter);
+    *_depth = data[face][y][x].d - glm::length(_p - virtualCenter);
     return float4(data[face][y][x].dir, data[face][y][x].cone);
 }
 
@@ -230,14 +250,21 @@ void _treeBuilder::loadPath()
 {
     if (std::filesystem::exists(terrafectorEditorMaterial::rootFolder + path))
     {
-        std::ifstream is(terrafectorEditorMaterial::rootFolder + path);
-        cereal::JSONInputArchive archive(is);
-        archive(*this);
-        changed = false;
+        try
+        {
+            std::ifstream is(terrafectorEditorMaterial::rootFolder + path);
+            cereal::JSONInputArchive archive(is);
+            archive(*this);
+            changed = false;
+        }
+        catch (const std::exception& e)
+        {
+            spdlog::error("vegetation: _treeBuilder::loadPath failed to parse '{}' - {}", path, e.what());
+        }
     }
     else
     {
-        reportError(fmt::format("{}\nError: {}", "File does not exists in the relative tree structure", ""));
+        spdlog::error("vegetation: File does not exists in the relative tree structure - {}", path);
     }
 }
 
@@ -251,185 +278,10 @@ void _treeBuilder::savePath()
 }
 
 
-bool _treeBuilder::renderGui()
-{
-    int flags = ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_OpenOnArrow;
-    int flagsB = ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_OpenOnArrow;
-    unsigned int gui_id = 1001;
-    auto& style = ImGui::GetStyle();
 
 
-    renderGuiHeader(filters);
-
-    ImGui::Text("testing trees");
 
 
-    ImGui::NewLine();
-    style.Colors[ImGuiCol_Header] = ImVec4(0.01f, 0.01f, 0.01f, 1.f);
-    if (ImGui::TreeNodeEx("light", flagsB))
-    {
-        ImGui::PushFont(_gui->getFont("italic"));
-        {
-            R_FLOAT("uv scale", shadowUVScale, 0.001f, 0.001f, 10.f, "");
-            R_FLOAT("softness", shadowSoftness, 0.01f, 0.01f, 0.3f, "");
-            R_FLOAT("depth", shadowDepth, 0.01f, 0.01f, 10.f, "");
-            R_FLOAT("hgt", shadowPenetationHeight, 0.01f, 0.05f, 0.95f, "");
-        }
-        ImGui::PopFont();
-        ImGui::TreePop();
-    }
-
-
-    ImGui::NewLine();
-    style.Colors[ImGuiCol_Header] = ImVec4(0.01f, 0.01f, 0.01f, 1.f);
-    if (ImGui::TreeNodeEx("animation", flags))
-    {
-        ImGui::SameLine(0, 50);
-        float l = 1;
-        /*
-        if (NODES.size() >= 2)
-        {
-            l = glm::length(NODES.back()[3] - NODES.front()[3]);
-        }
-        if (l == 0) l = 1; // avoid devide by zero
-        ImGui::Text("%2.3fHz", 1.f / (rootFrequency() / sqrt(l)));
-        * /
-        //CHECKBOX("hasPivot", &hasPivot, "");
-        R_FLOAT("stiffness", ossilation_stiffness, 0.1f, 0.8f, 20.f, "");
-        R_FLOAT("sqrt(sway)", ossilation_constant_sqrt, 0.1f, 1.01f, 100.f, "");
-        //R_FLOAT("root-tip", ossilation_power, 0.01f, 0.02f, 1.8f, "");
-
-        ImGui::TreePop();
-    }
-
-
-    ImGui::PushID(gui_id);
-    if (ImGui::TreeNodeEx(tree_name.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_Framed))
-    {
-        TOOLTIP(tree_path.c_str());
-        if (ImGui::IsItemClicked())  loadFromFile();
-        ImGui::TreePop();
-        //changed = true;
-    }
-    ImGui::PopID();
-    gui_id++;
-
-    twigs.renderGui("twigs", gui_id);
-    branch_Material.renderGui(gui_id);
-    trunk_Material.renderGui(gui_id);
-
-    if (ImGui::Button("buildTreeRootAndBranches"))
-    {
-        buildTreeRootAndBranches();
-    }
-    
-    
-    
-
-    CHECKBOX("drawRoot", &drawRoot, "");
-    CHECKBOX("drawBranches", &drawBranches, "");
-    int numOld = numBranches;
-    R_INT("#", numBranches, 10, 255, "");
-    if (numOld != numBranches) calcSubTwigs();
-
-    
-
-    ImGui::Text("stats...");
-    ImGui::Text("avsLeaves %2.1f", avsLeavesInBranch);
-    ImGui::Text("avsHigh %2.1f", avsLeavesInBranch_High);
-
-    if (ImGui::Button("draw_all")) {
-        drawOnlyOne = !drawOnlyOne; changed = true;
-    }
-    if (ImGui::Button("draw_all_dropped")) {
-        drawAllDropped = !drawAllDropped; changed = true;
-    }
-    
-
-    int i = 0;
-    for (auto& B : myBranchCollection.branches)
-    {
-        std::string name = "show##%d" + std::to_string(i);
-        if (ImGui::Button(name.c_str())) {
-            theOneToDraw = i; drawOnlyOne = true; changed = true;
-        }
-        ImGui::SameLine(0, 30);
-        ImGui::Text("%3d, %2.2fmm, %2.2fm, %2.2frad (%2.1f, %2.1f)m", B.numLeaves, B.rootRadius * 1000.f, B.leavesDistance, B.leavesPitch, B.width, B.height);
-        i++;
-    }
-    /*
-    for (int i = 0; i < sorted.size(); i++)
-    {
-        if (i < numBranches)
-        {
-            auto& B = branches[sorted[i].index];
-            if (!B.deadRootBranch)
-            {
-                std::string name = "show##%d" + std::to_string(i);
-                if (ImGui::Button(name.c_str())) {
-                    theOneToDraw = i; drawOnlyOne = true; changed = true;
-                }
-                ImGui::SameLine(0, 30);
-
-                ImGui::Text("%3d, %2d pvt, %2.2f, %2.2fm", B.numLeavesSmall, B.branchDepth, B.PITCH, B.LENGTH);
-                
-                if (B.all_twigs.size() < avsLeavesInBranch)
-                {
-                    ImGui::SameLine(0, 30);
-                    ImGui::Text("<50%");
-                }
-            }
-        }
-    }
-    * /
-    changedForSave |= changed;
-    //anyChange |= changed;
-    bool RET = changed;
-    changed = false;
-    return RET;
-}
-
-
-void _treeBuilder::treeView()
-{
-    ImVec4 selected_color = ImVec4(0.4f, 0.1f, 0.0f, 1);
-    ImVec4 stem_color = ImVec4(0.05f, 0.02f, 0.0f, 1);
-    ImVec4 leaf_color = ImVec4(0.01f, 0.04f, 0.01f, 1);
-    ImVec4 mat_color = ImVec4(0.0f, 0.01f, 0.07f, 1);
-
-    auto& style = ImGui::GetStyle();
-    style.Colors[ImGuiCol_Header] = stem_color;
-    int flags = ImGuiTreeNodeFlags_Leaf;
-    if (_rootPlant::selectedPart == this) {
-        style.FrameBorderSize = 3;
-        flags = flags | ImGuiTreeNodeFlags_Selected;
-        style.Colors[ImGuiCol_Border] = ImVec4(0.7f, 0.7f, 0.7f, 1);
-    }
-
-    if (changedForSave) style.Colors[ImGuiCol_Header] = selected_color;
-
-    TREE_LINE(name.c_str(), path.c_str(), flags)
-    {
-        if (ImGui::IsItemHovered()) {
-            if (_ribbonBuilder.tooManyPivots)     ImGui::SetTooltip("ERROR - more than 255 pivots");
-            else ImGui::SetTooltip("%d instances \n%d verts \n%d / %d pivots ", numInstancePacked, numVertsPacked, numPivots, _ribbonBuilder.numPivots());
-        }
-
-        style.FrameBorderSize = 0;
-        CLICK_PART;
-        /*
-        ImGui::Text("branches");
-
-        for (auto& L : branches.branchData) { if (L.plantPtr) L.plantPtr->treeView(); }
-        if (unique_tip)
-        {
-            ImGui::Text("tip");
-            for (auto& L : tip.data) { if (L.plantPtr) L.plantPtr->treeView(); }
-        }
-        * /
-        ImGui::TreePop();
-    }
-}
 
 
 
@@ -437,12 +289,12 @@ void _treeBuilder::clear_build_info()
 {
     numInstancePacked = 0;
     numVertsPacked = 0;
-    numPivots = 0;
+    debugnumPivots = 0;
     /*
     for (auto& L : branches.branchData)
     {
         if (L.plantPtr)  L.plantPtr->clear_build_info();
-    } * /
+    } */
 }
 
 
@@ -488,58 +340,38 @@ float2 _treeBuilder::calculate_extents(glm::mat4 view)
 
 glm::mat4 _treeBuilder::getTip(bool includeChildren)
 {
+    (void)includeChildren;
     //if (NODES.size() > 0)       return NODES.back();    // since its only direction test with this
     return (glm::mat4(1.f));
 }
 
 
-glm::mat4 _treeBuilder::build_2(buildSetting _settings, uint _bakeIndex, bool _faceCamera)
+glm::mat4 _treeBuilder::build_2(buildSetting _settings, lodBake* pBake, bool _faceCamera, bool _diamond)
 {
+    (void)_settings; (void)pBake; (void)_faceCamera; (void)_diamond;
     return (glm::mat4(1.f));
 }
 
 
-glm::mat4 _treeBuilder::build_4(buildSetting _settings, uint _bakeIndex, bool _faceCamera)
+glm::mat4 _treeBuilder::build_4(buildSetting _settings, lodBake* pBake, bool _faceCamera)
 {
+    (void)_settings; (void)pBake; (void)_faceCamera;
     return (glm::mat4(1.f));
 }
 
 // loads and builds one brach = shall I nor ratgher just keep them in memory
 void _treeBuilder::build_BRANCH(uint _idx, buildSetting _settings, bool bottom)
 {
+    (void)bottom;
     int material_idx = branch_Material.index;
-    glm::mat4 N;
+    glm::mat4 N(1.f);
     auto& BRANCH = tempActualBranches[_idx];
 
-    /*
-    //hasPivot && _addVerts && 
-    if (!_settings.doNotAddPivot)
-    {
-        auto& B = BRANCH.branches.front();
-        float3 extent = float3(1, 0, 0);// BRANCH.stats.leavesDistance;
-        float ext_L = glm::length(extent);
-        extent = glm::normalize(extent) / ext_L;
-
-        _plant_anim_pivot p;
-        p.root = B.nodes[0].pos;
-        p.extent = extent;
-        p.frequency = rootFrequency() * sqrt(ext_L);
-        p.stiffness = ossilation_stiffness;
-        p.shift = ossilation_power;           // DEPRECATED
-        p.offset = DD_0_255_tree(_rootPlant::generator);
-
-        _settings.pivotIndex[_settings.pivotDepth] = _ribbonBuilder.pushPivot(_settings.seed, p);
-        _settings.pivotDepth += 1;
-        numPivots++;
-    }
-    * /
-    //_ribbonBuilder.pushPivot(_settings.seed, p);  loop
-
-    for (int i = 0; i < BRANCH.numPivots; i++)
+    for (uint i = 0; i < BRANCH.numPivots; i++)
     {
         _ribbonBuilder.pushPivot(i, BRANCH.pivots[i]);
     }
-    
+
     for (auto& B : BRANCH.branches)
     {
         //_ribbonBuilder.startRibbon(true, B.pivots);
@@ -550,7 +382,7 @@ void _treeBuilder::build_BRANCH(uint _idx, buildSetting _settings, bool bottom)
 
         for (auto& node : B.nodes)
         {
-            v += length(node.pos - prev.pos) / node.radius * 0.1f;
+            v += glm::length(node.pos - prev.pos) / node.radius * 0.1f;
             useThisOne = true;
 
             if (useThisOne)
@@ -576,14 +408,14 @@ void _treeBuilder::build_BRANCH(uint _idx, buildSetting _settings, bool bottom)
                 N[3].x = node.pos.x;
                 N[3].y = node.pos.y;
                 N[3].z = node.pos.z;
-                
+
                 float W = node.radius;
                 _ribbonBuilder.set(N, W, material_idx, float2(1.f, 0.f), 1.f, 1.f, true, 1, 1);
                 useThisOne = false;
             }
 
             {
-                float stepThis = stepFactor * pow((endRadius / node.radius), 0.3);/// 0.2 IS TE ERG
+                float stepThis = stepFactor * pow((endRadius / node.radius), 0.3f);/// 0.2 IS TE ERG
                 useThisOne = (node.radius < startRadius) && (node.radius > endRadius) &&
                                 (glm::length(node.pos - (float3)N[3]) / node.radius > stepThis);
             }
@@ -627,10 +459,11 @@ void _treeBuilder::build_BRANCH(uint _idx, buildSetting _settings, bool bottom)
 
 void _treeBuilder::build_one_branch(uint _root, uint _idx, buildSetting _settings, bool bottom)
 {
+    (void)_settings;
     auto& branch = branches[_idx];
     int material_idx = branch_Material.index;
 
-    
+
 
     if (branch.isVisible && branch.nodes.size() > 1)
         //if (branchCount <= 0)
@@ -643,24 +476,24 @@ void _treeBuilder::build_one_branch(uint _root, uint _idx, buildSetting _setting
 
         uint START = 0;
         if (!bottom) START = branch.start_node;
-        uint STOP = branch.nodes.size();
-        if (bottom) STOP = __min(branch.nodes.size(), branch.start_node + 1);
+        uint STOP = (uint)branch.nodes.size();
+        if (bottom) STOP = __min((uint)branch.nodes.size(), branch.start_node + 1);
 
 
         if (_idx != _root)
         {
             START = 0;
-            STOP = branch.nodes.size();
+            STOP = (uint)branch.nodes.size();
         }
-        
+
+        glm::mat4 N(1.f);
+
         //for (auto& node : branch.nodes)
-        for (int k = START; k < STOP; k++)
+        for (uint k = START; k < STOP; k++)
         {
             auto& node = branch.nodes[k];
-            v += length(node.pos - prev.pos) / node.radius * 0.1f;
+            v += glm::length(node.pos - prev.pos) / node.radius * 0.1f;
             //bool first = (prev.pos == node.pos);
-
-            glm::mat4 N;
 
             useThisOne = true;
             if (useThisOne)
@@ -701,7 +534,7 @@ void _treeBuilder::build_one_branch(uint _root, uint _idx, buildSetting _setting
             // now see if we are goingt to keep it or overwrite it
 
             {
-                float stepThis = stepFactor * pow((endRadius / node.radius), 0.3);/// 0.2 IS TE ERG
+                float stepThis = stepFactor * pow((endRadius / node.radius), 0.3f);/// 0.2 IS TE ERG
 
                 if ((node.radius < startRadius) &&
                     (node.radius > endRadius) &&
@@ -717,22 +550,24 @@ void _treeBuilder::build_one_branch(uint _root, uint _idx, buildSetting _setting
     }
 }
 
-glm::mat4 _treeBuilder::build(buildSetting _settings, bool _addVerts)
+glm::mat4 _treeBuilder::build(buildSetting _settings, bool _addVerts, bool _extents)
 {
+    (void)_addVerts; (void)_extents;
     if (branches.size() == 0) return (glm::mat4(1.f));
     packSettings vertex_pack_Settings;
     vertex_pack_Settings.objectSize = 30.f;
     vertex_pack_Settings.radiusScale = 1.5f;
     _ribbonBuilder.setup(vertex_pack_Settings.getScale(), vertex_pack_Settings.radiusScale, vertex_pack_Settings.getOffset());
 
-    
+
 
     // add the branches
     uint branchCount = 0;
+    (void)branchCount;
 
     if (drawAllDropped)
     {
-        for (int i = 0; i < allDroppedTwigs.size(); i++)
+        for (int i = 0; i < (int)allDroppedTwigs.size(); i++)
         {
             build_one_branch(allDroppedTwigs[i], allDroppedTwigs[i], _settings, false);
         }
@@ -760,14 +595,6 @@ glm::mat4 _treeBuilder::build(buildSetting _settings, bool _addVerts)
             if (drawOnlyOne)
             {
                 build_BRANCH(theOneToDraw, _settings, false);
-                /*
-                auto& B = branches[sorted[theOneToDraw].index];
-
-                for (int j = 0; j < B.all_twigs.size(); j++)
-                {
-                    build_one_branch(sorted[theOneToDraw].index, B.all_twigs[j], _settings, false);
-                }
-                * /
             }
             else
             {
@@ -775,7 +602,7 @@ glm::mat4 _treeBuilder::build(buildSetting _settings, bool _addVerts)
                 {
                     auto& B = branches[sorted[i].index];
 
-                    for (int j = 0; j < B.all_twigs.size(); j++)
+                    for (int j = 0; j < (int)B.all_twigs.size(); j++)
                     {
                         build_one_branch(sorted[i].index, B.all_twigs[j], _settings, false);
                     }
@@ -789,25 +616,37 @@ glm::mat4 _treeBuilder::build(buildSetting _settings, bool _addVerts)
     return (glm::mat4(1.f));
 }
 
+// Not implemented: the file-dialog picker is an editor flow. The explicit-path
+// overload below carries the whole Grove OBJ import.
 void _treeBuilder::loadFromFile()
 {
-    std::filesystem::path filepath;
-    FileDialogFilterVec filters = { {"obj"} };
-    if (openFileDialog(filters, filepath))
+    spdlog::error("vegetation: _treeBuilder::loadFromFile - the file dialog is not implemented; call loadFromFile(path) with a Grove .obj instead");
+}
+
+void _treeBuilder::loadFromFile(const std::filesystem::path& filepath)
+{
+    if (!std::filesystem::exists(filepath))
     {
-        path = materialCache::getRelative(filepath.string());
-        name = filepath.filename().string().substr(0, filepath.filename().string().length() - 4);
-        objfile = fopen(filepath.string().c_str(), "r");
-        load_obj();
+        spdlog::error("vegetation: _treeBuilder::loadFromFile - '{}' not found", filepath.string());
+        return;
     }
+    path = materialCache::getRelative(filepath.string());
+    name = filepath.filename().string().substr(0, filepath.filename().string().length() - 4);
+    objfile = fopen(filepath.string().c_str(), "r");
+    if (!objfile)
+    {
+        spdlog::error("vegetation: _treeBuilder::loadFromFile - cannot open '{}'", filepath.string());
+        return;
+    }
+    load_obj();
 }
 
 
 float3 _treeBuilder::readVertex()
 {
-    float3 v;
+    float3 v(0.f);
     char type[256];
-    int ret = fscanf(objfile, "%s %f %f %f\n", type, &v.x, &v.y, &v.z);
+    int ret = fscanf(objfile, "%255s %f %f %f\n", type, &v.x, &v.y, &v.z);
     if (ret < 4) {
         enfOfFile = true;
     }
@@ -844,9 +683,10 @@ void _treeBuilder::readHeader()
 {
     enfOfFile = false;
     char header[256];
-    fscanf(objfile, "%39[^\n]\n", header);
-    fscanf(objfile, "%39[^\n]\n", header);
-    fscanf(objfile, "%39[^\n]\n", header);
+    int ret = 0;
+    ret = fscanf(objfile, "%39[^\n]\n", header); (void)ret;
+    ret = fscanf(objfile, "%39[^\n]\n", header); (void)ret;
+    ret = fscanf(objfile, "%39[^\n]\n", header); (void)ret;
 
     verts[0] = readVertex();
     numVerts = 1;
@@ -857,7 +697,7 @@ void _treeBuilder::readHeader()
 void _treeBuilder::testBranchLeaves()
 {
     float3 center = (verts[0] + verts[1] + verts[2]) / 3.0f;
-    for (int j = 1; j < currentBranch->nodes.size(); j++) {         // start at 1, dont seacr that first node, it breaks branch inetrsections
+    for (int j = 1; j < (int)currentBranch->nodes.size(); j++) {         // start at 1, dont seacr that first node, it breaks branch inetrsections
         float3 nodeCenter = currentBranch->nodes[j].pos;
         float dist = glm::length(nodeCenter - center);
         if (fabs(dist) < 0.004f) {
@@ -866,12 +706,13 @@ void _treeBuilder::testBranchLeaves()
             float l2 = glm::length(verts[2] - verts[1]);
             float l3 = glm::length(verts[0] - verts[2]);
             float radius = 0.19f * (l1 + l2 + l3);
+            (void)radius;
 
             _leafNode L;
             L.pos = currentBranch->nodes[j].pos;
             L.dir = nodeDir;
             L.branchNode = j;
-            L.branchIndex = branches.size() - 1;
+            L.branchIndex = (int)branches.size() - 1;
             branchLeaves.push_back(L);
             currentBranch->leaves.push_back(L);
 
@@ -917,7 +758,7 @@ void _branch::findParentBranches()
         B.parentNode = 0;
     }
 
-    for (int i = 0; i < branches.size(); i++)
+    for (int i = 0; i < (int)branches.size(); i++)
     {
         auto& A = branches[i];
         if (A.parentIndex >= 0) continue; // have already found it
@@ -931,19 +772,24 @@ void _branch::findParentBranches()
 
             if (B.nodes[0].radius > R_0)    //dis n groter tak
             {
-                for (int n = 0; n < B.nodes.size() - 1; n++)
+                for (int n = 0; n < (int)B.nodes.size() - 1; n++)
                 {
                     if (pointCylindar(P_0, B.nodes[n].pos, B.nodes[n + 1].pos, B.nodes[n].radius * 2))
                     {
                         A.parentIndex = j;
                         A.parentNode = n;
 
-                        auto& P = A;
+                        // Walk the parent chain by index. A reference cannot be
+                        // re-seated in C++, so `P = branches[P.parentIndex]`
+                        // would copy-assign over the branch instead of moving
+                        // to it.
+                        A.pivotDepth = 0;
+                        int walk = i;
                         do
                         {
                             A.pivotDepth++;
-                            P = branches[P.parentIndex];
-                        } while (P.parentIndex >= 0);
+                            walk = branches[walk].parentIndex;
+                        } while (walk >= 0 && branches[walk].parentIndex >= 0);
                     }
                 }
             }
@@ -963,16 +809,19 @@ void _branch::sumLeaves()
 
     for (auto& B : branches)
     {
-        auto& P = B;
+        // Index walk up the parent chain, for the same reason as in
+        // findParentBranches.
         float3 leafPos = B.nodes.back().pos;    //FIXME dead
+        int walk = (int)(&B - branches.data());
         do
         {
+            auto& P = branches[walk];
             P.numLeaves++;
             P.leavesAVS += leafPos;
             P.leavesFurthest = __max(P.leavesFurthest, glm::length(leafPos - B.nodes[0].pos));
 
-            if (P.parentIndex >= 0) P = branches[P.parentIndex];
-        } while (P.parentIndex >= 0);
+            walk = P.parentIndex;
+        } while (walk >= 0);
     }
 
     for (auto& B : branches)
@@ -1003,6 +852,9 @@ void _branch::generatePivots()
             PVT.frequency = 1.0f;
             PVT.extent = B.extents;
             PVT.offset = DD_0_255_tree(_rootPlant::generator);
+            PVT.shift = 0;
+            PVT.padd1 = 0;
+            PVT.padd2 = 0;
 
             numPivots++;
         }
@@ -1028,7 +880,7 @@ void _branch::propagatePivots()
 void _treeBuilder::findSideBranches()
 {
     numSideBranchesFound = 0;
-    for (int B = 0; B < branches.size(); B++)
+    for (int B = 0; B < (int)branches.size(); B++)
     {
         glm::vec3 P0 = branches[B].nodes[0].pos;
         float R0 = branches[B].nodes[0].radius;
@@ -1038,7 +890,7 @@ void _treeBuilder::findSideBranches()
 
             if (branches[C].nodes[0].radius > R0)
             {
-                for (int n = 0; n < branches[C].nodes.size() - 1; n++)
+                for (int n = 0; n < (int)branches[C].nodes.size() - 1; n++)
                 {
                     //if (branches[C].nodes[n].radius < (R0 * 0.6)) break;
 
@@ -1059,7 +911,7 @@ void _treeBuilder::findSideBranches()
         }
     }
 
-    for (int B = 0; B < branches.size(); B++)
+    for (int B = 0; B < (int)branches.size(); B++)
     {
         if (!branches[B].isDead)
         {
@@ -1074,6 +926,7 @@ void _treeBuilder::findSideBranches()
 
 void _treeBuilder::propagateDead(int root)
 {
+    (void)root;
 }
 
 
@@ -1101,7 +954,7 @@ void _treeBuilder::load_obj()
 
             // solve vert and save in branch
             float3 center = float3(0, 0, 0);
-            for (int j = 0; j < numVerts - 1; j++) {
+            for (uint j = 0; j < numVerts - 1; j++) {
                 center += verts[j] * (1.0f / (numVerts - 1));
             }
 
@@ -1110,14 +963,14 @@ void _treeBuilder::load_obj()
             float l3 = glm::length(verts[0] - verts[2]);
             float radius = 0.19f * (l1 + l2 + l3);
 
-            if (oldNumVerts < numVerts) {
+            if (oldNumVerts < (int)numVerts) {
                 if ((numVerts == 8) && (!currentBranch->isDead)) {
                     // so when the verts increase we have hit the endcap of a branch
                     /*
                     endLeaves.emplace_back();
                     endLeaves.back().pos = center;
                     endLeaves.back().dir = nodeDir;
-                    * /
+                    */
                 }
                 else if (numVerts == 5) {
                     numDeadEnds++;
@@ -1155,14 +1008,14 @@ void _treeBuilder::load_obj()
                 }
             }
 
-            if ((abs(center.x) > 2) || (center.z < -2))
+            if ((fabs(center.x) > 2) || (center.z < -2))
             {
                 //currentBranch->isVisible = false;
             }
 
 
             //if ((center.z > -2) || (abs(center.x) > 2))
-            if ((center.z < -2) || (abs(center.x) < 2))
+            if ((center.z < -2) || (fabs(center.x) < 2))
             {
                 //currentBranch->isVisible = false;
             }
@@ -1177,7 +1030,7 @@ void _treeBuilder::load_obj()
             {
                 currentBranch->isDead = true;
             }
-            * /
+            */
 
 
             verts[0] = verts[numVerts - 1];
@@ -1190,6 +1043,7 @@ void _treeBuilder::load_obj()
 
     }
 
+    fclose(objfile);
 
     findSideBranches();
     disableFloating();
@@ -1302,24 +1156,24 @@ void _treeBuilder::calcSubTwigs()
         B.numLeavesSmall = 0;
     }
     smallestRadius *= 1.3f;
-    * /
+    */
     allDroppedTwigs.clear();
 
     for (int i = 0; i < numBranches; i++)
     {
         auto& B = branches[sorted[i].index];
         {
-            B.start_node = B.nodes.size();;
+            B.start_node = (uint)B.nodes.size();
             B.all_twigs.clear();
             B.leavesAvsPosition = float3(0, 0, 0);
-             
+
             /*
             for (int j = 0; j < B.nodes.size(); j++)
             {
                 if (B.nodes[j].radius > smallestRadius) B.start_node = j;
             }
             if (B.start_node < 5) B.start_node = 0;
-            * /
+            */
 
             for (uint k = 0; k < branches.size(); k++)
             {
@@ -1349,7 +1203,7 @@ void _treeBuilder::calcSubTwigs()
                             if ((branches[bottomIndex].numLeaves >  10) ||
                                 ((R0 / R1) > 0.3f))
                             {
-                                B.start_node = __min(B.start_node, branches[bottomIndex].sideNode);
+                                B.start_node = __min(B.start_node, (uint)branches[bottomIndex].sideNode);
                                 B.numLeavesSmall++;
                                 B.leavesAvsPosition += branches[k].nodes.back().pos;
                                 B.all_twigs.push_back(k);
@@ -1371,7 +1225,7 @@ void _treeBuilder::calcSubTwigs()
                 B.PITCH = asin(VECTOR.y) * 57.f;
             }
         }
-        avsLeavesInBranch += B.all_twigs.size();
+        avsLeavesInBranch += (float)B.all_twigs.size();
     }
     avsLeavesInBranch /= numBranches;
 
@@ -1379,17 +1233,17 @@ void _treeBuilder::calcSubTwigs()
     for (int i = 0; i < numBranches; i++)
     {
         auto& B = branches[sorted[i].index];
-        if (B.all_twigs.size() > avsLeavesInBranch)
+        if ((float)B.all_twigs.size() > avsLeavesInBranch)
         {
-            avsLeavesInBranch_High += B.all_twigs.size();
+            avsLeavesInBranch_High += (float)B.all_twigs.size();
             cnt++;
         }
 
-        for (int i = 0; i < B.nodes.size(); i++)
+        for (uint n = 0; n < B.nodes.size(); n++)
         {
-            if (B.nodes[i].radius < largestRadius && (i < B.start_node))
+            if (B.nodes[n].radius < largestRadius && (n < B.start_node))
             {
-                B.start_node = i;
+                B.start_node = n;
             }
         }
     }
@@ -1416,7 +1270,7 @@ void _treeBuilder::calcLight()
     light.center = float3(0, 0, 0);
     light.Min = float3(10000, 10000, 10000);
     light.Max = float3(-10000, -10000, -10000);
-    int cnt = endLeaves.size();
+    int cnt = (int)endLeaves.size();
     for (int b = 0; b < cnt; b++)
     {
         light.center += endLeaves[b].pos;
@@ -1441,7 +1295,7 @@ void _treeBuilder::calcLight()
         light.cubemap.writeDistance(endLeaves[b].pos + endLeaves[b].dir * 0.5f);
     }
 
-    for (int b = 0; b < branchLeaves.size(); b++)
+    for (int b = 0; b < (int)branchLeaves.size(); b++)
     {
         light.cubemap.writeDistance(branchLeaves[b].pos + branchLeaves[b].dir * 0.2f);
     }
@@ -1462,12 +1316,12 @@ void _treeBuilder::buildTreeRootAndBranches()
 {
     myBranchCollection.branches.clear();
     tempActualBranches.clear();
-    
+
 
     std::filesystem::path full_path = terrafectorEditorMaterial::rootFolder + path;
     full_path.remove_filename();
 
-    for (int i = 0; i < sorted.size(); i++)
+    for (int i = 0; i < (int)sorted.size(); i++)
     {
         if (i < numBranches)
         {
@@ -1475,10 +1329,9 @@ void _treeBuilder::buildTreeRootAndBranches()
             if (!B.deadRootBranch)
             {
                 _branch BRANCH;
-                auto& rootBranch = branches[0];
 
                 BRANCH.numPivots = 0;
-               
+
                 float3 rootPosition = B.nodes[B.start_node].pos;
                 float3 rootAvsLeaves = B.leavesAvsPosition - rootPosition;
                 float rootYaw = -atan2(rootAvsLeaves.z, rootAvsLeaves.x);
@@ -1487,15 +1340,15 @@ void _treeBuilder::buildTreeRootAndBranches()
                 float hmax = -100000000;
                 float wmin = 100000000;
                 float hmin = 100000000;
-                for (int j = 0; j < B.all_twigs.size(); j++)
+                for (int j = 0; j < (int)B.all_twigs.size(); j++)
                 {
                     auto& thisBranch = branches[B.all_twigs[j]];
                     BRANCH.branches.emplace_back();
                     auto& newB = BRANCH.branches.back();
 
                     uint START = thisBranch.start_node;
-                    uint STOP = thisBranch.nodes.size();
-                    for (int k = START; k < STOP; k++)
+                    uint STOP = (uint)thisBranch.nodes.size();
+                    for (uint k = START; k < STOP; k++)
                     {
                         _minimalNode node;
                         node.pos = YAW_VEC(thisBranch.nodes[k].pos - rootPosition, rootYaw);
@@ -1509,31 +1362,6 @@ void _treeBuilder::buildTreeRootAndBranches()
                         hmin = __min(hmin, node.pos.y);
                         hmax = __max(hmax, node.pos.y);
                     }
-
-                    /// FUUUUUUUUUUUUUUUUCK
-                    // this needs parent to find as well as strict ordering. i.e. parent MUST alwats be solved when we get here
-                    //newB.pivots = { 255, 255, 255, 255 };
-                    /*
-                    newB.pivotDepth = thisBranch.branchDepth - rootBranch.branchDepth;
-                    if ((newB.pivotDepth < 4) && (BRANCH.numPivots < 255))
-                    {
-                        newB.tempPivot = BRANCH.numPivots;
-                        auto& PVT = BRANCH.pivots[BRANCH.numPivots];
-
-                        PVT.root = rootBranch.nodes[0].pos;
-
-                        int numLeaves = thisBranch.numLeaves;
-                        float3 extAvs = thisBranch.leavesAvsPosition - PVT.root;
-                        float ext_L = glm::length(extAvs);
-                        
-                        PVT.stiffness = ossilation_stiffness;           // FIXME  NumLeaves shopuld influence both of these
-                        PVT.frequency = rootFrequency() * sqrt(ext_L);
-                        PVT.extent = extAvs * 1.3f;
-                        PVT.offset = DD_0_255_tree(_rootPlant::generator);
-
-                        BRANCH.numPivots++;
-                    }
-                    * /
                 }
 
                 // now search for parent
@@ -1541,19 +1369,6 @@ void _treeBuilder::buildTreeRootAndBranches()
                 BRANCH.sumLeaves();
                 BRANCH.generatePivots();
                 BRANCH.propagatePivots();
-                /*
-                // now add pivot data
-                {
-                    for (auto& B : BRANCH.branches)
-                    {
-                        if (B.parentIndex >= 0 && B.pivotDepth < 4)
-                        {
-                            B.pivots = BRANCH.branches[B.parentIndex].pivots;
-                            B.pivots[B.pivotDepth] = B.tempPivot;
-                        }
-                    }
-                    //need to save a temp pivot abovemthen read from parent herte,thren combine
-                }* /
 
                 BRANCH.stats.rootPitch = acos(B.nodes[B.start_node].dir.y);
                 BRANCH.stats.rootRadius = B.nodes[B.start_node].radius;
@@ -1572,7 +1387,7 @@ void _treeBuilder::buildTreeRootAndBranches()
                 myBranchCollection.branches.push_back(BRANCH.stats);
                 tempActualBranches.push_back(BRANCH);
 
-                
+
                 std::string branchName = full_path.string() + "\\branches\\" + BRANCH.stats.name;
                 std::ofstream stream(branchName);
                 if (stream.good()) {
@@ -1584,11 +1399,11 @@ void _treeBuilder::buildTreeRootAndBranches()
     }
 
     {
-        std::filesystem::path full_path = terrafectorEditorMaterial::rootFolder + path;
-        full_path.remove_filename();
-        full_path += "\\branch.collection";
+        std::filesystem::path collection_path = terrafectorEditorMaterial::rootFolder + path;
+        collection_path.remove_filename();
+        collection_path += "\\branch.collection";
 
-        std::ofstream stream(full_path.string());
+        std::ofstream stream(collection_path.string());
         if (stream.good()) {
             cereal::JSONOutputArchive archive(stream);
             archive(myBranchCollection);
@@ -1603,7 +1418,6 @@ void _treeBuilder::buildTreeRootAndBranches()
         archive(myTreeRoot);
     }
 }
-
 
 
 
@@ -1636,4 +1450,3 @@ float _branchCollection::compare(_branchStats _stats, _branchStats* closest)
     }
     return lowest;
 }
-*/
