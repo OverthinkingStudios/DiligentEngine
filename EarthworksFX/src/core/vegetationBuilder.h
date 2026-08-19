@@ -1625,11 +1625,16 @@ class oneTexture
 public:
     int texWidth = 1;   // these are on teh small end but multiply by 4 still block based
     int texHeight = 2;
-    int numMips = 5;
+    // TODO: this default moved 5 -> 4 with version 103. Version 101 files never
+    // stored numMips, so they now load as 4 instead of 5. Put it back to 5 if
+    // existing texture sets must keep 5 mips - see the oneTexture note in
+    // TextureSplitTool.hpp for the full picture.
+    int numMips = 4;
     float2 start = float2(0.5f, 0.5f);
     float2 stop = float2(0.5f, 0.4f);
     float2 bezier = float2(0.f, 0.f);
     float width = 0.05f;    // all in UV coordinates
+    float2 widthMarker = float2(0.5f, 0.5f);    // 4th control point, the width drag handle
     float bezierOffset = 0.f;
 
     std::array<float, 9> offset = {0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -1654,9 +1659,17 @@ public:
         {
             archive(bezierOffset);
         }
+        if (_version >= 102)
+        {
+            archive(numMips);   // never archived before 102, so it silently reset on every load
+        }
+        if (_version >= 103)
+        {
+            archive_float2(widthMarker);
+        }
     }
 };
-CEREAL_CLASS_VERSION(oneTexture, 101);
+CEREAL_CLASS_VERSION(oneTexture, 103);
 
 class largeTexture
 {

@@ -4,9 +4,8 @@
 
 #include "EarthworksFXApplicationBase.hpp"
 
-// The retired Falcor compat header (now EarthworksFX/legacy/Falcor.h) used to
-// provide imgui, cereal and the global math-type aliases transitively; include
-// them explicitly and alias the ew:: equivalents from the native layer.
+// imgui, cereal and the math-type aliases are included explicitly here; nothing
+// in the engine headers pulls them in transitively any more.
 #include "imgui.h"
 
 #include "ewTypes.h"
@@ -29,10 +28,8 @@ using uint   = ew::uint;
 #include <array>
 #include <vector>
 // this comes from Earthworks, precicely terrafectors although it should be in common
-// (previously reached this tool transitively via the Falcor-era terrafector.h;
-// defined locally since the native gpu layer no longer pulls it in.
-// STEP4: src/core/terrafector.h defines them again and reaches this TU through
-// EarthworksFXApplicationBase.hpp -> terrain.h - guard against redefinition)
+// Guarded because src/core/terrafector.h defines the same macros and reaches this
+// TU through EarthworksFXApplicationBase.hpp -> terrain.h.
 #ifndef archive_float2
 #define archive_float2(v)         \
     {                             \
@@ -58,6 +55,12 @@ ImFont* font_normal;
 ImFont* font_H1;
 ImFont* font_H2;
 ImFont* font_H3;
+
+float h_small;
+float h_normal;
+float h_H1;
+float h_H2;
+float h_H3;
 
 
 
@@ -116,6 +119,14 @@ class gui {
             float textWidth = ImGui::CalcTextSize(_txt).x;
             ImGui::SameLine((windowWidth - textWidth) * 0.5f, 0);
             ImGui::TextUnformatted(_txt);
+        }
+        ImGui::PopFont();
+    }
+
+    void selectable(ImFont* _font, const char* _txt) {
+        ImGui::PushFont(_font);
+        {
+            ImGui::Selectable(_txt);
         }
         ImGui::PopFont();
     }
@@ -182,6 +193,7 @@ class earthworksPaths {
     std::string get_full(std::string& _path);
     std::string get_name(std::string& _path);
     std::string get_fullname(std::string& _path);
+    std::string get_pathNoExt(std::string& _path);
     void replaceAll(std::string& _str, const std::string& _from, const std::string& _to);
     void clean(std::string& _path);
     void to_back_slash(std::string& _path);
@@ -202,10 +214,99 @@ CEREAL_CLASS_VERSION(earthworksPaths, 100);
 
 
 
+/*
+*   These are copies from Earrthwoprks and HAS to be identical - keep them up to date
+*/
+
+// TODO: they are NOT identical any more. Against the engine's sprite_material in
+// hlsl/terrain/groundcover_defines.hlsli, this copy has float4 albedoScale[2]
+// where the engine has float3, and adds autumnColour/winterColour/burntColour
+// which the engine struct does not have; _plantMaterial_TT is CEREAL 101 while
+// the engine's _plantMaterial is 100. So .vegetationMaterial files written here
+// will not round-trip through the engine loader. Decide which side is the
+// intended future state and bring the other up to it.
+struct sprite_material_TT {
+    int albedoTexture = -1;
+    int normalTexture = -1;
+    int translucencyTexture = -1;
+    int pbrTexture = -1;  // this is the one not in use - keep it for now
+
+    float translucency = 1.f;
+    float alphaPow = 1.f;
+    float roughness[2] = {0.1f, 0.7f};
+
+    float4 albedoScale[2] = {{0.5f, 0.5f, 0.5f, 1.f}, {0.6f, 0.5f, 0.6f, 1.f}};  // front and back
+
+    float4 autumnColour = {0.6f, 0.3f, 0.1f, 1.f};
+    float4 winterColour = {0.4f, 0.4f, 0.2f, 1.f};
+    float4 burntColour = {0.1f, 0.1f, 0.1f, 1.f};
+};
 
 
+class _plantMaterial_TT {
+    public:
+    // The Falcor-era `bool renderGui(Gui*)` declaration was dropped here: it had
+    // no definition and no caller, and class Gui no longer exists in the engine.
 
+    static materialCache_plants static_materials_veg;
 
+    std::filesystem::path fullPath;  // FIXME remove ebentuall
+    std::string relativePath;
+    void makeRelative(std::filesystem::path _path);  // FIXME move to terrafector where we keep the path
+
+    std::string displayName = "Not set!";
+    bool isModified = false;
+
+    std::string albedoName;
+    std::string normalName;
+    std::string translucencyName;
+    std::string alphaName;
+
+    std::string albedoPath;
+    std::string normalPath;
+    std::string translucencyPath;
+    std::string alphaPath;  // deprecated but leave for older files
+
+    bool changedForSave = false;
+
+    void import(std::filesystem::path _path, bool _replacePath = true);
+    void import(bool _replacePath = true);
+    void save();
+    void eXport(std::filesystem::path _path);
+    void eXport();
+    void reloadTextures();
+    void loadTexture(int idx);
+
+    template <class Archive>
+    void serialize(Archive& archive, std::uint32_t const _version) {
+        archive(CEREAL_NVP(albedoName));
+        archive(CEREAL_NVP(alphaName));
+        archive(CEREAL_NVP(normalName));
+        archive(CEREAL_NVP(translucencyName));
+
+        archive(CEREAL_NVP(albedoPath));
+        archive(CEREAL_NVP(alphaPath));
+        archive(CEREAL_NVP(normalPath));
+        archive(CEREAL_NVP(translucencyPath));
+
+        archive(CEREAL_NVP(_constData.translucency));
+        archive(CEREAL_NVP(_constData.alphaPow));
+
+        archive_float3(_constData.albedoScale[0]);
+        archive_float3(_constData.albedoScale[1]);
+        archive(CEREAL_NVP(_constData.roughness[0]));
+        archive(CEREAL_NVP(_constData.roughness[1]));
+
+        if (_version >= 101) {
+            archive_float4(_constData.autumnColour);
+            archive_float4(_constData.winterColour);
+            archive_float4(_constData.burntColour);
+        }
+    }
+
+    sprite_material_TT _constData;
+};
+CEREAL_CLASS_VERSION(_plantMaterial_TT, 101);
 
 
 //??? can we just place FBO inside namepsce Diligent later for cleanyp
@@ -217,11 +318,13 @@ class render_target {
     int2 getSize() { return size; }
 
     int2 size = int2(0, 0);
-    int numtargets;
+    int numtargets = 0;
 
     Diligent::RefCntAutoPtr<Diligent::ITexture> pTexture[8];
-    Diligent::ITextureView* pRTV[8];
-    Diligent::ITextureView* pSRV[8];
+    // BUGFIX: these were uninitialized raw pointers - anything reading them before
+    // setup() (e.g. the FBO preview in the GUI) dereferenced garbage. Zero-init.
+    Diligent::ITextureView* pRTV[8] = {};
+    Diligent::ITextureView* pSRV[8] = {};
 };
 
 
@@ -242,11 +345,37 @@ class render_target {
 
 
 /*  This is a single "rectangle", can be curved*/
-// STEP4: the class definition that used to live here (field- and
-// serialization-identical, CEREAL version 101) now reaches this TU through
-// EarthworksFXApplicationBase.hpp -> terrain.h -> vegetationBuilder.h (the
-// vegetation texture-tool is the code this tool split off from). The local
-// copy was removed to avoid the class redefinition.
+// oneTexture is NOT defined here. It reaches this TU through
+// EarthworksFXApplicationBase.hpp -> terrain.h -> vegetationBuilder.h, because
+// this tool was split off from the vegetation texture tool and both sides kept
+// a field-identical copy. A local definition here is a redefinition error.
+//
+// TODO: decide whether oneTexture should stay ONE shared definition or become
+// two independent ones. The facts, so the choice can be made without redoing
+// the archaeology:
+//   - The two copies were field- and serialization-identical at CEREAL 101.
+//   - This tool's own evolution took it to 103: added widthMarker (the 4th
+//     control point / width drag handle the GUI needs), started serializing
+//     numMips (at 101 it was never archived, so it silently reset on load),
+//     and moved the default from 5 mips to 4.
+//   - That evolution has been forward-ported into vegetationBuilder.h rather
+//     than duplicated here, so there is still exactly one definition. Nothing
+//     was deleted to do it: only the widthMarker field, the two version gates
+//     and the version bump were added.
+//   - It is backward compatible. The serializer is version-gated, so existing
+//     101 files still load correctly under the 103 class; the >=102 and >=103
+//     blocks simply do not run.
+//   - The one engine-side consumer is largeTexture::maps, which sits in code
+//     this port marked authoring-only and unreachable (vegetationBuilder.cpp,
+//     at the GenerateATexture/exportTextures cluster). So sharing costs the
+//     engine nothing today.
+//   - The one behavioural change: a 101 file loaded under the 103 class takes
+//     the new numMips default of 4 instead of 5, because 101 never stored it.
+//     Flip that single default back to 5 in vegetationBuilder.h if existing
+//     texture sets must keep 5 mips.
+// The alternative, if the two are meant to diverge: give this tool its own
+// oneTexture inside a namespace (or rename it) so it no longer collides, and
+// accept that .textureTool and vegetation texture files drift apart.
 
 enum texTypes { tex_albedo, tex_alpha, tex_normal, tex_translucency, tex_displacement };
 
@@ -254,12 +383,13 @@ const char* texNames[] = {"albedo", "alpha", "normal", "translucency", "displace
 
 class textureTool {
     public:
+    void onGuiMenubar();
     void renderGui_A();
     void renderGui_TEX();
     void renderGui_B();
     void renderGui_C();
-    void renderGui_main();
-    void renderGui_right();
+    //void renderGui_main();
+    //void renderGui_right();
     void renderGui();
     void load_texture(uint _slot);
     void clear_texture(uint _slot);
@@ -275,17 +405,28 @@ class textureTool {
     void exportNow();
 
     std::string path;
-    std::string name = "please load something";
+    std::string name = "";
     std::array<std::string, 5> texturePaths;
 
     Diligent::RefCntAutoPtr<Diligent::ITexture> tex_input[5];
-    Diligent::ITextureView* pSRV[5];
+    // BUGFIX: zero-init; slots whose file is missing were dangling and got handed
+    // to Diligent as SRVs (machine-dependent garbage -> likely device removal).
+    Diligent::ITextureView* pSRV[5] = {};
+
+    // 1x1 fallback textures so a shader slot is NEVER left unbound (unbound
+    // descriptors are undefined behaviour on the GPU and a classic TDR trigger).
+    Diligent::RefCntAutoPtr<Diligent::ITexture> tex_fallback_white;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> tex_fallback_normal;
+    Diligent::ITextureView* pFallbackWhiteSRV = nullptr;
+    Diligent::ITextureView* pFallbackNormalSRV = nullptr;
 
     // Fbo::SharedPtr fbo;
 
     bool flipRed = false;
     bool flipGreen = false;
     float normalScale = 1.f;
+
+    _plantMaterial material;
 
     std::vector<oneTexture> textures;
 
@@ -308,10 +449,12 @@ class textureTool {
     Diligent::RefCntAutoPtr<Diligent::IShader> VS;
     Diligent::RefCntAutoPtr<Diligent::IShader> GS;
     Diligent::RefCntAutoPtr<Diligent::IShader> PS;
-    //Diligent::RefCntAutoPtr<Diligent::IPipelineState> PSO;
     Diligent::RefCntAutoPtr<Diligent::IPipelineState> PSO;
     Diligent::RefCntAutoPtr<Diligent::IShaderResourceBinding> SRB;
     Diligent::RefCntAutoPtr<Diligent::IShaderResourceVariable> rsVARS[10];
+    // BUGFIX: gConstantBuffer in extractTextures.hlsl was never created or bound -
+    // the GS/PS read undefined values. This is its backing buffer.
+    Diligent::RefCntAutoPtr<Diligent::IBuffer> constantsCB;
 
     template <class Archive>
     void serialize(Archive& archive, unsigned int const _version) {
@@ -329,7 +472,17 @@ CEREAL_CLASS_VERSION(textureTool, 100);
 
 
 
+class setupInfo {
+    public:
 
+        std::string dataRootFolder = "";
+    
+    template <class Archive>
+    void serialize(Archive& archive, unsigned int const _version) {
+        archive(CEREAL_NVP(dataRootFolder));
+    }
+};
+CEREAL_CLASS_VERSION(setupInfo, 100);
 
 
 
@@ -400,11 +553,7 @@ protected:
 
     /// App ImGui pass. Call DrawCommonUI() to keep the shared overlay.
     void UpdateUI() override;
-
-    // --- input --------------------------------------------------------------
-
-    /// Feed live mouse state into the (absent) Earthworks camera. Unused here.
-    void SyncInput() override;
+    void onGuiMenubar();
 
     // --- misc ---------------------------------------------------------------
 
@@ -417,7 +566,11 @@ protected:
     /// Parse app-specific command-line arguments.
     Diligent::AppBase::CommandLineStatus ProcessSampleCommandLine(int argc, const char* const* argv) override;
 
-private:
+    
+    std::filesystem::path savedGamesFile;
+    setupInfo info;
+
+    private:
     textureTool texture_tool;
 };
 
