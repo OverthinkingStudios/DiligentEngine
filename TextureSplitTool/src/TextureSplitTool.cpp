@@ -327,22 +327,22 @@ void textureTool::exportNow() {
 
         if (tex_input[2]) {
             material.normalPath = baseName + "_" + std::to_string(i) + "_normal.png";
-            material.normalName = ew_paths.get_name(material.albedoPath);
-            std::string filename = ew_paths.get_full(material.albedoPath);
+            material.normalName = ew_paths.get_name(material.normalPath);
+            std::string filename = ew_paths.get_full(material.normalPath);
             saveTexture(m_pDevice, m_pImmediateContext, FBO.pTexture[1], filename, false,
                         Diligent::IMAGE_FILE_FORMAT_PNG);
         }
 
         if (tex_input[3]) {
             material.translucencyPath = baseName + "_" + std::to_string(i) + "_translucency.png";
-            material.translucencyName = ew_paths.get_name(material.albedoPath);
-            std::string filename = ew_paths.get_full(material.albedoPath);
+            material.translucencyName = ew_paths.get_name(material.translucencyPath);
+            std::string filename = ew_paths.get_full(material.translucencyPath);
             saveTexture(m_pDevice, m_pImmediateContext, FBO.pTexture[2], filename, false,
                         Diligent::IMAGE_FILE_FORMAT_PNG);
         }
 
         material.displayName = ew_paths.get_name(path);
-        material.fullPath = ew_paths.get_full(baseName + ".vegetationMaterial");
+        material.fullPath = ew_paths.get_full(baseName + "_" + std::to_string(i) + ".vegetationMaterial");
 
         std::ofstream os(material.fullPath);
         cereal::JSONOutputArchive archive(os);
