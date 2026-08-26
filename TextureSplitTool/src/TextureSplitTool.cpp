@@ -358,7 +358,7 @@ void textureTool::exportNow() {
         }
 
         material.displayName = ew_paths.get_name(path);
-        material.fullPath = ew_paths.get_full(baseName + ".vegetationMaterial");
+        material.fullPath = ew_paths.get_full(baseName + "_" + std::to_string(i) + ".vegetationMaterial");
 
         std::ofstream os(material.fullPath);
         cereal::JSONOutputArchive archive(os);
