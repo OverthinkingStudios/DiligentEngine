@@ -37,6 +37,11 @@ if "%CONFIG%"=="" set "CONFIG=RelWithDebInfo"
 set "GENERATOR=%~2"
 if "%GENERATOR%"=="" set "GENERATOR=Visual Studio 17 2022"
 
+REM -A (platform) is only valid for Visual Studio generators - passing it
+REM to e.g. Ninja is a hard configure error.
+set "ARCH_ARG="
+if /i "%GENERATOR:~0,13%"=="Visual Studio" set "ARCH_ARG=-A x64"
+
 set "BUILD_DIR=build\Win64"
 
 echo.
@@ -48,9 +53,13 @@ echo.
 
 REM --- [1/3] Wipe the existing build tree for a true reconfigure --------------
 echo === [1/3] Removing previous build dir (forcing a fresh configure) ===
+REM rmdir's exit code is unreliable when files are locked, so verify the
+REM tree is actually gone instead of trusting errorlevel.
+if exist "%BUILD_DIR%" rmdir /s /q "%BUILD_DIR%"
 if exist "%BUILD_DIR%" (
-    rmdir /s /q "%BUILD_DIR%"
-    if errorlevel 1 goto :fail
+    echo ERROR: could not fully remove "%BUILD_DIR%" - files are locked.
+    echo Close Visual Studio and stop any exe running from that tree, then retry.
+    goto :fail
 )
 mkdir "%BUILD_DIR%"
 if errorlevel 1 goto :fail
@@ -58,7 +67,7 @@ if errorlevel 1 goto :fail
 REM --- [2/3] Configure --------------------------------------------------------
 echo.
 echo === [2/3] Configuring CMake ===
-cmake -S . -B "%BUILD_DIR%" -G "%GENERATOR%" -A x64 ^
+cmake -S . -B "%BUILD_DIR%" -G "%GENERATOR%" %ARCH_ARG% ^
     -DDILIGENT_BUILD_TESTS=TRUE ^
     -DDILIGENT_NO_FORMAT_VALIDATION=FALSE ^
     -DCMAKE_INSTALL_PREFIX=install
@@ -80,5 +89,6 @@ exit /b 0
 echo.
 echo ERROR: a command failed. See output above.
 echo.
+pause
 endlocal
 exit /b 1

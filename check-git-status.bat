@@ -60,6 +60,12 @@ REM ============================================================
 set "LABEL=%~1"
 set "RPATH=%~2"
 
+REM Clear per-repo results so a failed capture can never show the
+REM previous repository's values.
+set "BRANCH="
+set "LASTCOMMIT="
+set "DESCRIBE="
+
 echo.
 echo %C_CYAN%%C_BOLD%[ %LABEL% ]%C_RESET%
 echo   path: %RPATH%

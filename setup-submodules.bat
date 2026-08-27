@@ -45,7 +45,9 @@ if errorlevel 1 goto :fail
 REM Dev repos: never force the parent-recorded SHA when already cloned ^(would
 REM wipe uncommitted work^). Fresh clones still use submodule update --init.
 call :init_dev_repo Earthworks
+if errorlevel 1 goto :fail
 call :init_otscommon
+if errorlevel 1 goto :fail
 
 echo.
 echo === [4/5] Put dev repos on 'main' ^(no detached HEAD^) ===
@@ -99,16 +101,17 @@ goto :eof
 REM ------------------------------------------------------------
 :on_main
 REM %~1 = submodule path. Checkout main (DWIM creates local main
-REM tracking origin/main if needed). Falls back to master.
+REM tracking origin/main if needed). Both dev repos use 'main'; git's
+REM own error is left visible so a real failure is diagnosable.
 if not exist "%~1\.git" (
     echo   [skip] %~1 not present
     goto :eof
 )
-git -C "%~1" checkout main 2>nul || git -C "%~1" checkout master 2>nul
+git -C "%~1" checkout main
 if errorlevel 1 (
-    echo   [warn] %~1: could not checkout main/master
+    echo   [warn] %~1: could not checkout main ^(see git error above^)
 ) else (
-    echo   [ok]   %~1 on branch
+    echo   [ok]   %~1 on main
 )
 goto :eof
 
