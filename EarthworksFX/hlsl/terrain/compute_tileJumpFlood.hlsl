@@ -5,8 +5,10 @@
 
 
 Texture2D<uint>		gInVerts;
-RWTexture2D<uint>	gOutVerts;
-RWTexture2D<float4> gDebug;
+// [[vk::image_format]]: see compute_tileBicubic.hlsl - Vulkan storage-image
+// stores are undefined unless the declared format matches the bound view.
+[[vk::image_format("r16ui")]] RWTexture2D<uint>	gOutVerts;   // split.vertex_A/B_texture
+[[vk::image_format("rgba8")]] RWTexture2D<float4> gDebug;    // split.debug_texture
 
 
 cbuffer gConstants

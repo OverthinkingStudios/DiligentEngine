@@ -16,13 +16,17 @@
 
 SamplerState linearSampler;
 Texture2D<float> gInput;
+// [[vk::image_format]]: SPIR-V storage images must declare the bound view's
+// format or every store is undefined on Vulkan (validation
+// Undefined-Value-StorageImage-FormatMismatch-ImageView); D3D12 reinterprets
+// typed UAVs and hides the mismatch. gOutput matches R32F without annotation.
 RWTexture2D<float> gOutput;
-RWTexture2D<float4> gDebug;
+[[vk::image_format("rgba8")]] RWTexture2D<float4> gDebug;                       // split.debug_texture
 //RWTexture2D<float> gOuthgt_TEMPTILLTR;		// just here to replicate hieghts untill I add the rende to texture pass
 
 Texture2D<float4> gInputAlbedo;
-RWTexture2D<float4> gOutputAlbedo;
-RWTexture2D<float4> gOutputPermanence;
+[[vk::image_format("r11f_g11f_b10f")]] RWTexture2D<float4> gOutputAlbedo;       // tileFbo albedo
+[[vk::image_format("r11f_g11f_b10f")]] RWTexture2D<float4> gOutputPermanence;   // tileFbo alpha
 
 cbuffer gConstants
 {

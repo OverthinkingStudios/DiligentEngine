@@ -55,7 +55,9 @@ static_assert(sizeof(_plant_anim_pivot) == 48, "_plant_anim_pivot must stay 48 b
 static_assert(sizeof(plant) == 384, "plant must stay 384 bytes (80 head + 16x16 lods + 48 rootPivot)");
 static_assert(sizeof(veg_sort) == 16, "veg_sort must stay uint4");
 static_assert(sizeof(vegetation_feedback) == 812, "vegetation_feedback layout drifted");
-static_assert(sizeof(sprite_material) == 60, "sprite_material must match the HLSL structured-buffer stride");
+static_assert(sizeof(sprite_material) == 64, "sprite_material must match the HLSL structured-buffer stride");
+static_assert(offsetof(sprite_material, albedoScale) == 32,
+              "sprite_material albedoScale must sit on a 16-byte boundary (std430 float4-array alignment)");
 
 
 
@@ -222,10 +224,12 @@ public:
         archive(CEREAL_NVP(_constData.translucency));
         archive(CEREAL_NVP(_constData.alphaPow));
 
+        // albedoScale became float4 (.w = roughness, formerly its own array);
+        // explicit NVP names keep existing .plantMaterial JSON assets loading.
         archive_float3(_constData.albedoScale[0]);
         archive_float3(_constData.albedoScale[1]);
-        archive(CEREAL_NVP(_constData.roughness[0]));
-        archive(CEREAL_NVP(_constData.roughness[1]));
+        archive(cereal::make_nvp("_constData.roughness[0]", _constData.albedoScale[0].w));
+        archive(cereal::make_nvp("_constData.roughness[1]", _constData.albedoScale[1].w));
     }
 
 

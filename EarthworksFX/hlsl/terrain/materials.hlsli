@@ -10,12 +10,18 @@
 #define MATERIAL_TYPE_PUDDLE 2
 #define MATERIAL_TYPE_RUBBER 3
 
+// Layout contract: this struct is read as a StructuredBuffer element. D3D12
+// (DXIL) packs it C-tight, but DXC's SPIR-V backend uses std430 for storage
+// buffers (Diligent does not pass -fvk-use-dx-layout), so every field must sit
+// where BOTH schemes agree: float2 on an 8-byte boundary, float3 only at the
+// start of a 16-byte row (a scalar may follow in its tail). Violate this and
+// Vulkan silently reads shifted garbage while D3D12 renders fine.
 struct TF_material
 {
-		int	materialType;
 		float2  uvScale;
+		int	materialType;
 		float	worldSize;
-		
+
 		float2  uvScaleClampAlpha;
 		uint	debugAlpha;
 		float	uvRotation;
@@ -45,11 +51,11 @@ struct TF_material
 		uint	detailElevationTexture;
 		float	detailElevationScale;
 
-		float	detailElevationOffset;
 		float3	buf_____02;
+		float	detailElevationOffset;
 
-		int		standardMaterialType;
 		float3	buf_____03;
+		int		standardMaterialType;
 
 		uint	useColour;
 		uint	baseAlbedoTexture;
@@ -64,8 +70,8 @@ struct TF_material
 		uint	detailRoughnessTexture;
 		float	roughnessScale;
 
-		float	porosity;
 		float3	buf_____05;
+		float	porosity;
 
 		uint	useEcotopes;
 		float	permanenceElevation;
@@ -107,13 +113,28 @@ struct _uv
 
 #if defined(CALLEDFROMHLSL)
 
+// ============================ BISECTION SWITCH ==============================
+// 1: every terrafector/road pixel shader outputs a solid colour at psMain
+// entry, bypassing materials, textures and the fixedMaterials path entirely
+// (splineTerrafector GREEN, meshTerrafector RED, spline overlay BLUE).
+//  - colours show where roads/terrafectors are white today -> raster + blend +
+//    composite are fine, the bug is in material data / textures / gates.
+//  - still white -> the bug is downstream: FBO, blend state, or composite.
+// REVERT TO 0 AFTER THE TEST RUN.
+#define TF_DEBUG_FORCE_OUTPUT 1
+// ============================================================================
+
 // Every gmyTextures_T index below comes from a per-layer TF_material read, so
 // it varies PER PIXEL within a wave. Indexing a descriptor array with a
 // non-uniform index without NonUniformResourceIndex() is undefined behaviour:
 // D3D12/NV tolerates it, Vulkan/NV samples an undefined descriptor, which reads
 // as 1.0 and turns the terrafector solid white. Needs
 // Features.ShaderResourceRuntimeArrays at engine init on Vulkan.
-#define TF_TEX(idx) gmyTextures_T[NonUniformResourceIndex(idx)]
+// The clamp handles missing content: texture slots are int and legitimately
+// carry -1 when a load failed (find_insert_texture). An out-of-bounds
+// descriptor read is UB - undefined (reads as white) on Vulkan/NV, zero on
+// D3D12 - while slot 4095 is always the layer's black dummy padding.
+#define TF_TEX(idx) gmyTextures_T[NonUniformResourceIndex(min(uint(idx), 4095u))]
 
 void solveUV(const TF_material _mat, const float2 worldPos, const float2 uvIn, inout _uv uv)
 {

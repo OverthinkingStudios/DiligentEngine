@@ -382,6 +382,12 @@ static_assert(sizeof(GC_feedback) == 1888, "GC_feedback size must match the SPIR
 
 
 
+// Layout contract: StructuredBuffer element, compiled by BOTH MSVC (C-tight)
+// and DXC (DXIL C-tight, but SPIR-V std430-like for Vulkan). The former
+// `float3 albedoScale[2]; float roughness[2];` tail diverged on Vulkan -
+// std430 gives vec3 arrays a 16-byte stride - so albedo scale and roughness
+// now share one 16-byte float4 row per side. Only add members where DXIL and
+// std430 agree (see the TF_material comment in materials.hlsli).
 struct sprite_material
 {
     int alphaTexture; // a
@@ -393,9 +399,9 @@ struct sprite_material
     int translucencyTexture;
     float translucency;
     float alphaPow;
+    float buf_____00;          // pad: aligns albedoScale below to 16 bytes
 
-    float3 albedoScale[2]; // front and back
-    float roughness[2];
+    float4 albedoScale[2]; // front and back; .rgb albedo scale, .w roughness
 
 };
 

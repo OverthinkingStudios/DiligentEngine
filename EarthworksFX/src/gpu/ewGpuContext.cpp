@@ -5,6 +5,7 @@
 #include <sstream>
 
 #include "GraphicsTypes.h"
+#include "GraphicsAccessories.hpp" // GetTextureFormatAttribs (stencil-aspect check in clearFbo)
 #include "DebugUtilities.hpp"
 
 #include "ots/Log.hpp"
@@ -123,7 +124,13 @@ void GpuContext::clearFbo(Fbo* pFbo, const float4& color, float depth, uint8_t s
             Diligent::CLEAR_DEPTH_STENCIL_FLAGS flags = Diligent::CLEAR_DEPTH_FLAG_NONE;
             if (clearDepth)
                 flags = flags | Diligent::CLEAR_DEPTH_FLAG;
-            if (clearStencil)
+            // Only request a stencil clear if the format has a stencil plane:
+            // clearing the stencil aspect of a depth-only format (D32) is
+            // invalid Vulkan (VUID-vkCmdClearDepthStencilImage-image-02825),
+            // D3D12 silently ignores it.
+            const Diligent::TextureFormatAttribs& fmtAttribs =
+                Diligent::GetTextureFormatAttribs(pDSV->GetDesc().Format);
+            if (clearStencil && fmtAttribs.ComponentType == Diligent::COMPONENT_TYPE_DEPTH_STENCIL)
                 flags = flags | Diligent::CLEAR_STENCIL_FLAG;
             m_pContext->ClearDepthStencil(pDSV, flags, depth, stencil,
                                           Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);

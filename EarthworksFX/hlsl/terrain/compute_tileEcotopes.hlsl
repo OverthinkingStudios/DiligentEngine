@@ -36,8 +36,10 @@ Buffer<uint> plantDensity;
 
 
 
+// [[vk::image_format]]: see compute_tileBicubic.hlsl - Vulkan storage-image
+// stores are undefined unless the declared format matches the bound view.
 RWTexture2D<float> gHeight : register(u0);
-RWTexture2D<float3> gAlbedo : register(u1);
+[[vk::image_format("r11f_g11f_b10f")]] RWTexture2D<float3> gAlbedo : register(u1);  // tileFbo albedo
 
 Texture2D<float> gLowresHgt : register(t0);
 Texture2D<float3> gInPermanence : register(t1);

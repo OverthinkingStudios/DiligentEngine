@@ -252,6 +252,30 @@ AppBase::CommandLineStatus EarthworksFXApplicationBase::ProcessCommandLine(int a
     return ProcessSampleCommandLine(ArgsParser.ArgC(), ArgsParser.ArgV());
 }
 
+// Diligent's errors/warnings (failed SetArray, vkAllocateDescriptorSets /
+// descriptor-pool exhaustion, PSO validation, ...) go to its DEFAULT callback -
+// printf + the debugger Output window - and never reached the spdlog file.
+// Several of those failures render silently on Vulkan (unbound descriptors
+// sample as white on NV) instead of crashing, so route them into the log.
+static void DILIGENT_CALL_TYPE DiligentMessageToSpdlog(DEBUG_MESSAGE_SEVERITY Severity,
+                                                       const Char*            Message,
+                                                       const Char*            Function,
+                                                       const Char*            File,
+                                                       int                    Line)
+{
+    const char* Msg = Message != nullptr ? Message : "";
+    switch (Severity)
+    {
+        case DEBUG_MESSAGE_SEVERITY_INFO: spdlog::info("[Diligent] {}", Msg); break;
+        case DEBUG_MESSAGE_SEVERITY_WARNING: spdlog::warn("[Diligent] {}", Msg); break;
+        default:
+            spdlog::error("[Diligent] {} ({}, {}:{})", Msg,
+                          Function != nullptr ? Function : "?",
+                          File != nullptr ? File : "?", Line);
+            break;
+    }
+}
+
 void EarthworksFXApplicationBase::InitializeDiligentEngine(const NativeWindow* pWindow)
 {
     Uint32 NumImmediateContexts = 0;
@@ -318,6 +342,7 @@ void EarthworksFXApplicationBase::InitializeDiligentEngine(const NativeWindow* p
             if (!pFactoryD3D12->LoadD3D12())
                 LOG_ERROR_AND_THROW("Failed to load Direct3D12");
             m_pEngineFactory = pFactoryD3D12;
+            pFactoryD3D12->SetMessageCallback(&DiligentMessageToSpdlog); // before device creation, so init-time messages land in the log too
 
             // Same rationale as the Vulkan branch below: in Debug builds
             // Diligent turns validation failures into a MODAL MessageBox on the
@@ -403,6 +428,7 @@ void EarthworksFXApplicationBase::InitializeDiligentEngine(const NativeWindow* p
         {
             IEngineFactoryVk* pFactoryVk = LoadAndGetEngineFactoryVk();
             m_pEngineFactory             = pFactoryVk;
+            pFactoryVk->SetMessageCallback(&DiligentMessageToSpdlog); // before device creation, so init-time messages land in the log too
 
             // In Debug builds Diligent turns validation failures (UNEXPECTED)
             // into a MODAL Abort/Retry/Ignore MessageBox on the render thread.
@@ -470,6 +496,10 @@ void EarthworksFXApplicationBase::InitializeDiligentEngine(const NativeWindow* p
         default:
             LOG_ERROR_AND_THROW("Unsupported device type");
     }
+
+    // After the factory exists, before anything can fail silently. The
+    // callback is global to the engine module, one call covers all backends.
+    m_pEngineFactory->SetMessageCallback(&DiligentMessageToSpdlog);
 
     m_AppTitle.append(" (");
     m_AppTitle.append(GetRenderDeviceTypeString(m_DeviceType));

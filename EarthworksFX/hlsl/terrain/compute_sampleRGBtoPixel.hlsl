@@ -7,7 +7,9 @@
 
 
 Texture2D<float3> 					gIn;
-RWTexture2D<float4> 					gOut;
+// [[vk::image_format]]: Vulkan storage-image stores are undefined unless the
+// declared format matches the bound view (see compute_tileBicubic.hlsl).
+[[vk::image_format("rgba8")]] RWTexture2D<float4> 					gOut;   // veg RGB_MAP
 
 RWStructuredBuffer<uint> data;
 

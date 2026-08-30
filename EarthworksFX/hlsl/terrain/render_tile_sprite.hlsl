@@ -173,7 +173,7 @@ float4 psMain(GSOut vOut) : SV_TARGET
     //if (alpha < 0.5) return float4(1, 0, 0, 1);
     clip(alpha - 0.5);
     alpha = smoothstep(0.3, 0.8, alpha);
-    albedo.rgb *= MAT.albedoScale[0] * 2.f;
+    albedo.rgb *= MAT.albedoScale[0].rgb * 2.f;
 
     float3 N = vOut.normal;
     if (MAT.normalTexture >= 0)
@@ -194,7 +194,7 @@ float4 psMain(GSOut vOut) : SV_TARGET
     color += 0.539 * gEnv.SampleLevel(gSampler, N * float3(1, 1, -1), 0).rgb * albedo.rgb;// * pow(vOut.AmbietOcclusion, 0.3);
 
     // specular sunlight
-   float RGH = MAT.roughness[0] + 0.001;
+   float RGH = MAT.albedoScale[0].w + 0.001;
    float pw = 15.f / RGH;
    color += pow(ndoth, pw) * 0.6  * vOut.diffuseLight * (1 - RGH);
 

@@ -5,10 +5,13 @@
 
 
 
-RWTexture2D<float4>	gAlbedo;
-RWTexture2D<float4> gNormal;
-RWTexture2D<float4> gTranslucency;
-RWTexture2D<float4> gpbr;
+// [[vk::image_format]]: Vulkan storage-image stores are undefined unless the
+// declared format matches the bound view (see compute_tileBicubic.hlsl).
+// All four bind texTool FBO targets, TEX_FORMAT_RGBA8_UNORM.
+[[vk::image_format("rgba8")]] RWTexture2D<float4>	gAlbedo;
+[[vk::image_format("rgba8")]] RWTexture2D<float4> gNormal;
+[[vk::image_format("rgba8")]] RWTexture2D<float4> gTranslucency;
+[[vk::image_format("rgba8")]] RWTexture2D<float4> gpbr;
 
 
 

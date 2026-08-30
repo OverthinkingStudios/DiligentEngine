@@ -1295,6 +1295,11 @@ void terrafectorSystem::exportMaterialBinary(std::string _path, std::string _evo
 
 
 
+    // FORMAT BREAK 2026-08-27: TF_material was reordered for Vulkan std430
+    // compatibility (see the layout contract in terrafector.h), which changed
+    // this raw byte payload. No reader existed in this codebase at that point.
+    // If an external consumer (EVO) ever picks this file up, it must use the
+    // post-reorder layout; any Materials.gpu written before that date is stale.
     textureName = _path + "/Materials.gpu";
     file = fopen(textureName.c_str(), "wb");
     if (file)

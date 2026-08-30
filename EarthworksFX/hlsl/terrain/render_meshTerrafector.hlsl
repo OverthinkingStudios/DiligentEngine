@@ -120,6 +120,13 @@ PS_OUTPUT_Terrafector fixedMaterials(const uint material, const float2 uv, const
 PS_OUTPUT_Terrafector psMain(splineVSOut vIn) : SV_TARGET
 {
     PS_OUTPUT_Terrafector output = (PS_OUTPUT_Terrafector) 0;
+#if TF_DEBUG_FORCE_OUTPUT
+    // Bisection (see materials.hlsli): solid RED, full coverage, no material reads.
+    output.Albedo = float4(1, 0, 0, 1);
+    output.PBR    = float4(0.5, 0.5, 0.5, 1);
+    output.Alpha  = float4(1, 1, 1, 1);
+    return output;
+#endif
     uint material = vIn.flags.y;
     TF_material MAT = materials[material];
 

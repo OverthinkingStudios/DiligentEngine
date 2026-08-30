@@ -417,15 +417,15 @@ void textureTool::renderToTexture(int _slot) {
         CB->nStrength = normalScale;
         CB->toSRGB = 0;  // original only sets this for the final export, not the preview
 
-        // The source is float3 and the cbuffer slot is float4. This was a .rgb
-        // swizzle, which needs GLM_FORCE_SWIZZLE - only ever defined by the
-        // retired Falcor header, so it no longer compiles. w is set to 1 rather
-        // than left undefined; nothing reads it yet (see ExtractTexturesConstants).
-        CB->albedoScale[0] = float4(material._constData.albedoScale[0], 1.f);
-        CB->albedoScale[1] = float4(material._constData.albedoScale[1], 1.f);
+        // sprite_material.albedoScale is float4 since the std430 relayout:
+        // .rgb = albedo scale, .w = roughness. The cbuffer slot keeps w = 1
+        // rather than leaking roughness; nothing reads it yet
+        // (see ExtractTexturesConstants).
+        CB->albedoScale[0] = float4(float3(material._constData.albedoScale[0]), 1.f);
+        CB->albedoScale[1] = float4(float3(material._constData.albedoScale[1]), 1.f);
 
-        CB->roughness[0] = material._constData.roughness[0];
-        CB->roughness[1] = material._constData.roughness[1];
+        CB->roughness[0] = material._constData.albedoScale[0].w;
+        CB->roughness[1] = material._constData.albedoScale[1].w;
     }
 
     // BUGFIX: command order. Previous order was Commit -> SetRenderTargets -> SetPSO,

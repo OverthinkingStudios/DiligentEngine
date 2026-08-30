@@ -302,8 +302,8 @@ public:
     */
 
 	struct {
-		int	materialType = 0;
 		float2  uvScale = {1.0f, 1.0f};
+		int	materialType = 0;
 		float	worldSize = 4.0f;
 
 		float2  uvScaleClampAlpha = { 1.0f, 1.0f };
@@ -339,11 +339,11 @@ public:
 		uint	detailElevationTexture = 0;
 		float	detailElevationScale = 0.0f;
 
-		float	detailElevationOffset = 0.5f;
 		float3	buf_____02;
+		float	detailElevationOffset = 0.5f;
 
-		int		standardMaterialType = 0;		// mircrowshadow etc
 		float3	buf_____03;
+		int		standardMaterialType = 0;		// mircrowshadow etc
 
 		uint	useColour = 0;
 		uint	baseAlbedoTexture = 0;
@@ -358,8 +358,8 @@ public:
 		uint	detailRoughnessTexture = 0;
 		float	roughnessScale = 1.0f;
 
-		float	porosity = 0.5f;
 		float3	buf_____05;
+		float	porosity = 0.5f;
 
 		uint	useEcotopes = 0;
 		float	permanenceElevation = 0;
@@ -424,13 +424,22 @@ CEREAL_CLASS_VERSION(terrafectorEditorMaterial, TFMATERIAL_VERSION);
 // _constData mirrors materials.hlsli's TF_material BYTE-FOR-BYTE: the same
 // bytes are (1) the HLSL StructuredBuffer element of `materials` in all three
 // terrafector shaders, (2) the cereal-JSON field list of .terrafectorMaterial
-// files, and (3) the raw fwrite payload of Materials.gpu / exportBinary.
+// files (name-keyed, so field ORDER may change without breaking assets), and
+// (3) the raw fwrite payload of Materials.gpu / exportBinary (order-sensitive:
+// reordering fields changes that on-disk format).
 // The `buf_____NN` float3 pads are load-bearing. The asserted 512 bytes are
 // 15 rows x 16 B + 32 B subMaterials + 240 B ecotopeMasks.
+// The layout must ALSO be identical under Vulkan std430 (see the comment on
+// TF_material in materials.hlsli): float2 on 8-byte boundaries, float3 only at
+// the start of a 16-byte row. The offsets below pin exactly the rows where the
+// two schemes could diverge.
 static_assert(sizeof(TF_material) == 512, "TF_material contract: 15*16 + 32 + 240 = 512 bytes");
+static_assert(offsetof(TF_material, uvScale) == 0 && offsetof(TF_material, materialType) == 8,
+              "TF_material row 1: float2 must lead the row (std430 aligns float2 to 8)");
 static_assert(offsetof(TF_material, useAlpha) == 32, "TF_material row 3 moved");
 static_assert(offsetof(TF_material, useElevation) == 80, "TF_material elevation row moved");
-static_assert(offsetof(TF_material, buf_____02) == 116, "TF_material pad 02 moved (load-bearing padding)");
+static_assert(offsetof(TF_material, buf_____02) == 112 && offsetof(TF_material, buf_____03) == 128 && offsetof(TF_material, buf_____05) == 192,
+              "TF_material float3 pads must sit at 16-byte row starts (std430 aligns float3 to 16)");
 static_assert(offsetof(TF_material, useColour) == 144, "TF_material colour row moved");
 static_assert(offsetof(TF_material, subMaterials) == 240, "TF_material subMaterials moved");
 static_assert(offsetof(TF_material, ecotopeMasks) == 272, "TF_material ecotopeMasks moved");

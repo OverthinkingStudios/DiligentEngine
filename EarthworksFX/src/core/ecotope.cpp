@@ -45,11 +45,18 @@ ecotope::ecotope() {
 
 void ecotope::reloadTextures(std::string _resPath)
 {
-    texAlbedo = ew::Texture::createFromFile(_resPath + albedoName, true, false);
-    texNoise = ew::Texture::createFromFile(_resPath + noiseName, false, false);
-    texDisplacement = ew::Texture::createFromFile(_resPath + displacementName, false, false);
-    texRoughness = ew::Texture::createFromFile(_resPath + roughnessName, false, false);
-    texAO = ew::Texture::createFromFile(_resPath + aoName, false, false);
+    // Empty names are common in the Steg data set; loading "_resPath +" an
+    // empty name resolved to the directory itself and spammed one
+    // createFromFile error per slot (44 per run). Null textures are handled
+    // downstream (dummy-bound).
+    auto loadIfNamed = [&](const std::string& name, bool generateMips) -> ew::Texture::SharedPtr {
+        return name.empty() ? nullptr : ew::Texture::createFromFile(_resPath + name, generateMips, false);
+    };
+    texAlbedo = loadIfNamed(albedoName, true);
+    texNoise = loadIfNamed(noiseName, false);
+    texDisplacement = loadIfNamed(displacementName, false);
+    texRoughness = loadIfNamed(roughnessName, false);
+    texAO = loadIfNamed(aoName, false);
 }
 
 

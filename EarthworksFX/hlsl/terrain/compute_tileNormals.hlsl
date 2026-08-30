@@ -12,9 +12,11 @@
 #include "groundcover_defines.hlsli"
 
 
+// [[vk::image_format]]: see compute_tileBicubic.hlsl - Vulkan storage-image
+// stores are undefined unless the declared format matches the bound view.
 RWTexture2D<float> 		gInHgt;
-RWTexture2D<float3> 	gOutNormals;
-RWTexture2D<float4> 	gOutput;
+[[vk::image_format("r11f_g11f_b10f")]] RWTexture2D<float3> 	gOutNormals;  // split.normals_texture
+[[vk::image_format("rgba8")]] RWTexture2D<float4> 	gOutput;              // split.debug_texture
 
 RWStructuredBuffer<gpuTile>		tiles;		// also update minHgt_mm and maxHgt_mm
 

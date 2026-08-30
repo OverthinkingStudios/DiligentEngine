@@ -3937,8 +3937,8 @@ void _rootPlant::bake(std::string _path, std::string _seed, lodBake* _info, glm:
 
         Mat._constData.translucency = _info->translucency;
         Mat._constData.alphaPow = _info->alphaPow;
-        Mat._constData.roughness[0] = 0.8f;
-        Mat._constData.roughness[1] = 0.8f;
+        Mat._constData.albedoScale[0].w = 0.8f;    // roughness lives in .w since the std430 relayout
+        Mat._constData.albedoScale[1].w = 0.8f;
 
         std::ofstream os(resource + _info->material.path);
         cereal::JSONOutputArchive archive(os);

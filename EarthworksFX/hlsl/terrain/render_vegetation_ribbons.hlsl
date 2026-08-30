@@ -553,7 +553,7 @@ PSIn vsMain(uint vId : SV_VertexID, uint iId : SV_InstanceID)
         output.vertexLight.rgb += 1.16 * gEnv.SampleLevel(gSmpLinear, N * float3(1, 1, -1), 5).rgb * albedo.rgb * pow(output.AmbietOcclusion, 0.3);
 
     // specular sunlight
-        float RGH = MAT.roughness[0] + 0.001; //?? frontback
+        float RGH = MAT.albedoScale[0].w + 0.001; //?? frontback
         float pw = 1.f / RGH;
         output.vertexLight.rgb += pow(ndoth, pw) * 0.1 * dappled * output.diffuseLight.rgb;
 
@@ -790,7 +790,7 @@ PS_OUTPUT_Bake psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     }
 
     int frontback = (int) !isFrontFace;
-    color *= vOut.AlbedoScale  * MAT.albedoScale[frontback] * 2.f;
+    color *= vOut.AlbedoScale  * MAT.albedoScale[frontback].rgb * 2.f;
 
     if(bake_AoToAlbedo)
     {
@@ -858,7 +858,7 @@ float4 psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     float ndoth = saturate(dot(N, normalize(sunDirection + eye)));
     float ndots = dot(N, sunDirection);
 
-    float RGH = MAT.roughness[frontback] + 0.001;
+    float RGH = MAT.albedoScale[frontback].w + 0.001;
     float pw = 15.f / RGH;
     float spec = pow(ndoth, pw) * 1000;
 
@@ -984,7 +984,7 @@ if (vOut.material_IDX >= 0)
     {
         surface.albedo = float4(0.5, 0.5, 0.5, 1);
     }
-    surface.albedo.rgb *= vOut.AlbedoScale * 2 * MAT.albedoScale[frontback];
+    surface.albedo.rgb *= vOut.AlbedoScale * 2 * MAT.albedoScale[frontback].rgb;
     float alpha = pow(surface.albedo.a, MAT.alphaPow);
 
     //float G = dot(surface.albedo.rgb, float3(0.229, 0.587, 0.114));
@@ -1080,7 +1080,7 @@ if (vOut.material_IDX >= 0)
     // pre multiply shadow
     surface.fresnel = schlick(0.06, 1 - abs(dot(vOut.normal, sunDirection)));  // sun fresnel and needs smoothe for SSS
     surface.ao = pow(vOut.AmbietOcclusion, 0.3);
-    surface.roughness = MAT.roughness[frontback] + 0.001;
+    surface.roughness = MAT.albedoScale[frontback].w + 0.001;
 
     float gray = dot(surface.albedo.rgb, float3(0.229, 0.587, 0.114));
     surface.translucency = gray * pow(surface.albedo.rgb / gray, 2) *vOut.TranslucencyScale* MAT.translucency;

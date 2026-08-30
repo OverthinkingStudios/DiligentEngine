@@ -9,8 +9,10 @@
 SamplerState linearSampler;		// for noise and colours
 
 Texture2D<float> 					gInHgt;
-RWTexture2D<uint> 					gOutVerts;
-RWTexture2D<float4> 				gDebug;
+// [[vk::image_format]]: see compute_tileBicubic.hlsl - Vulkan storage-image
+// stores are undefined unless the declared format matches the bound view.
+[[vk::image_format("r16ui")]] RWTexture2D<uint> 					gOutVerts;  // split.vertex_A/B_texture
+[[vk::image_format("rgba8")]] RWTexture2D<float4> 				gDebug;     // split.debug_texture
 RWStructuredBuffer<centerFeedback> 	tileCenters;
 RWStructuredBuffer<gpuTile> 		tiles;
 
