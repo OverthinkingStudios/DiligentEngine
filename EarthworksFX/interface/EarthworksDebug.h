@@ -166,6 +166,13 @@ struct DebugToggles
     // 1..7 keys to the renderer, so this is the way to switch modes from the
     // UI. -1 means "no request"; it is applied once and reset to -1.
     int requestTerrainMode = -1;
+
+    // --- readback fence batching (step 6, A/B) ---------------------------
+    // ON: one shared fence signal per frame covers all readback copies
+    // (tileCenters + GC_feedback + vegetation feedback). OFF: signal
+    // immediately per copy - the pre-step-6 cadence, for measuring the
+    // batching in isolation. Takes effect on the next frame.
+    bool rbBatchSignals = true;
 };
 
 // Unlike DebugToggles these are NOT instant switches: each option is sampled
@@ -179,6 +186,45 @@ struct DebugLoadOptions
     // the terrain. Sampled in Earthworks_4::onLoad where _shadowEdges::load
     // runs, just before the shadow solver thread starts.
     bool buildingShadows = true;
+
+    // PORT-REVIEW (step 6): allocate the DORMANT fog volumes (mainNear +
+    // parabolicFar, ~130 MB of 3D textures that are never computed or
+    // sampled). Off by default - flip on before load if the near-fog /
+    // parabolic paths ever come back to life. Their scalar parameters
+    // (fog_near_* in shaderLightBuffer) are unaffected by this gate.
+    bool allocDormantFogVolumes = false;
+};
+
+// ---------------------------------------------------------------------------
+// Frame timing (step 6). CPU side is measured by the app shell around its
+// frame loop; GPU side comes from an ew::GpuFrameTimer duration-query ring
+// (2-5 frames of latency, smoothed like the CPU values). All zeros until the
+// first window (0.5 s) completes. "Theoretical fps" = 1000 / max(cpuWork,
+// gpu): what an uncapped run should reach - readable even while vsync caps
+// the wall frame time (the VK vsync-off gap, bringup_notes known open items).
+// ---------------------------------------------------------------------------
+struct FrameTiming
+{
+    // Last completed frame (unsmoothed).
+    float cpuWorkMs = 0.f;   // Update() start -> just before Present() (no vsync wait)
+    float presentMs = 0.f;   // time spent inside ISwapChain::Present (vsync wait shows here)
+    float wallMs    = 0.f;   // frame-start to frame-start (what fps counters show)
+    float gpuMs     = 0.f;   // newest resolved GPU duration query (a few frames old)
+    bool  gpuValid  = false; // a GPU query has resolved at least once
+
+    // Smoothed over the same 0.5 s window as the fps counter.
+    float avgCpuWorkMs = 0.f;
+    float avgPresentMs = 0.f;
+    float avgWallMs    = 0.f;
+    float avgGpuMs     = 0.f;
+
+    // 1000 / max(avgCpuWorkMs, avgGpuMs); 0 until data exists.
+    float theoreticalFps = 0.f;
+    // 0 = unknown, 1 = CPU-bound, 2 = GPU-bound (which term won the max above).
+    int   bound = 0;
+
+    bool     gpuSupported = false; // device supports duration queries
+    uint32_t gpuDropouts  = 0;     // frames where no query slot was free (total)
 };
 
 struct DebugMetrics
@@ -232,6 +278,20 @@ struct DebugMetrics
     uint32_t vegFrustDiscard = 0;   // clipLod frustum rejections
     uint32_t vegFeedbackAge  = 0;   // readback ring latency in frames (1-2 expected)
 
+    // --- readback ring health (step 6 / readback_starvation_handoff §3) -----
+    // Running per-instance totals mirrored from the two terrain rings each
+    // update. failNoSlot = the app fence has not completed for any slot;
+    // failMapBusy = the fence says complete but MapBuffer(DO_NOT_WAIT)
+    // returned null (Diligent's internal staging tracking lags) - WHICH one
+    // dominates under interactive starvation is the discriminator the handoff
+    // asks for. Deliberately NOT reset per frame.
+    uint32_t tileRbCalls = 0, tileRbOk = 0, tileRbNoSlot = 0, tileRbMapBusy = 0;
+    uint32_t gcRbCalls   = 0, gcRbOk   = 0, gcRbNoSlot   = 0, gcRbMapBusy   = 0;
+
+    // PSO cache churn: pipeline states created THIS frame (reset per frame).
+    // Anything non-zero after the first seconds of a run is a hitch source.
+    uint32_t psoCreations = 0;
+
     // --- tile-split diagnostics ----------------------------------------
     // Why the quadtree does (or does not) refine past the root tile. The split
     // test (terrainManager::testForSplit) needs a tile to be BOTH in-frustum and
@@ -258,6 +318,8 @@ struct DebugMetrics
         splitCandidates = splitsPerformed = splitBlockedData = 0;
         gpuTerrainTiles = gpuTerrainBlocks = gpuTerrainTris = gpuQuads = 0;
         vegInstances = vegBlocks = vegBillboards = vegFrustDiscard = vegFeedbackAge = 0;
+        psoCreations = 0;
+        // The *Rb* readback counters are running totals - not reset.
     }
 };
 
@@ -308,6 +370,10 @@ struct HoleFrame
     uint32_t detailFirst    = 0;   // range into HoleStats::details
     uint32_t detailCount    = 0;
     bool     readbackMapped = false;
+    // Why mapCompleted returned nothing this frame (0 = mapped, 1 = no slot
+    // fence-complete, 2 = fence complete but MapBuffer returned null). The
+    // starvation-handoff discriminator, recorded per frame for holes.txt.
+    uint8_t  mapFailReason  = 0;
 };
 
 /// One testflight screenshot, tied to the last collected frame record.
@@ -426,6 +492,17 @@ struct HoleStats
     }
 };
 
+// Lifetime totals of GPU pipeline objects the ew layer created (step 6 perf
+// pass: cache-size visibility). Written from ewShader/ewGpuContext, shown in
+// the debug panel; a single summary line is logged once shortly after load.
+struct GpuObjectStats
+{
+    uint32_t graphicsPSOs = 0;
+    uint32_t computePSOs  = 0;
+    uint32_t srbs         = 0;
+    uint32_t blitPSOs     = 0;
+};
+
 struct DebugState
 {
     DebugToggles toggles;
@@ -433,6 +510,8 @@ struct DebugState
     DebugMetrics live;  // accumulated during the current frame
     DebugMetrics shown; // snapshot of the last completed frame (stable for the UI)
     HoleStats    holeStats; // testflight-only hole/churn trace (see above)
+    FrameTiming  timing;    // CPU + GPU frame timing (step 6)
+    GpuObjectStats gpuObjects; // lifetime PSO/SRB totals
 
     void beginFrame() { live.resetCounters(); }
     void endFrame() { shown = live; }

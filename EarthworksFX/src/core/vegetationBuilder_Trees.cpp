@@ -1218,7 +1218,7 @@ void _treeBuilder::calcSubTwigs()
             B.deadRootBranch = B.all_twigs.size() < 10;
             if (B.numLeavesSmall > 1)
             {
-                B.leavesAvsPosition /= B.numLeavesSmall;
+                B.leavesAvsPosition /= float(B.numLeavesSmall);   // PORT-REVIEW: explicit cast, same math (glm converted implicitly); silences C4244
                 float3 VECTOR = B.leavesAvsPosition - B.nodes[B.start_node].pos;
                 B.LENGTH = glm::length(VECTOR);
                 VECTOR = glm::normalize(VECTOR);
@@ -1279,7 +1279,7 @@ void _treeBuilder::calcLight()
     }
     if (cnt > 0)
     {
-        light.center /= cnt;
+        light.center /= float(cnt);   // PORT-REVIEW: explicit cast, same math (glm converted implicitly); silences C4244
     }
     glm::vec3 extents = light.Max - light.Min;
     light.scale = 2.0f / extents;

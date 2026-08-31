@@ -105,7 +105,10 @@ struct PS_OUTPUT
     float4 light45 : SV_Target4;
 };
 
-PS_OUTPUT psMain(PSIn vOut) : SV_TARGET
+// PORT-REVIEW (step 6, zero-warning): function-level ": SV_TARGET" dropped -
+// the PS_OUTPUT fields carry the SV_Target0..4 semantics (see
+// render_splineTerrafector.hlsl for the full note).
+PS_OUTPUT psMain(PSIn vOut)
 {
     PS_OUTPUT P = (PS_OUTPUT)0;
 

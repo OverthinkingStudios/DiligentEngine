@@ -3657,6 +3657,11 @@ void _rootPlant::bake64kplants(std::string _path)
         flushAndWait(renderInfo.context);
 
         buffer_feedback_read->enqueueCopy(renderInfo.context, buffer_feedback);
+        // PORT-REVIEW (step-6 fence batching): this offline bake path maps the
+        // ring back IMMEDIATELY after a full flush+wait instead of waiting for
+        // the renderer's end-of-frame signal - signal the shared fence here so
+        // the slot is fence-complete when mapCompleted runs.
+        renderInfo.context->signalReadbackFrame();
         flushAndWait(renderInfo.context);
         if (const void* pData = buffer_feedback_read->mapCompleted(renderInfo.context))
         {

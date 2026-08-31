@@ -492,6 +492,15 @@ void TestFlightController::AccumulateFrameStats(double ElapsedTime)
     Run.sumMs += Ms;
     Run.minMs = std::min(Run.minMs, Ms);
     Run.maxMs = std::max(Run.maxMs, Ms);
+
+    // PORT-REVIEW step-6 timing: the shell writes per-frame CPU-work / GPU values
+    // into ew::gDebug.timing (GPU is a few frames old - fine for shot averages).
+    Run.sumCpuWorkMs += ew::gDebug.timing.cpuWorkMs;
+    if (ew::gDebug.timing.gpuValid)
+    {
+        Run.sumGpuMs += ew::gDebug.timing.gpuMs;
+        ++Run.gpuFrames;
+    }
 }
 
 void TestFlightController::AdvanceShot(double CurrTime, FirstPersonCamera& Camera, ew::Camera* pSceneCamera)
@@ -670,6 +679,16 @@ void TestFlightController::WriteMetricsJson(double TotalRunSec) const
         s["avgFps"]       = Run.sumMs > 0.0 ? 1000.0 * Run.frames / Run.sumMs : 0.0;
         s["minFrameMs"]   = Run.frames > 0 ? Run.minMs : 0.0;
         s["maxFrameMs"]   = Run.maxMs;
+        // Step-6 perf table feeders: CPU work (no present wait) + GPU frame
+        // time, and the vsync-independent theoretical fps they imply.
+        {
+            const double avgCpu = Run.frames > 0 ? Run.sumCpuWorkMs / Run.frames : 0.0;
+            const double avgGpu = Run.gpuFrames > 0 ? Run.sumGpuMs / Run.gpuFrames : 0.0;
+            const double bottleneck = std::max(avgCpu, avgGpu);
+            s["avgCpuWorkMs"]   = avgCpu;
+            s["avgGpuMs"]       = avgGpu;
+            s["theoreticalFps"] = bottleneck > 0.0 ? 1000.0 / bottleneck : 0.0;
+        }
         s["resolution"]   = {Run.width, Run.height};
         s["debug"]        = DebugMetricsToJson(Run.debugAtCapture);
         Scenes.push_back(std::move(s));
@@ -711,6 +730,8 @@ void TestFlightController::WriteHolesTxt(const std::filesystem::path& FilePath, 
     uint64_t MergesTotal     = 0;
     size_t   ChurnFrames     = 0;
     size_t   MappedFrames    = 0;
+    size_t   FailNoSlot      = 0;   // map fail: no slot fence-complete (step 6)
+    size_t   FailMapBusy     = 0;   // map fail: fence done, MapBuffer null (step 6)
     uint64_t BornSkips       = 0;
     uint64_t NonPositive     = 0;
 
@@ -747,6 +768,10 @@ void TestFlightController::WriteHolesTxt(const std::filesystem::path& FilePath, 
             ++MappedFrames;
             Lags.push_back(F.readbackLag);
         }
+        else if (F.mapFailReason == 1)
+            ++FailNoSlot;
+        else if (F.mapFailReason == 2)
+            ++FailMapBusy;
         BornSkips   += F.bornGuardSkips;
         NonPositive += F.nonPositiveX;
     }
@@ -791,6 +816,14 @@ void TestFlightController::WriteHolesTxt(const std::filesystem::path& FilePath, 
                   MappedFrames, N, LagMin, LagMed, LagMax,
                   static_cast<unsigned long long>(BornSkips),
                   static_cast<unsigned long long>(NonPositive));
+    os << Line;
+
+    // Starvation discriminator (step 6, readback_starvation_handoff §3): of the
+    // frames that did NOT map, how many were "no slot fence-complete" vs
+    // "fence complete but MapBuffer(DO_NOT_WAIT) returned null".
+    std::snprintf(Line, sizeof(Line),
+                  "readback fails: no_slot_ready=%zu  map_busy=%zu\n",
+                  FailNoSlot, FailMapBusy);
     os << Line;
 
     os << "captures:";

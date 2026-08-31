@@ -147,6 +147,12 @@ private:
         double   minMs  = 1e9;
         double   maxMs  = 0.0;
 
+        // Step-6 timing: per-shot CPU-work and GPU-frame averages from
+        // ew::gDebug.timing (feeds the perf numbers table in metrics.json).
+        double   sumCpuWorkMs = 0.0;
+        double   sumGpuMs     = 0.0;
+        uint32_t gpuFrames    = 0;
+
         ew::DebugMetrics debugAtCapture{};
 
         bool                 captured = false;

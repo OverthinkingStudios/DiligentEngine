@@ -156,15 +156,20 @@ private:
 // ---------------------------------------------------------------------------
 
 /// GPU->CPU buffer readback with explicit fence-checked latency (tileCenters
-/// culling heights, GC_feedback picking/metrics).
+/// culling heights, GC_feedback picking/metrics, vegetation feedback).
 ///
 /// Mapping the live buffer for reading would be a full GPU sync every frame.
-/// Instead this keeps a small ring of staging buffers and a fence:
-/// enqueueCopy() records the copy + signals the fence (this flushes the
-/// command buffer - call it at most once or twice per frame), and
-/// mapCompleted() maps the NEWEST slot whose copy the GPU has finished. The
-/// consumer therefore sees data 1..kSlots-1 frames old, which is acceptable
-/// for both users.
+/// Instead this keeps a small ring of staging buffers: enqueueCopy() records
+/// the copy, and mapCompleted() maps the NEWEST slot whose copy the GPU has
+/// finished. The consumer therefore sees data 1..kSlots-1 frames old, which
+/// is acceptable for all users.
+///
+/// PORT-REVIEW (step 6 fence batching): the fence is no longer per-instance.
+/// All ReadbackBuffers share GpuContext's readback fence with ONE signal per
+/// frame (the renderer calls GpuContext::signalReadbackFrame() at frame end)
+/// instead of one EnqueueSignal - and its command-buffer flush - per copy.
+/// The old per-copy cadence stays available for A/B measurement via
+/// ew::gDebug.toggles.rbBatchSignals = false.
 class ReadbackBuffer
 {
 public:
@@ -172,13 +177,23 @@ public:
 
     static constexpr uint32_t kSlots = 3;
 
+    /// Why the last mapCompleted() returned nullptr - the starvation-handoff
+    /// discriminator (readback_starvation_handoff.md §3).
+    enum class MapFail : uint8_t
+    {
+        None       = 0,  // last call mapped successfully
+        NoSlotReady = 1, // no slot's fence value has completed yet
+        MapBusy    = 2,  // fence complete but MapBuffer(DO_NOT_WAIT) returned null
+    };
+
     static SharedPtr create(uint64_t sizeInBytes, const char* name = nullptr);
 
-    /// Copies the source buffer into the current ring slot and signals the
-    /// fence. Skips (with a warn-once) when the source size does not match.
-    /// `tag` is an opaque caller value (e.g. a frame counter) returned by
-    /// completedTag() for the slot a later mapCompleted() yields - lets the
-    /// caller detect how old the mapped data is.
+    /// Copies the source buffer into the current ring slot and stamps it with
+    /// the shared fence value the end-of-frame signal will carry. Skips (with
+    /// a warn-once) when the source size does not match. `tag` is an opaque
+    /// caller value (e.g. a frame counter) returned by completedTag() for the
+    /// slot a later mapCompleted() yields - lets the caller detect how old the
+    /// mapped data is.
     void enqueueCopy(GpuContext* pCtx, const Buffer::SharedPtr& src, uint64_t tag = 0);
 
     /// Maps the newest GPU-completed slot for reading; nullptr when no copy
@@ -189,15 +204,26 @@ public:
     uint64_t completedTag() const { return m_MappedSlot >= 0 ? m_SlotTag[m_MappedSlot] : 0; }
     void unmap(GpuContext* pCtx);
 
+    // --- health counters (running totals since creation) ---------------------
+    MapFail  lastMapFail() const { return m_LastMapFail; }
+    uint32_t mapCalls() const { return m_MapCalls; }
+    uint32_t mapOk() const { return m_MapOk; }
+    uint32_t mapFailNoSlot() const { return m_FailNoSlot; }
+    uint32_t mapFailBusy() const { return m_FailBusy; }
+
 private:
     Diligent::RefCntAutoPtr<Diligent::IBuffer> m_Staging[kSlots];
-    Diligent::RefCntAutoPtr<Diligent::IFence>  m_Fence;
     uint64_t m_SlotFenceValue[kSlots] = {};
     uint64_t m_SlotTag[kSlots]        = {};
-    uint64_t m_NextFenceValue         = 1;
     uint32_t m_NextSlot               = 0;
     int32_t  m_MappedSlot             = -1;
     uint64_t m_Size                   = 0;
+
+    MapFail  m_LastMapFail = MapFail::None;
+    uint32_t m_MapCalls    = 0;
+    uint32_t m_MapOk       = 0;
+    uint32_t m_FailNoSlot  = 0;
+    uint32_t m_FailBusy    = 0;
 };
 
 // ---------------------------------------------------------------------------

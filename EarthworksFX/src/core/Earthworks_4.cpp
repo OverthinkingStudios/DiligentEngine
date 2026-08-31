@@ -96,6 +96,10 @@ void Earthworks_4::onLoad(GpuContext* pGpu)
         terrain.terrainSpiteShader.setTexture("gAtmosphereOutscatter", atmosphere.getFar().outscatter);
         terrain.terrainSpiteShader.setTexture("SunInAtmosphere", atmosphere.sunlightTexture);
 
+        // Far-LOD buildings (step-6 salvage): same far-volume textures the
+        // terrain shader gets. No-op when the data set is absent.
+        terrain.buildings.setAtmosphere(atmosphere.getFar().inscatter, atmosphere.getFar().outscatter, atmosphere.sunlightTexture);
+
         terrain.triangleShader.setTexture("gAtmosphereInscatter_Sky", atmosphere.getFar().inscatter_sky);
         // render_triangles' live path also calls
         // gAtmosphereInscatter.GetDimensions and throws the result away, so the
@@ -152,7 +156,14 @@ void Earthworks_4::onLoad(GpuContext* pGpu)
         // shadowEdges.load() below.
         requireFile(shadowBil, "shadow heightfield (root4096.bil)");
 
-        terrain.shadowEdges.load(shadowBil.string(), -global_sun_direction.y);
+        // Buildings are baked into the shadow heightfield so they cast the
+        // same semi-dynamic shadows as the terrain (terrain.onLoad ran above,
+        // so the building verts are available; the solver thread starts
+        // below). Load-time option, not a live toggle: skipping the bake here
+        // is the only way to get terrain-only shadows. (step-6 salvage)
+        const buildingsRenderer* shadowCasters =
+            ew::gDebug.loadOptions.buildingShadows ? &terrain.buildings : nullptr;
+        terrain.shadowEdges.load(shadowBil.string(), -global_sun_direction.y, shadowCasters);
         terrain.shadowEdges.sunAngle = 0.95605f;
         terrain.shadowEdges.dAngle = 0.0001f;
         terrain.shadowEdges.requestNewShadow = true;
@@ -344,6 +355,9 @@ void Earthworks_4::onFrameRender(GpuContext* pGpu, const Fbo::SharedPtr& pTarget
     // half-initialized and drawing from them is undefined.
     if (terrain.isLoaded() && terrain.fullResetDoNotRender)
     {
+        // onFrameUpdate above may still have enqueued readback copies - cover
+        // them with this frame's shared fence signal (step-6 fence batching).
+        pGpu->signalReadbackFrame();
         ew::gDebug.endFrame();
         return;
     }
@@ -397,6 +411,13 @@ void Earthworks_4::onFrameRender(GpuContext* pGpu, const Fbo::SharedPtr& pTarget
             pGpu->blit(hdrFbo->getColorTexture(0)->getSRV(), hdrPreviousFrame->getRTV(), srcRect, dstRect, true);
         }
     }
+
+    // PORT-REVIEW step-6 fence batching: ONE shared-fence signal covers every readback
+    // copy this frame enqueued (tileCenters + GC_feedback + vegetation
+    // feedback) - the previous per-copy EnqueueSignals each flushed the
+    // command buffer. No-op when nothing was enqueued or when the A/B toggle
+    // (rbBatchSignals) has the per-copy path signalling immediately.
+    pGpu->signalReadbackFrame();
 
     ew::gDebug.endFrame();
 }

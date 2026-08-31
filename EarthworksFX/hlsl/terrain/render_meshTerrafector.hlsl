@@ -117,7 +117,10 @@ PS_OUTPUT_Terrafector fixedMaterials(const uint material, const float2 uv, const
 
 
 
-PS_OUTPUT_Terrafector psMain(splineVSOut vIn) : SV_TARGET
+// PORT-REVIEW (step 6, zero-warning): function-level ": SV_TARGET" dropped -
+// the PS_OUTPUT_Terrafector fields carry the SV_Target0..7 semantics (see
+// render_splineTerrafector.hlsl for the full note).
+PS_OUTPUT_Terrafector psMain(splineVSOut vIn)
 {
     PS_OUTPUT_Terrafector output = (PS_OUTPUT_Terrafector) 0;
     uint material = vIn.flags.y;

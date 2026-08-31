@@ -8,6 +8,8 @@
 
 #include "ots/Log.hpp"
 
+#include "EarthworksDebug.h"   // gDebug.toggles.rbBatchSignals (step-6 A/B)
+
 namespace ew
 {
 
@@ -469,15 +471,14 @@ ReadbackBuffer::SharedPtr ReadbackBuffer::create(uint64_t sizeInBytes, const cha
                           name ? name : "?", i, sizeInBytes);
     }
 
-    Diligent::FenceDesc fenceDesc;
-    fenceDesc.Name = name ? name : "ew readback fence";
-    pGpu->device()->CreateFence(fenceDesc, &rb->m_Fence);
+    // PORT-REVIEW (step 6): the fence is shared across all ReadbackBuffers
+    // (GpuContext::readbackFence) - created lazily on first use.
     return rb;
 }
 
 void ReadbackBuffer::enqueueCopy(GpuContext* pCtx, const Buffer::SharedPtr& src, uint64_t tag)
 {
-    if (!pCtx || !src || !src->handle() || !m_Fence)
+    if (!pCtx || !src || !src->handle())
         return;
     if (src->getSize() < m_Size)
     {
@@ -492,27 +493,38 @@ void ReadbackBuffer::enqueueCopy(GpuContext* pCtx, const Buffer::SharedPtr& src,
         }
         return;
     }
-    if (!m_Staging[m_NextSlot])
+    if (!m_Staging[m_NextSlot] || !pCtx->readbackFence())
         return;
 
     pCtx->context()->CopyBuffer(src->handle(), 0, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
                                 m_Staging[m_NextSlot], 0, m_Size,
                                 Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    // EnqueueSignal flushes the command buffer, so keep this to once or twice
-    // per frame.
-    pCtx->context()->EnqueueSignal(m_Fence, m_NextFenceValue);
-    m_SlotFenceValue[m_NextSlot] = m_NextFenceValue;
-    m_SlotTag[m_NextSlot]        = tag;
-    ++m_NextFenceValue;
+
+    if (gDebug.toggles.rbBatchSignals)
+    {
+        // Batched: stamp the slot with the value the ONE end-of-frame signal
+        // (GpuContext::signalReadbackFrame) will carry. Several buffers - and
+        // never more than one slot per buffer - share each frame's value.
+        m_SlotFenceValue[m_NextSlot] = pCtx->pendingReadbackValue();
+        pCtx->markReadbackCopyPending();
+    }
+    else
+    {
+        // A/B path: signal per copy (EnqueueSignal flushes the command
+        // buffer) - the pre-step-6 cadence.
+        m_SlotFenceValue[m_NextSlot] = pCtx->signalReadbackNow();
+    }
+    m_SlotTag[m_NextSlot] = tag;
     m_NextSlot = (m_NextSlot + 1) % kSlots;
 }
 
 const void* ReadbackBuffer::mapCompleted(GpuContext* pCtx)
 {
-    if (!pCtx || !m_Fence || m_MappedSlot >= 0)
+    if (!pCtx || m_MappedSlot >= 0)
         return nullptr;
+    ++m_MapCalls;
 
-    const uint64_t completed = m_Fence->GetCompletedValue();
+    const uint64_t completed = pCtx->readbackCompletedValue();
 
     // Newest slot whose copy the GPU has finished.
     int32_t  best      = -1;
@@ -526,12 +538,25 @@ const void* ReadbackBuffer::mapCompleted(GpuContext* pCtx)
         }
     }
     if (best < 0 || !m_Staging[best])
+    {
+        m_LastMapFail = MapFail::NoSlotReady;
+        ++m_FailNoSlot;
         return nullptr;
+    }
 
     Diligent::PVoid pMapped = nullptr;
     pCtx->context()->MapBuffer(m_Staging[best], Diligent::MAP_READ, Diligent::MAP_FLAG_DO_NOT_WAIT, pMapped);
     if (!pMapped)
+    {
+        // The app fence completed but Diligent still refused the non-blocking
+        // map - its internal staging bookkeeping lags the fence (starvation
+        // hypothesis 1, readback_starvation_handoff.md §6).
+        m_LastMapFail = MapFail::MapBusy;
+        ++m_FailBusy;
         return nullptr;
+    }
+    m_LastMapFail = MapFail::None;
+    ++m_MapOk;
     m_MappedSlot = best;
     return pMapped;
 }

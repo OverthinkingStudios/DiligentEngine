@@ -10,6 +10,8 @@
 
 #include "ots/Log.hpp"
 
+#include "EarthworksDebug.h"   // PSO counters (step-6 perf pass)
+
 namespace ew
 {
 
@@ -95,6 +97,42 @@ void GpuContext::rebuildShaderSearchPaths()
     m_ShaderSearchPaths = search.str();
 }
 
+// --- shared readback fence (step 6 fence batching) --------------------------------
+
+Diligent::IFence* GpuContext::readbackFence()
+{
+    if (!m_ReadbackFence && m_pDevice)
+    {
+        Diligent::FenceDesc desc;
+        desc.Name = "ew shared readback fence";
+        m_pDevice->CreateFence(desc, &m_ReadbackFence);
+    }
+    return m_ReadbackFence;
+}
+
+uint64_t GpuContext::signalReadbackNow()
+{
+    Diligent::IFence* pFence = readbackFence();
+    if (!pFence || !m_pContext)
+        return 0;
+    ++m_ReadbackSignaled;
+    m_pContext->EnqueueSignal(pFence, m_ReadbackSignaled);
+    m_ReadbackSignalNeeded = false;
+    return m_ReadbackSignaled;
+}
+
+void GpuContext::signalReadbackFrame()
+{
+    if (!m_ReadbackSignalNeeded)
+        return;
+    signalReadbackNow();
+}
+
+uint64_t GpuContext::readbackCompletedValue() const
+{
+    return m_ReadbackFence ? m_ReadbackFence->GetCompletedValue() : 0;
+}
+
 // --- clear ----------------------------------------------------------------------
 
 void GpuContext::clearFbo(Fbo* pFbo, const float4& color, float depth, uint8_t stencil,
@@ -102,6 +140,27 @@ void GpuContext::clearFbo(Fbo* pFbo, const float4& color, float depth, uint8_t s
 {
     if (!m_pContext || !pFbo)
         return;
+
+    // PORT-REVIEW (step 6, log noise + perf): bind the FBO before clearing.
+    // Clearing an UNBOUND view makes Diligent emit a per-clear dev warning
+    // ("ClearRenderTarget command is more efficient if render target view is
+    // bound") and, on Vulkan, clear via vkCmdClearColorImage outside a render
+    // pass instead of a render-pass load-op clear. Every caller (re)binds its
+    // own targets for the draws that follow, so this bind leaks nowhere.
+    {
+        Diligent::ITextureView* pRTVs[Fbo::kMaxColorTargets] = {};
+        Diligent::Uint32        numRTVs                      = 0;
+        for (uint32_t slot = 0; slot < Fbo::kMaxColorTargets; ++slot)
+        {
+            if (Diligent::ITextureView* pRTV = pFbo->getRenderTargetView(slot))
+            {
+                pRTVs[slot] = pRTV;
+                numRTVs     = slot + 1;
+            }
+        }
+        m_pContext->SetRenderTargets(numRTVs, pRTVs, pFbo->getDepthStencilView(),
+                                     Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    }
 
     const float clearColor[4] = {color.x, color.y, color.z, color.w};
 
@@ -142,6 +201,8 @@ void GpuContext::clearRtv(Diligent::ITextureView* pRtv, const float4& color)
 {
     if (!m_pContext || !pRtv)
         return;
+    // PORT-REVIEW (step 6): bind before clearing - same rationale as clearFbo.
+    m_pContext->SetRenderTargets(1, &pRtv, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     const float clearColor[4] = {color.x, color.y, color.z, color.w};
     m_pContext->ClearRenderTarget(pRtv, clearColor, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 }
@@ -395,6 +456,11 @@ GpuContext::BlitPipeline* GpuContext::getOrCreateBlitPipeline(Diligent::TEXTURE_
     entry.PSO->CreateShaderResourceBinding(&entry.SRB, true);
     entry.VarSrc = entry.SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "g_Src");
     entry.VarSmp = entry.SRB->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "g_Smp");
+
+    // step-6 perf pass: cache-size / churn visibility.
+    ++gDebug.gpuObjects.blitPSOs;
+    ++gDebug.gpuObjects.srbs;
+    ++gDebug.live.psoCreations;
 
     m_BlitPipelines.emplace_back(key, std::move(entry));
     return &m_BlitPipelines.back().second;

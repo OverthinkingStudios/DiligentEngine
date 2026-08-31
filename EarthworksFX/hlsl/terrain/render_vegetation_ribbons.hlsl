@@ -764,7 +764,10 @@ struct PS_OUTPUT_Bake
     float4 extra: SV_Target4;
 };
 
-PS_OUTPUT_Bake psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
+// PORT-REVIEW (step 6, zero-warning): function-level ": SV_TARGET" dropped -
+// the PS_OUTPUT_Bake fields carry the SV_Target0..4 semantics (see
+// render_splineTerrafector.hlsl for the full note).
+PS_OUTPUT_Bake psMain(PSIn vOut, bool isFrontFace : SV_IsFrontFace)
 {
     PS_OUTPUT_Bake output = (PS_OUTPUT_Bake)0;
 

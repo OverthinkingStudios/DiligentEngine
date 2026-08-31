@@ -129,7 +129,11 @@ struct FogVolumeParameters {
 class FogVolume {
 
 public:
-    void onLoad(FogVolumeParameters params);
+    /// _allocateTextures = false stores the parameters but skips the texture
+    /// allocations - the step-6 gate for the DORMANT volumes (mainNear +
+    /// parabolicFar, never computed or sampled). Scalar consumers
+    /// (m_params/m_logEnd/m_oneOverK) are unaffected.
+    void onLoad(FogVolumeParameters params, bool _allocateTextures = true);
     void updateFogparameters(fogAtmosphericParams params);
     void setCamera(ew::Camera::SharedPtr _camera);
 

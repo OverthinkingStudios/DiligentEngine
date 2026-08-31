@@ -8,6 +8,8 @@
 
 #include "ots/Log.hpp"
 
+#include "EarthworksDebug.h"   // PSO/SRB creation counters (step-6 perf pass)
+
 // ---------------------------------------------------------------------------
 // Implementation notes:
 //
@@ -665,6 +667,12 @@ bool computeShader::commit(GpuContext* pCtx)
             return false;
         }
         m_PSO->CreateShaderResourceBinding(&m_SRB, true);
+
+        // PORT-REVIEW (step 6 perf pass): cache-size / churn visibility. A
+        // compute PSO is created exactly once per shader, on its first dispatch.
+        ++gDebug.gpuObjects.computePSOs;
+        ++gDebug.gpuObjects.srbs;
+        ++gDebug.live.psoCreations;
     }
     if (!m_PSO || !m_SRB)
         return false;
@@ -847,6 +855,18 @@ pixelShader::PsoCacheEntry* pixelShader::getOrCreatePso(const Diligent::BlendSta
     pPSO->CreateShaderResourceBinding(&entry.SRB, true);
 
     m_PsoCache.push_back(std::move(entry));
+
+    // PORT-REVIEW (step 6 perf pass): cache churn visibility. Every cache MISS logs -
+    // a miss during steady-state rendering is a hitch source (PSO creation is
+    // milliseconds), and the per-frame count is in the debug panel
+    // (live.psoCreations).
+    ++gDebug.gpuObjects.graphicsPSOs;
+    ++gDebug.gpuObjects.srbs;
+    ++gDebug.live.psoCreations;
+    spdlog::info("ew::pixelShader '{}': graphics PSO created (cache size now {}; process totals: {} gfx / {} comp)",
+                 m_Data.debugName, m_PsoCache.size(),
+                 gDebug.gpuObjects.graphicsPSOs, gDebug.gpuObjects.computePSOs);
+
     return &m_PsoCache.back();
 }
 

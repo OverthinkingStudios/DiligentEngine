@@ -182,7 +182,12 @@ PS_OUTPUT_Terrafector fixedMaterials(const uint material, const float2 uv, const
 
 
 
-PS_OUTPUT_Terrafector psMain(splineVSOut vIn)  : SV_TARGET
+// PORT-REVIEW (step 6, zero-warning): the original carried a function-level
+// ": SV_TARGET" here; with a struct return whose fields already declare
+// SV_Target0..7, DXC warns "internal semantic overridden by enclosing
+// semantic" for every field. The struct semantics are the authoritative MRT
+// mapping - the enclosing semantic is dropped, output routing is unchanged.
+PS_OUTPUT_Terrafector psMain(splineVSOut vIn)
 {
     PS_OUTPUT_Terrafector output = (PS_OUTPUT_Terrafector)0;
     uint material = vIn.flags.y;

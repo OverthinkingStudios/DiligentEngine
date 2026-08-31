@@ -24,6 +24,7 @@
 #include "Shader.h"
 #include "PipelineState.h"
 #include "ShaderResourceBinding.h"
+#include "Fence.h"
 
 namespace ew
 {
@@ -102,6 +103,32 @@ public:
     /// per-frame path.
     float debugReadTexelR32F(Texture* pSrc, uint32_t x, uint32_t y);
 
+    // --- shared readback fence (step 6 fence batching) -----------------------
+    // PORT-REVIEW (step 6): every ReadbackBuffer used to own a fence and
+    // EnqueueSignal it per enqueueCopy - three signals (and their command-
+    // buffer flushes) per frame across tileCenters + GC_feedback + vegetation
+    // feedback. They now share ONE fence with ONE per-frame value:
+    // enqueueCopy stamps its slot with pendingReadbackValue() and marks a
+    // signal as needed; the renderer calls signalReadbackFrame() once at the
+    // end of the frame. A/B toggle: ew::gDebug.toggles.rbBatchSignals - when
+    // OFF, ReadbackBuffer signals immediately per copy (the old cadence, one
+    // value per copy) so the fence batching can be measured in isolation.
+    // Regression guard: holes.txt VERDICT must stay 0 (P17).
+
+    /// Lazily created shared fence used by every ReadbackBuffer.
+    Diligent::IFence* readbackFence();
+    /// Value that will cover copies recorded since the last signal.
+    uint64_t pendingReadbackValue() const { return m_ReadbackSignaled + 1; }
+    /// Marks that at least one copy is waiting for the end-of-frame signal.
+    void markReadbackCopyPending() { m_ReadbackSignalNeeded = true; }
+    /// Immediate signal (per-copy cadence, A/B path). Returns the value signaled.
+    uint64_t signalReadbackNow();
+    /// One signal per frame covering all copies since the last one. No-op when
+    /// nothing was enqueued. Call once at the end of the frame's GPU work.
+    void signalReadbackFrame();
+    /// GetCompletedValue of the shared fence (0 when it does not exist yet).
+    uint64_t readbackCompletedValue() const;
+
 private:
     void rebuildShaderSearchPaths();
 
@@ -126,6 +153,11 @@ private:
     Diligent::ISampler* getBlitSampler(bool linear);
     void getBlitShaders(Diligent::RefCntAutoPtr<Diligent::IShader>& vs,
                         Diligent::RefCntAutoPtr<Diligent::IShader>& ps);
+
+    // --- shared readback fence state ------------------------------------------
+    Diligent::RefCntAutoPtr<Diligent::IFence> m_ReadbackFence;
+    uint64_t m_ReadbackSignaled     = 0;
+    bool     m_ReadbackSignalNeeded = false;
 
     std::vector<std::pair<uint64_t, BlitPipeline>> m_BlitPipelines;
     Diligent::RefCntAutoPtr<Diligent::IBuffer>     m_BlitCB;

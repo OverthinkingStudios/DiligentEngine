@@ -18,7 +18,10 @@
 
 #include "ewGpuContext.h"
 #include "ewResources.h"
+#include "ewGpuTimer.h"
 #include "Earthworks_4.h"
+
+#include <chrono>
 
 namespace Diligent
 {
@@ -222,6 +225,20 @@ protected:
     float  m_fSmoothFPS        = 0.f;
     double m_LastFPSTime         = 0.0;
     Uint32 m_NumFramesRendered   = 0;
+
+    // --- frame timing (step 6): CPU work / present / wall + GPU query ring ---
+    // Written into ew::gDebug.timing each frame; the smoothed values refresh on
+    // the same 0.5 s cadence as m_fSmoothFPS.
+    using TimingClock = std::chrono::steady_clock;
+    TimingClock::time_point m_FrameStartTime{};   // set at Update() entry
+    bool   m_FrameStartValid   = false;
+    double m_AccumCpuWorkMs    = 0.0;
+    double m_AccumPresentMs    = 0.0;
+    double m_AccumWallMs       = 0.0;
+    double m_AccumGpuMs        = 0.0;
+    Uint32 m_AccumFrames       = 0;
+    Uint32 m_AccumGpuFrames    = 0;
+    ew::GpuFrameTimer m_GpuFrameTimer;
 
     InputController m_InputController;
     FirstPersonCamera m_FirstPersonCamera;

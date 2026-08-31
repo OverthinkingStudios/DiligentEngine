@@ -234,7 +234,7 @@ void _shadowEdges::solve(float _angle, bool dx)
     }
 }
 
-void _shadowEdges::load(std::string filename, float _angle)
+void _shadowEdges::load(std::string filename, float _angle, const buildingsRenderer* _buildings)
 {
     (void)_angle;   // unused
 
@@ -245,6 +245,14 @@ void _shadowEdges::load(std::string filename, float _angle)
     {
         ifs.read((char*)height, 4096 * 4096 * 4);
         ifs.close();
+
+        // Buildings become part of the caster heightfield: their walls show
+        // up as steep Nx slopes below, so the existing edge-detect + march in
+        // solve() casts their shadows with no extra code (step-6 salvage).
+        if (_buildings)
+        {
+            _buildings->overlayShadowHeights(&height[0][0], 4096, 9.765625f);
+        }
 
         for (int y = 0; y < 4095; y++)
         {
@@ -692,6 +700,9 @@ void terrainManager::onLoad(ew::GpuContext* pRenderContext)
         // Not implemented: ribbonShader (the render_ribbons grass pass) and
         // veghumanShader (a render_triangles twin) - neither has a live draw.
 
+        // Far-LOD buildings (step-6 salvage): loud-and-graceful when the
+        // rappersville data set is absent (most terrains ship none).
+        buildings.load(settings.dirRoot + "/buildings/rappersville");
 
         compute_bakeFloodfill.load("hlsl/terrain/compute_bakeFloodfill.hlsl");
 
@@ -1759,6 +1770,8 @@ void terrainManager::updateShaderConstants(ew::Texture::SharedPtr _previousFrame
     terrainSpiteShader.setVariable("LightsCB", "fog_far_log_F", _buffer.fog_far_log_F);
     terrainSpiteShader.setVariable("LightsCB", "fog_far_one_over_k", _buffer.fog_far_one_over_k);
 
+    buildings.updateShaderConstants(terrainShadowTexture, _buffer);   // step-6 salvage
+
     plants_Root.updateShaderConstants(_previousFrame, terrainShadowTexture, _buffer);
 }
 
@@ -1890,7 +1903,16 @@ bool terrainManager::update(ew::GpuContext* _renderContext)
             // ring rather than a stalling map(Read): these values feed a
             // refinement loop, so 1-2 frames of lag are invisible.
             split.buffer_tileCenter_readback->enqueueCopy(_renderContext, split.buffer_tileCenters, m_frameCounter);
-            if (const void* pData = split.buffer_tileCenter_readback->mapCompleted(_renderContext))
+            const void* pTileData = split.buffer_tileCenter_readback->mapCompleted(_renderContext);
+            // Starvation instrumentation (readback_starvation_handoff §3):
+            // record WHICH null path fired, per frame, for holes.txt.
+            ew::gDebug.holeStats.current.mapFailReason =
+                static_cast<uint8_t>(split.buffer_tileCenter_readback->lastMapFail());
+            ew::gDebug.live.tileRbCalls   = split.buffer_tileCenter_readback->mapCalls();
+            ew::gDebug.live.tileRbOk      = split.buffer_tileCenter_readback->mapOk();
+            ew::gDebug.live.tileRbNoSlot  = split.buffer_tileCenter_readback->mapFailNoSlot();
+            ew::gDebug.live.tileRbMapBusy = split.buffer_tileCenter_readback->mapFailBusy();
+            if (const void* pData = pTileData)
             {
                 // Age of the mapped data: pool indices are recycled on split/
                 // merge, so data older than a tile's allocation belongs to the
@@ -2787,6 +2809,20 @@ void terrainManager::onFrameRender(ew::GpuContext* _renderContext, const ew::Fbo
         ew::gDebug.live.terrainTileDraws++;
     }
 
+    {
+        // Far-LOD buildings (step-6 salvage), culled against the visible tile
+        // rects. calculateSurfaceFlags() re-runs here exactly like the legacy
+        // integration did - update() may have early-outed for the current
+        // mode, and stale frustum flags would cull live building chunks.
+        // PORT-REVIEW: the function-local static matches the legacy shape
+        // (single renderer instance; avoids a per-frame allocation).
+        calculateSurfaceFlags();
+        static std::vector<float4> visibleTileRects;
+        getVisibleTileRects(visibleTileRects);
+        buildings.render(_renderContext, _fbo, view, viewproj, _camera->getPosition(),
+                         visibleTileRects);
+    }
+
     if (ew::gDebug.toggles.billboards)
     {
         {
@@ -2923,6 +2959,12 @@ void terrainManager::onFrameRender(ew::GpuContext* _renderContext, const ew::Fbo
             std::memcpy(&split.feedback, pData, sizeof(GC_feedback));
             split.buffer_feedback_read->unmap(_renderContext);
         }
+        // Second-ring health mirror (step 6): does GC_feedback starve like
+        // tileCenters (systemic) or not (per-buffer)?
+        ew::gDebug.live.gcRbCalls   = split.buffer_feedback_read->mapCalls();
+        ew::gDebug.live.gcRbOk      = split.buffer_feedback_read->mapOk();
+        ew::gDebug.live.gcRbNoSlot  = split.buffer_feedback_read->mapFailNoSlot();
+        ew::gDebug.live.gcRbMapBusy = split.buffer_feedback_read->mapFailBusy();
 
         // GPU-side proof of what buildLookup packed for the main view.
         ew::gDebug.live.gpuTerrainTiles = split.feedback.numTerrainTiles[CameraType_Main_Center];

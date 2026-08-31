@@ -65,12 +65,22 @@ EarthworksFXApplicationBase::~EarthworksFXApplicationBase()
     // quit) leaves the same hard data.
     TestFlightController::DumpInteractiveHoleStats();
 
+    // Step-6 perf pass: the 10 s warm-up cache log (onFrameUpdate) never fires
+    // in a ~8 s testflight - emit the final totals here as well.
+    if (m_Initialized)
+    {
+        const ew::GpuObjectStats& g = ew::gDebug.gpuObjects;
+        spdlog::info("[perf] GPU object caches at shutdown: {} graphics PSOs, {} compute PSOs, {} blit PSOs, {} SRBs",
+                     g.graphicsPSOs, g.computePSOs, g.blitPSOs, g.srbs);
+    }
+
     // Tear the Earthworks scene down (and its GPU resources) while the device is
     // still alive, before the swap chain / device are released below.
     if (m_Initialized)
         m_Earthworks->onShutdown();
     m_TargetFbo.reset();
     m_Earthworks.reset();
+    m_GpuFrameTimer.shutdown();   // release queries while the device is alive
     m_GpuContext.reset();
 
     m_pImGuiOwner.reset();
@@ -682,6 +692,19 @@ void EarthworksFXApplicationBase::UpdateFirstPersonCameraProjAttribs()
 
 void EarthworksFXApplicationBase::Update(double CurrTime, double ElapsedTime)
 {
+    // PORT-REVIEW frame timing (step 6): wall = Update-start to Update-start --
+    {
+        const TimingClock::time_point now = TimingClock::now();
+        if (m_FrameStartValid)
+        {
+            const double wallMs = std::chrono::duration<double, std::milli>(now - m_FrameStartTime).count();
+            ew::gDebug.timing.wallMs = static_cast<float>(wallMs);
+            m_AccumWallMs += wallMs;
+        }
+        m_FrameStartTime  = now;
+        m_FrameStartValid = true;
+    }
+
     ++m_NumFramesRendered;
     static const double FPSInterval = 0.5;
     if (CurrTime - m_LastFPSTime > FPSInterval)
@@ -689,6 +712,39 @@ void EarthworksFXApplicationBase::Update(double CurrTime, double ElapsedTime)
         m_fSmoothFPS        = static_cast<float>(m_NumFramesRendered / (CurrTime - m_LastFPSTime));
         m_NumFramesRendered = 0;
         m_LastFPSTime       = CurrTime;
+
+        // Fold the accumulated frame-timing window into the smoothed values
+        // (same cadence as the fps counter). Theoretical fps = what an
+        // uncapped run should reach: 1000 / max(cpu work, gpu) - readable even
+        // while vsync caps the wall time.
+        ew::FrameTiming& t = ew::gDebug.timing;
+        if (m_AccumFrames > 0)
+        {
+            t.avgCpuWorkMs = static_cast<float>(m_AccumCpuWorkMs / m_AccumFrames);
+            t.avgPresentMs = static_cast<float>(m_AccumPresentMs / m_AccumFrames);
+            t.avgWallMs    = static_cast<float>(m_AccumWallMs / m_AccumFrames);
+        }
+        if (m_AccumGpuFrames > 0)
+            t.avgGpuMs = static_cast<float>(m_AccumGpuMs / m_AccumGpuFrames);
+        const float bottleneck = std::max(t.avgCpuWorkMs, t.avgGpuMs);
+        t.theoreticalFps = bottleneck > 0.f ? 1000.f / bottleneck : 0.f;
+        t.bound          = bottleneck <= 0.f ? 0 : (t.avgCpuWorkMs >= t.avgGpuMs ? 1 : 2);
+        m_AccumCpuWorkMs = m_AccumPresentMs = m_AccumWallMs = m_AccumGpuMs = 0.0;
+        m_AccumFrames = m_AccumGpuFrames = 0;
+    }
+
+    // Step-6 perf pass: log the PSO/SRB cache sizes ONCE after the pipeline
+    // has warmed up (~10 s). Later additions show up live in the debug panel
+    // ("created this frame") - steady-state creations are hitch sources.
+    {
+        static bool s_CacheSizesLogged = false;
+        if (!s_CacheSizesLogged && m_Initialized && CurrTime > 10.0)
+        {
+            s_CacheSizesLogged           = true;
+            const ew::GpuObjectStats& g = ew::gDebug.gpuObjects;
+            spdlog::info("[perf] GPU object caches after warm-up: {} graphics PSOs, {} compute PSOs, {} blit PSOs, {} SRBs",
+                         g.graphicsPSOs, g.computePSOs, g.blitPSOs, g.srbs);
+        }
     }
 
     if (m_pImGui)
@@ -743,6 +799,28 @@ void EarthworksFXApplicationBase::DrawCommonUI()
         ImGui::Text("%s  (API %d)", GetRenderDeviceTypeString(m_DeviceType), DILIGENT_API_VERSION);
         const float FrameMs = m_fSmoothFPS > 0.f ? 1000.0f / m_fSmoothFPS : 0.f;
         ImGui::Text("%.1f ms  (%.1f fps)", FrameMs, m_fSmoothFPS);
+
+        // Step-6 frame timing: judge performance without an uncapped swap
+        // chain. CPU work excludes the present/vsync wait (that is the
+        // "present" number); GPU comes from a duration-query ring.
+        {
+            const ew::FrameTiming& t = ew::gDebug.timing;
+            ImGui::Text("CPU work %5.2f ms   present %5.2f ms", t.avgCpuWorkMs, t.avgPresentMs);
+            if (t.gpuSupported)
+                ImGui::Text("GPU      %5.2f ms%s", t.avgGpuMs, t.gpuValid ? "" : "  (waiting)");
+            else
+                ImGui::TextDisabled("GPU      n/a (no duration queries)");
+            if (t.theoreticalFps > 0.f)
+                ImGui::Text("theoretical ~%.0f fps (%s-bound)", t.theoreticalFps,
+                            t.bound == 2 ? "GPU" : "CPU");
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("theoretical fps = 1000 / max(CPU work, GPU) - the uncapped rate,\n"
+                                  "readable even while vsync caps the wall frame time.\n"
+                                  "All values are 0.5 s averages; GPU lags a few frames.");
+        }
+
         ImGui::Separator();
         m_Window.DrawImGuiControls(m_CreateScene);
     }
@@ -1199,6 +1277,41 @@ void EarthworksFXApplicationBase::DrawEarthworksDebugUI()
         ImGui::Text("billboards (13=sentinel): %u", m.vegBillboards);
         ImGui::Text("feedback age      : %u frames", m.vegFeedbackAge);
 
+        // Step-6 perf/starvation instrumentation. The readback lines answer
+        // the starvation handoff's first question: when a map fails, is it
+        // "no slot fence-complete" (fence not advancing) or "map busy"
+        // (Diligent's staging tracking lags the fence)?
+        ImGui::SeparatorText("Readback rings (step 6)");
+        {
+            auto pct = [](uint32_t ok, uint32_t calls) -> float {
+                return calls > 0 ? 100.f * static_cast<float>(ok) / static_cast<float>(calls) : 0.f;
+            };
+            ImGui::Text("tileCenters: %u/%u mapped (%.0f%%)  noSlot %u  busy %u",
+                        m.tileRbOk, m.tileRbCalls, pct(m.tileRbOk, m.tileRbCalls),
+                        m.tileRbNoSlot, m.tileRbMapBusy);
+            ImGui::Text("GC_feedback: %u/%u mapped (%.0f%%)  noSlot %u  busy %u",
+                        m.gcRbOk, m.gcRbCalls, pct(m.gcRbOk, m.gcRbCalls),
+                        m.gcRbNoSlot, m.gcRbMapBusy);
+        }
+        ImGui::Checkbox("batch readback fence signals", &t.rbBatchSignals);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("ON: one shared fence signal per frame covers all readback copies.\n"
+                              "OFF: signal (and flush) per copy - the pre-step-6 cadence, for A/B\n"
+                              "perf comparison. Watch the mapped %% above for regressions.");
+
+        ImGui::SeparatorText("GPU objects (step 6)");
+        {
+            const ew::GpuObjectStats& g = ew::gDebug.gpuObjects;
+            ImGui::Text("PSOs: %u gfx / %u comp / %u blit   SRBs: %u",
+                        g.graphicsPSOs, g.computePSOs, g.blitPSOs, g.srbs);
+            ImGui::TextColored(m.psoCreations > 0 ? ImVec4(1.f, 0.6f, 0.2f, 1.f) : ImVec4(0.7f, 0.7f, 0.7f, 1.f),
+                               "created this frame: %u %s", m.psoCreations,
+                               m.psoCreations > 0 ? "(hitch source if steady-state)" : "");
+            ImGui::Text("GPU-timer dropped frames: %u", ew::gDebug.timing.gpuDropouts);
+        }
+
         ImGui::SeparatorText("Tile split");
         ImGui::TextColored(m.cameraMainInUse ? ImVec4(0.5f, 1.f, 0.5f, 1.f) : ImVec4(1.f, 0.4f, 0.2f, 1.f),
                            "main camera in use: %s", m.cameraMainInUse ? "yes" : "NO");
@@ -1311,6 +1424,15 @@ void EarthworksFXApplicationBase::Render()
 
     IDeviceContext* pCtx = GetImmediateContext();
 
+    // GPU frame timer (step 6): duration query around the frame's GPU commands
+    // (scene + ImGui). Results land in ew::gDebug.timing a few frames later.
+    if (m_GpuContext)
+    {
+        if (m_GpuFrameTimer.initialize(m_GpuContext.get()))
+            m_GpuFrameTimer.begin(m_GpuContext.get());
+        ew::gDebug.timing.gpuSupported = m_GpuFrameTimer.supported();
+    }
+
     ITextureView* pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
     ITextureView* pDSV = m_pSwapChain->GetDepthBufferDSV();
     pCtx->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -1325,6 +1447,20 @@ void EarthworksFXApplicationBase::Render()
         else
             m_pImGui->EndFrame();
     }
+
+    if (m_GpuContext && m_GpuFrameTimer.supported())
+    {
+        m_GpuFrameTimer.end(m_GpuContext.get());
+        ew::FrameTiming& t = ew::gDebug.timing;
+        t.gpuDropouts = m_GpuFrameTimer.dropouts();
+        if (m_GpuFrameTimer.hasResult())
+        {
+            t.gpuMs    = static_cast<float>(m_GpuFrameTimer.lastMs());
+            t.gpuValid = true;
+            m_AccumGpuMs += m_GpuFrameTimer.lastMs();
+            ++m_AccumGpuFrames;
+        }
+    }
 }
 
 void EarthworksFXApplicationBase::Present()
@@ -1335,7 +1471,25 @@ void EarthworksFXApplicationBase::Present()
     if (m_TestFlight)
         m_TestFlight->PrePresent();
 
+    // CPU work time (step 6): Update-start to just before Present - the vsync
+    // wait is excluded and shows up in presentMs instead.
+    const TimingClock::time_point beforePresent = TimingClock::now();
+    if (m_FrameStartValid)
+    {
+        const double cpuWorkMs = std::chrono::duration<double, std::milli>(beforePresent - m_FrameStartTime).count();
+        ew::gDebug.timing.cpuWorkMs = static_cast<float>(cpuWorkMs);
+        m_AccumCpuWorkMs += cpuWorkMs;
+        ++m_AccumFrames;
+    }
+
     m_pSwapChain->Present(m_Window.GetVSync() ? 1 : 0);
+
+    {
+        const double presentMs =
+            std::chrono::duration<double, std::milli>(TimingClock::now() - beforePresent).count();
+        ew::gDebug.timing.presentMs = static_cast<float>(presentMs);
+        m_AccumPresentMs += presentMs;
+    }
 
     if (m_TestFlight)
         m_TestFlight->PostPresent();

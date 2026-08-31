@@ -7,6 +7,8 @@
 
 #include "ots/Log.hpp"
 
+#include "EarthworksDebug.h"   // loadOptions.allocDormantFogVolumes (step-6 gate)
+
 extern unsigned int phaseX;
 extern unsigned int phaseY;
 extern float phaseData[];
@@ -14,9 +16,11 @@ extern float phaseData[];
 using Diligent::BIND_SHADER_RESOURCE;
 using Diligent::BIND_UNORDERED_ACCESS;
 
-void FogVolume::onLoad(FogVolumeParameters params)
+void FogVolume::onLoad(FogVolumeParameters params, bool _allocateTextures)
 {
     m_params = params;
+    if (!_allocateTextures)
+        return;   // dormant volume: parameters only (step-6 gate, see header)
     inscatter = ew::Texture::create3D(params.m_x, params.m_y, params.m_z, params.format, nullptr, BIND_UNORDERED_ACCESS | BIND_SHADER_RESOURCE, "fog inscatter");
     inscatter_cloudbase = ew::Texture::create2D(params.m_x, params.m_y, Diligent::TEX_FORMAT_RGBA16_FLOAT, 1, 1, nullptr, BIND_UNORDERED_ACCESS | BIND_SHADER_RESOURCE, "fog inscatter_cloudbase");
     inscatter_sky = ew::Texture::create2D(params.m_x, params.m_y, Diligent::TEX_FORMAT_RGBA16_FLOAT, 1, 1, nullptr, BIND_UNORDERED_ACCESS | BIND_SHADER_RESOURCE, "fog inscatter_sky");
@@ -107,11 +111,16 @@ void atmosphereAndFog::onLoad(ew::GpuContext* _renderContext)
 
     mainFar.onLoad(FogVolumeParameters{ 256/4, 128/4, 256, Diligent::TEX_FORMAT_R11G11B10_FLOAT, true, false, 50.f, 20000.f });
     //mainFar.onLoad(FogVolumeParameters{ 256, 128, 256, Diligent::TEX_FORMAT_R11G11B10_FLOAT, true, false, 50.f, 20000.f });
-    mainNear.onLoad(FogVolumeParameters{ 256, 128, 256, Diligent::TEX_FORMAT_RGBA16_FLOAT, false, false, 1.f, 100.f });
-    parabolicFar.onLoad(FogVolumeParameters{ 128, 128, 32, Diligent::TEX_FORMAT_R11G11B10_FLOAT, true, true, 100.f, 20000.f });
-    // mainNear and parabolicFar are allocated but never computed or sampled:
-    // the near-fog and parabolic-projection paths are dormant. Roughly 130 MB
-    // of GPU memory sitting idle.
+    // PORT-REVIEW (step 6): mainNear and parabolicFar are DORMANT - never
+    // computed or sampled, but the extract allocated them anyway (~130 MB of
+    // idle GPU memory, mostly mainNear's two 256x128x256 RGBA16F volumes).
+    // Gated behind a load option; their scalar parameters (the fog_near_*
+    // members of shaderLightBuffer) still come through unchanged.
+    const bool allocDormant = ew::gDebug.loadOptions.allocDormantFogVolumes;
+    if (!allocDormant)
+        spdlog::info("atmosphere: dormant fog volumes (mainNear/parabolicFar) NOT allocated - saves ~130 MB (gDebug.loadOptions.allocDormantFogVolumes)");
+    mainNear.onLoad(FogVolumeParameters{ 256, 128, 256, Diligent::TEX_FORMAT_RGBA16_FLOAT, false, false, 1.f, 100.f }, allocDormant);
+    parabolicFar.onLoad(FogVolumeParameters{ 128, 128, 32, Diligent::TEX_FORMAT_R11G11B10_FLOAT, true, true, 100.f, 20000.f }, allocDormant);
 
     phaseFunction = ew::Texture::create2D(phaseX, phaseY, Diligent::TEX_FORMAT_R32_FLOAT, 1, 1, phaseData, BIND_UNORDERED_ACCESS | BIND_SHADER_RESOURCE, "phaseFunction");
     sunlightTexture = ew::Texture::create2D(512, 256, Diligent::TEX_FORMAT_RGBA32_FLOAT, 1, 1, nullptr, BIND_UNORDERED_ACCESS | BIND_SHADER_RESOURCE, "sunlightTexture");

@@ -125,6 +125,10 @@ using int2     = glm::ivec2;   // ecotopeGpuConstants::tileXY
 #include "terrafector.h"
 #include "roadNetwork.h"
 
+// Far-LOD buildings delegate (step-6 salvage from the previous port - the
+// original had this commented out in terrain.cpp; see buildings.h).
+#include "buildings.h"
+
 
 // MOVE TO SHDOPW CLASS, but inititlaize data from here
 // MOVE TO TEMP SHADWO CLASS TO BE REPLACED WITH GPU DATA
@@ -149,7 +153,12 @@ struct _shadowEdges
     unsigned char (*edge)[4096] = nullptr;
     float2 (*shadowH)[4096] = nullptr;
 
-    void load(std::string filename, float _angle);
+    // Loads the 4096x4096 terrain heightfield; when _buildings is given, its
+    // triangles are splatted into the caster heightfield so buildings cast
+    // (and receive) the same baked shadows as the terrain (step-6 salvage).
+    // Call before launchSolveThread() - buildings are static, so no
+    // synchronization is needed.
+    void load(std::string filename, float _angle, const buildingsRenderer* _buildings = nullptr);
     void solve(float _angle, bool dx);
 
     float sunAngle = 0.02f;  // just afetr sunruise
@@ -507,6 +516,21 @@ public:
     /// Read-only view of the live quadtree (host debug ground grid).
     const std::list<quadtree_tile*>& usedTiles() const { return m_used; }
 
+    // World-space rectangles of the quadtree LEAF tiles that passed the
+    // main-camera frustum test in calculateSurfaceFlags (frustumFlags .y bit),
+    // one float4 per tile as (origin.x, origin.z, size, lod). Used to skip
+    // building chunks over invisible terrain. Empty when update() has not run
+    // for the current mode - callers treat that as "no info" and draw all.
+    void getVisibleTileRects(std::vector<float4>& _out) const
+    {
+        _out.clear();
+        for (const quadtree_tile* t : m_used)
+        {
+            if (!t->child[0] && (frustumFlags[t->index].y & (1u << CameraType_Main_Center)))
+                _out.push_back(float4(t->origin.x, t->origin.z, t->size, (float)t->lod));
+        }
+    }
+
 private:
     void calculateSurfaceFlags();
     void testForSurfaceEnv();
@@ -823,6 +847,11 @@ public:
 
     _shadowEdges shadowEdges;
     ew::Texture::SharedPtr	  terrainShadowTexture;
+
+    // Far-LOD buildings (step-6 salvage; replaces the original's commented-out
+    // rappersville blocks - see buildings.h). Public: Earthworks_4 hands it
+    // the atmosphere textures and the shadow-caster overlay.
+    buildingsRenderer   buildings;
 
 
     struct
