@@ -46,7 +46,7 @@ Purpose-built, NOT a Falcor emulator. Contents:
 | 3 | Full tile bake + atmosphere + shadowEdges | spec below (`Step 3 spec`); launch prompt: `port_effort_3/execution/step3_prompt.txt` | **DONE — developer-verified 2026-08-03: full bake + atmosphere + shadowEdges + HDR/tonemap path render on VK + D3D12; one fix round (P10)** |
 | 4 | Vegetation | full system ported, running DORMANT (dataset has no plant data — compile/run correctness is the acceptance path). Prompt: `step4_prompt.txt` | **DONE — developer-verified 2026-08-04: dormant-but-healthy on VK + D3D12, zero fix rounds. Visual validation deferred until plant data exists.** |
 | 5 | Terrafectors + roads bake | y=0 checklist enforced in code from day one; **BINDLESS decision point — developer chose faithful arrays at launch (2026-08-04); STEP5-NOTE marks the upgrade path**. Prompt: `step5_prompt.txt` | **DONE — developer-verified 2026-08-04 on D3D12 (terrafectors + roads render correctly, ~850 fps; 3 fix rounds P14/P15). Open: a rare both-API hang (step-5 follow-up, see step log). The VK-only solid-white terrafectors follow-up was RESOLVED 2026-08-31 (clamp argument-order UB, P16 — see step log)** |
-| 6 | Salvage (buildings/debug tools) + measured perf pass (**rescoped 2026-08-31, see prompt**: primary deliverable = CPU+GPU frame-timing display; VK vsync uncap now opportunistic only; fence batching — must not regress the P17 hole-culling fix, see `readback_starvation_handoff.md`; testflight numbers table). **Sprites DROPPED from salvage scope (developer, 2026-08-04: the sprite data files are 0-byte and the system is unused per the original dev)** | Prompt: `step6_prompt.txt` | ready (after 5) |
+| 6 | Salvage (buildings/debug tools) + measured perf pass (**rescoped 2026-08-31, see prompt**: primary deliverable = CPU+GPU frame-timing display; VK vsync uncap now opportunistic only; fence batching — must not regress the P17 hole-culling fix, see `readback_starvation_handoff.md`; testflight numbers table). **Sprites DROPPED from salvage scope (developer, 2026-08-04: the sprite data files are 0-byte and the system is unused per the original dev)** | Prompt: `step6_prompt.txt` | **executed 2026-08-31; 2-round autonomous testflight PASS (buildings render on both APIs, zero warnings, holes VERDICT 0 — see step log) — UNCOMMITTED, awaiting developer review + remaining perf-table runs** |
 | 7 | terrainGenerator subsystem (first-class port, GUI survives with minimal edits) | Prompt: `step7_prompt.txt` | ready (after 6; independent enough to run earlier if desired) |
 | 8 | Parity wrap: STUB/marker sweep, S1-goal parity table, CLAUDE.md truth pass, legacy retirement proposal, backlog handoff | Prompt: `step8_prompt.txt` | ready (last) |
 
@@ -530,3 +530,173 @@ Scope: everything tagged `STEP2-STUB` except vegetation (step 4) and terrafector
   (ew::gDebug.holeStats, holes.txt / holes_interactive dumps) and a ranked
   hypothesis list live in `port_effort_3/readback_starvation_handoff.md`;
   overlaps step 6 Track B (fence batching must not regress this fix).
+- 2026-08-31: step 6 executed (cold agent), not yet compiled. Three tracks:
+  **TRACK A - SALVAGE.** buildings.cpp/.h carried from `legacy/core/` into
+  `src/core/` - mechanical GPU-surface adaptation only (Falcor Vars()/State()
+  -> ew:: named binds; rmcv -> transposed glm per ewCamera.h; Diligent
+  SamplerDesc). Culling (centroid-bucketed grid chunks + visible-tile-rect
+  overlap + run-merging) and the CB-based firstVertex draw (SV_VertexID has no
+  StartVertexLocation) are byte-identical. Wired exactly like the legacy
+  integration: terrain.h member + `getVisibleTileRects()` helper;
+  terrain.onLoad `buildings.load(<dirRoot>/buildings/rappersville)`
+  (loud-and-graceful when absent - Steg ships none); updateShaderConstants
+  one-liner; onFrameRender block after the terrain-tile draw
+  (calculateSurfaceFlags re-run kept - legacy-faithful, see PORT-REVIEW);
+  Earthworks_4 setAtmosphere + `_shadowEdges::load(..., shadowCasters)`
+  buildings-into-shadow-heightfield overlay behind
+  loadOptions.buildingShadows. Shader `render_Buildings_Far.hlsl` copied
+  verbatim from legacy (LightsCB/shadow()/sunLight() arrive via ../PBR.hlsli
+  -> render_Common.hlsli). The debug panel's pre-existing buildings toggle /
+  buildingDraws counter / buildingShadows load option now have live consumers.
+  NOT salvaged (and why): Sprites (developer-dropped 2026-08-04, 0-byte data);
+  legacy thumbnail-overlay blit + aboutTex (cosmetic, panel `overlay` toggle
+  stays drawless - overlayDraws reads 0 by design); render_ribbons/veghuman
+  (drawless even in the extract, step-4 deferral stands); glider/cfd debug
+  shaders (stripped subsystem); compute_tileGenerate (no live dispatch).
+  debugGrid already lives - nothing else in legacy/hlsl earns its keep.
+  **TRACK B - PERF PASS (instrumentation-first; the developer fills the
+  numbers table below from test runs).**
+  1. PRIMARY: CPU+GPU frame timing. NEW `src/gpu/ewGpuTimer.h/.cpp`
+     (QUERY_TYPE_DURATION ring of 6, non-blocking GetData polling, graceful
+     n/a when Features.DurationQueries is off - the shell already requests
+     every feature OPTIONAL). Shell measures per frame: `cpuWorkMs`
+     (Update-start -> just before Present, vsync wait EXCLUDED), `presentMs`
+     (inside Present - the vsync wait shows here), `wallMs`
+     (frame-start delta). All in `ew::gDebug.timing` (EarthworksDebug.h),
+     smoothed on the fps counter's 0.5 s cadence, shown in the EarthworksFX
+     panel with **theoretical fps = 1000 / max(cpuWork, gpu)** and the
+     bound (CPU/GPU) - fps is now judgeable WITHOUT uncapping vsync (the VK
+     vsync gap is thereby demoted). Testflights: metrics.json per shot gains
+     `avgCpuWorkMs` / `avgGpuMs` / `theoreticalFps`.
+  2. Readback fence batching: ReadbackBuffers no longer own fences; ONE
+     shared fence (GpuContext) + ONE EnqueueSignal per frame
+     (`Earthworks_4::onFrameRender` end + the fullReset early-return) covers
+     tileCenters + GC_feedback + vegetation feedback (was 3 signals/frame,
+     each flushing the command buffer). A/B toggle
+     `gDebug.toggles.rbBatchSignals` (panel checkbox) restores the per-copy
+     cadence for measurement. P17 guard: slot-value semantics unchanged
+     (newest completed slot, tag age-gating untouched) - holes.txt VERDICT
+     must stay 0 on the verification flight. Starvation instrumentation per
+     the handoff §3: mapCompleted now discriminates `NoSlotReady` (fence not
+     advanced) vs `MapBusy` (fence done, MapBuffer(DO_NOT_WAIT) null) -
+     per-instance counters in the panel ("Readback rings"), per-frame reason
+     in HoleFrame/holes.txt ("readback fails: no_slot_ready=X map_busy=Y").
+     GC_feedback ring mirrored too (systemic-vs-per-buffer discriminator).
+  3. Allocations: dormant fog volumes (mainNear+parabolicFar, ~130 MB, never
+     computed/sampled) NOT allocated any more - gated behind
+     loadOptions.allocDormantFogVolumes (scalar fog_near_* params
+     unaffected). _shadowEdges ~270 MB verified alloc-once (ctor only; solve()
+     writes in place - no per-solve realloc; `edge` still has no reader).
+     Veg 8192² shadowFbo (~320 MB): NOT gated - proposal P-C below (its depth
+     is bound as highResShadow to 4 live shaders; a lazy alloc needs a
+     comparison-sampler-safe dummy, not a one-liner).
+  4. PSO/SRB cache: creation counters (graphics/compute/blit PSOs, SRBs) in
+     `gDebug.gpuObjects` + per-frame `psoCreations` (panel, orange when a
+     steady-state frame creates one) + info log per graphics-PSO cache miss +
+     one-shot cache-size summary log ~10 s after load.
+  5. Structural pass-cost review vs catalog (analysis, no changes): frame
+     structure matches conventions_app_wiring §4 (one clear per FBO - now
+     bound-before-clear, see Track C; tonemapper still the only fullscreen
+     pass; half-res feedback blit; 2 draws + ~2 dispatches per view + clipLod).
+     Structurally suspicious and PROPOSED, not changed: (a) `bindProgram`
+     rebuilds bindings and re-commits the SRB on EVERY draw/dispatch, and for
+     4096-slot texture arrays builds a 4096-entry vector + SetArray per
+     commit (terrainSpiteShader, spline3D, veg shaders) - prime CPU-side
+     suspect (P-A); (b) TRANSITION mode on every call = per-resource state
+     tracking + fine-grained barriers between bake dispatches where the
+     original had coarse Falcor barriers (P-B). The new timer's CPU-vs-GPU
+     split is exactly the measurement that decides whether either is worth
+     touching.
+  **TRACK C - POLISH.** (a) clearFbo/clearRtv now bind targets before
+  clearing - kills the dominant per-frame Diligent dev warnings ("Render
+  target view is not bound... ClearRenderTarget more efficient", thousands
+  per run) and turns VK clears into render-pass loads instead of
+  vkCmdClearColorImage; (b) DXC warning sweep: function-level `: SV_TARGET`
+  dropped on the four struct-returning psMains
+  (render_splineTerrafector/meshTerrafector/vegetation_ribbons-bake/
+  extractTextures) - "internal semantic SV_TargetN overridden by enclosing
+  semantic" x21 gone, struct semantics stay the authoritative MRT mapping;
+  (c) zero-warning verification on both APIs = developer build (agent cannot
+  compile). NOTE: the reference stdout log in the gameroot predates the
+  Diligent->spdlog routing (likely legacy binary, P6 caution) - re-check
+  remaining noise on the first step-6 run.
+  **PERF NUMBERS TABLE (developer fills; same flight, both APIs).** Use the
+  usual testflight; per shot take metrics.json `avgFps` / `avgCpuWorkMs` /
+  `avgGpuMs` / `theoreticalFps` (or the panel readouts interactively).
+  Configurations, in order:
+  | # | config | D3D12 avgFps / cpu / gpu / theo | VK avgFps / cpu / gpu / theo |
+  |---|--------|-------------------------------|------------------------------|
+  | 0 | pre-step-6 commit (87220bd) - avgFps only, no timing fields | TBD | TBD |
+  | 1 | step 6 as landed (batching ON, buildings on, dormant fog gated) | 763-1105 / 0.46-0.78 / 0.62-1.13 / 884-1310 (per-cam ranges, road_testing_steg — see 2026-08-31 verification entry) | 581-978 / 0.47-0.76 / 0.48-1.31 / 762-1774 |
+  | 2 | rbBatchSignals OFF (panel) - fence-batching A/B | TBD | TBD |
+  | 3 | buildings toggle OFF - salvage render cost (Steg DOES ship rappersville data — 3.4 M verts render, so this is a real A/B) | TBD | TBD |
+  Also record once: end-of-run VRAM (expect ~130 MB below step-5 baseline),
+  holes.txt VERDICT (must stay 0) + the new "readback fails" line, the
+  "[perf] GPU object caches" log line, and whether "created this frame" ever
+  goes orange during free flight.
+  **REMAINING GAP to the remembered ~2k fps** (step-5 baseline ~850 fps
+  D3D12 at 2560-ish windowed; the timer now separates the suspects) -
+  hypotheses ranked by expected yield:
+  1. Per-commit binding rebuild + 4096-entry SetArray churn (P-A) - if
+     avgCpuWorkMs >> avgGpuMs this is the first target; expected yield high
+     (hundreds of fps at these frame rates when CPU-bound).
+  2. TRANSITION-mode state tracking + per-dispatch barriers in the bake and
+     per-frame compute chains (P-B) - shows as GPU ms during heavy splitting
+     and as CPU ms always; medium yield.
+  3. Full render_Tiles psMain triple-experiment cost - original parity, NOT
+     ours to "fix" (catalog terrain doc 9.5); only revisit with developer
+     sign-off if GPU-bound and the ROI says so.
+  4. Vegetation-dormant overhead (clear/lod/sortCombine dispatches + 32 MB
+     buffer traffic each frame for zero plants) - low yield now, real once
+     plant data lands.
+  5. Swap-chain/present pacing (VK vsync-off gap, P-D) - measurement no
+     longer blocked by it; fix opportunistically later.
+  **PROPOSALS for developer sign-off (NOT applied):**
+  - P-A: dirty-tracked bindings in ew::detail::bindProgram - cache the
+    IDeviceObject vectors per array slot, SetArray only on change; skip
+    re-Set of unchanged single slots. Semantics risk: Diligent DYNAMIC vars
+    keep their values on a cached SRB, so per-commit re-set is redundant by
+    design - but verify against the 4096-pool dummy-pad invariants (F13/F15).
+  - P-B: RESOURCE_STATE_TRANSITION_MODE_VERIFY (or explicit transitions) for
+    the steady-state per-frame passes once resources reach their settled
+    states; keep TRANSITION for load/bake-time paths.
+  - P-C: lazy-allocate the veg 8192² shadowFbo + rgbFbo behind the first
+    SAMPLE_MODE/bake use, with a small depth-format dummy for the
+    highResShadow comparison-sampler binds (~320 MB; needs care, not a
+    one-liner).
+  - P-D: VK vsync-off uncap - shell wiring verified correct this step
+    (Present(GetVSync()?1:0), BufferCount=3, checkbox live). Next cheap
+    diagnostics when it matters again: grep the run log for Diligent's
+    swap-chain present-mode line after toggling, compare `-vsync 0` at
+    launch vs runtime toggle, confirm driver MAILBOX support. No deep chase.
+  - P-E (micro): buildings render re-runs calculateSurfaceFlags every frame
+    (legacy-faithful); could reuse update()'s flags whenever terrainUpdate
+    ran this frame.
+- 2026-08-31: step 6 VERIFIED via the new autonomous testflight loop (opus
+  build+flight agents; developer-authorized, max 5 rounds — took 2). Round 1
+  (full rebuild + road_testing_steg on BOTH APIs): PASS on all criteria —
+  buildings data found in the gameroot (rappersville.raw 164 MB; the step-6
+  agent's "Steg ships none" assumption was wrong) and buildings VISIBLY render
+  on 3 of 5 cameras on both APIs (A/B-confirmed against the pre-step-6 run:
+  building cluster w/ lit walls + shadows on cam_0, hangar on cam_1, far-LOD
+  boxes on santis_road_close); log shows 3,425,295 verts / 1,141,765 tris /
+  737 chunks + shadow-grid overlay; holes.txt VERDICT 0 on both APIs; roads
+  not white; D3D12 vs VK 99.98% pixel-identical; new metrics.json timing
+  fields present and sane (config-1 numbers in the table above; actual avgFps
+  sits well below theoretical everywhere -> present/pacing overhead, feeds
+  hypothesis 5). Only warnings: 2 pre-existing C4244 (glm int-divide) in
+  vegetationBuilder_Trees.cpp. Round 2 fixes (main context, tagged
+  PORT-REVIEW): explicit float() casts at the two C4244 sites (same math) and
+  the [perf] GPU object caches summary ALSO logged at shutdown (the 10 s
+  warm-up gate never fires in a ~8 s flight). Round 2 (incremental build +
+  D3D12 flight): ZERO warnings, shutdown line fires ("8 graphics PSOs,
+  16 compute PSOs, 1 blit PSOs, 25 SRBs"), VERDICT 0, per-cam fps equal or
+  slightly better than round 1. Known leftover noise (accepted): DXC
+  -Wignored-attributes for [[vk::image_format]] on the D3D12 compile
+  (dual-API annotation, impractical to silence) and -Wambig-lit-shift in
+  compute_bc6h_functions.hlsli (verbatim original shader — not "cleaned up");
+  quirk: run.log is written before shutdown, so the shutdown perf line lands
+  only in stdout. Rows 0/2/3 of the numbers table + interactive checks
+  (panel readouts, "created this frame", VRAM, readback-fails split) remain
+  for the developer. NOT committed — awaiting developer review (new policy:
+  developer commits everything themself).

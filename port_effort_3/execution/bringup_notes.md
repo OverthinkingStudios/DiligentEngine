@@ -157,8 +157,24 @@ All entries developer-verified unless marked otherwise.
   (holes.txt VERDICT line) and ranked hypotheses in
   `port_effort_3/readback_starvation_handoff.md`.
 
-Known open items (not bugs): VK vsync-off doesn't uncap fps (pre-existing; step 6 perf pass);
-`compute PSO unavailable`-style shader failures are non-fatal by design — check the log.
+Known open items (not bugs): VK vsync-off doesn't uncap fps (pre-existing; **step-6 finding:
+the shell wiring is verifiably correct — Present(GetVSync()?1:0), VK BufferCount=3, live
+checkbox — so the cause sits in swap-chain present-mode selection / driver; demoted by the
+step-6 frame-timing display, which shows theoretical fps without uncapping; diagnostics
+recipe in the plan.md step-6 log, proposal P-D**); `compute PSO unavailable`-style shader
+failures are non-fatal by design — check the log.
 Resolved in step 3: `gHDRBackbuffer` now gets the real hdrFbo colour; the "texture bound as
 render target will be unset" Info is silenced (GpuContext::unbindRenderTargets before the
 terrain-under-mouse dispatch + inside copySubresource).
+Resolved in step 6 (polish): the per-frame "ClearRenderTarget command is more efficient if
+render target view is bound" Diligent dev warnings — clearFbo/clearRtv now bind before
+clearing (also upgrades VK clears to render-pass load-op clears); DXC "internal semantic
+SV_TargetN overridden by enclosing semantic" — the function-level `: SV_TARGET` on
+struct-returning psMains was dropped (4 shaders, MRT mapping unchanged).
+Step-6 instrumentation quick reference: frame timing lives in `ew::gDebug.timing`
+(CPU work / present / wall / GPU-query ms + theoretical fps; EarthworksFX panel + per-shot
+metrics.json `avgCpuWorkMs`/`avgGpuMs`/`theoreticalFps`); readback-ring health + the
+starvation discriminator (no_slot_ready vs map_busy) in the panel "Readback rings" section
+and holes.txt line 5; fence batching A/B = panel checkbox `rbBatchSignals`
+(P17 regression guard: holes.txt VERDICT stays 0); PSO cache totals in the panel
+"GPU objects" section + a one-shot "[perf] GPU object caches" log line ~10 s in.
