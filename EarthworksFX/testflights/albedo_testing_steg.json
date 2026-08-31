@@ -1,0 +1,25 @@
+{
+    "cameras": [
+        {
+            "far": 40000.0,
+            "fovYDeg": 60.0,
+            "name": "road+terrafectors",
+            "near": 0.10000000149011612,
+            "pitch": -0.6607969999313354,
+            "pos": [
+                -7614.53125,
+                999.4740600585938,
+                -10483.890625
+            ],
+            "yaw": 2.0463414192199707
+        }
+    ],
+    "name": "albedo_testing_steg",
+    "settleMs": 3000,
+    "settleTimeoutMs": 30000,
+    "terrain": "switserland_steg",
+    "window": [
+        1280,
+        768
+    ]
+}

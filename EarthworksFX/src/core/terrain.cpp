@@ -276,6 +276,12 @@ inline float4 saturate(float4 v)
     return glm::clamp(v, float4(0.f), float4(1.f));
 }
 
+// Hole detector: plausible elevation range of the whole terrain (Steg spans
+// roughly 400..2200m). Used for the column visibility test - "is there ANY
+// height at which this tile's footprint would be in the frustum".
+constexpr float kTerrainYMin = 0.f;
+constexpr float kTerrainYMax = 3000.f;
+
 // The directory fields in terrainSettings.json may or may not carry a leading
 // slash; concatenate when they do, join through std::filesystem when they
 // don't.
@@ -332,6 +338,7 @@ void quadtree_tile::set(uint _lod, uint _x, uint _y, float _size, float4 _origin
 
     forSplit = false;
     forRemove = false;
+    heightPatched = false;      // Y above is inherited - see tileInFrustum
 
     elevationHash = 0;
 }
@@ -1487,6 +1494,41 @@ static bool all(float4 in)
 }
 
 
+// Frustum test used for tile culling and split decisions.
+//
+// A tile's bounding-sphere HEIGHT comes from an async GPU readback
+// (tileCenters) and is inherited from the parent until the first patch lands
+// (quadtree_tile::heightPatched). Testing an unpatched tile at that inherited
+// height is what punched tile-shaped holes into the terrain: under readback
+// starvation the wrong height persisted for seconds and the tile was culled
+// while on screen. Until a tile's height is patched it is therefore tested as
+// a COLUMN over the terrain's plausible elevation range: each plane distance
+// is LINEAR in Y, so evaluating both endpoints and keeping the per-plane
+// maximum is exact. Conservative by construction - an unpatched tile can never
+// be culled by a wrong height, at the cost of processing a few off-screen
+// tiles until its readback lands.
+// Plane distances for the tile tested as a COLUMN over the terrain elevation
+// range: each plane distance is LINEAR in Y, so evaluating both endpoints and
+// keeping the per-plane maximum is exact.
+static float4 tileColumnClip(const terrainCamera& _cam, const quadtree_tile& _tile)
+{
+    float4 lo = _tile.boundingSphere;
+    float4 hi = _tile.boundingSphere;
+    lo.y = kTerrainYMin;
+    hi.y = kTerrainYMax;
+    return glm::max((_cam.view * lo) * _cam.frustumMatrix,
+                    (_cam.view * hi) * _cam.frustumMatrix);
+}
+
+static bool tileInFrustum(const terrainCamera& _cam, const quadtree_tile& _tile, float _radius)
+{
+    const float4 clip = _tile.heightPatched
+        ? (_cam.view * _tile.boundingSphere) * _cam.frustumMatrix
+        : tileColumnClip(_cam, _tile);
+    return all(saturate(clip + float4(_radius, _radius, _radius, _radius)));
+}
+
+
 // FIXME NOT GREAT to rede every frame but also likely reaaly fast
 void terrainManager::calculateSurfaceFlags()
 {
@@ -1498,9 +1540,7 @@ void terrainManager::calculateSurfaceFlags()
         float boundingSphereSize = tile->size * 1.0f;// very generous but missing here is FATAL
         for (int i = 0; i < CameraType_MAX; i++) {
             if (cameraViews[i].bUse) {
-                float4 viewBS = cameraViews[i].view * tile->boundingSphere;
-                float4 test = saturate(viewBS * cameraViews[i].frustumMatrix + float4(boundingSphereSize, boundingSphereSize, boundingSphereSize, boundingSphereSize));
-                if (all(test))
+                if (tileInFrustum(cameraViews[i], *tile, boundingSphereSize))
                 {
                     frustumFlags[tile->index].y |= 1u << i;  // visible for plants
 
@@ -1512,6 +1552,44 @@ void terrainManager::calculateSurfaceFlags()
                     }
                 }
             }
+        }
+    }
+
+    // Hole detector (purely additive - a separate read-only pass so the flag
+    // logic above stays untouched; skipped entirely unless armed). Flags
+    // CULLED SURFACE TILES - a leaf whose parent wants to split, i.e. a tile
+    // that is supposed to be drawn - that fails the sphere test at its current
+    // height although SOME height would put it in the frustum (column test).
+    // With tileInFrustum's column fallback for unpatched tiles this should
+    // stay at zero: any hit means a PATCHED tile with a wrong height, which
+    // renders as a tile-shaped hole with the skybox behind it.
+    if (ew::gDebug.holeStats.enabled && cameraViews[CameraType_Main_Center].bUse)
+    {
+        const terrainCamera& cam = cameraViews[CameraType_Main_Center];
+        for (auto& tile : m_used)
+        {
+            if (!tile->parent || tile->child[0] || !tile->parent->main_ShouldSplit)
+                continue;
+
+            // Unpatched tiles are column-culled by tileInFrustum - a wrong
+            // height cannot hide them any more.
+            if (!tile->heightPatched)
+                continue;
+
+            const float tight = tile->size * 1.0f;
+
+            const float4 clip = (cam.view * tile->boundingSphere) * cam.frustumMatrix;
+            if (all(saturate(clip + float4(tight, tight, tight, tight))))
+                continue;                       // rendered - not a hole
+
+            if (!all(saturate(tileColumnClip(cam, *tile) + float4(tight, tight, tight, tight))))
+                continue;                       // no height could make it visible
+
+            // Culled at its current Y although some height would be visible.
+            // The GPU-baked centre height decides the verdict: a mismatch
+            // means the sphere provably sits at a stale/inherited height.
+            ew::gDebug.holeStats.addHoleTile(tile->index, tile->lod, tile->boundingSphere.y, tile->size,
+                                             split.tileCenters[tile->index].x);
         }
     }
 }
@@ -1535,10 +1613,9 @@ bool terrainManager::testForSplit(quadtree_tile* _tile)
     for (int i = 0; i < CameraType_MAX; i++) {
         if (cameraViews[i].bUse) {
 
-            float4 viewBS = cameraViews[i].view * _tile->boundingSphere;
-            float4 test = saturate(viewBS * cameraViews[i].frustumMatrix + float4(boundingSphereSize, boundingSphereSize, boundingSphereSize, boundingSphereSize));
-            bool inFrust = all(test);
+            bool inFrust = tileInFrustum(cameraViews[i], *_tile, boundingSphereSize);
 
+            float4 viewBS = cameraViews[i].view * _tile->boundingSphere;
             viewBS.w = 0;
             float distance = glm::length(viewBS) + 0.01f;
             float fovscale = glm::length(cameraViews[i].proj[0]);
@@ -1693,6 +1770,10 @@ bool terrainManager::update(ew::GpuContext* _renderContext)
 
     ++m_frameCounter;
 
+    // Hole detector: start a fresh (uncommitted) record. The early-outs below
+    // simply never commit it.
+    ew::gDebug.holeStats.beginTerrainFrame(m_frameCounter);
+
     if ((terrainMode == _terrainMode::vegetation) ||
         (terrainMode == _terrainMode::glider) ||
         (terrainMode == _terrainMode::terrainBuilder) ||
@@ -1784,6 +1865,7 @@ bool terrainManager::update(ew::GpuContext* _renderContext)
                     (*itt)->forRemove = false;
                     m_free.push_back(*itt);
                     itt = m_used.erase(itt);
+                    ew::gDebug.holeStats.current.merges++;
                 }
                 else {
                     ++itt;
@@ -1816,14 +1898,24 @@ bool terrainManager::update(ew::GpuContext* _renderContext)
                 // bounding sphere at a foreign height and the frustum test
                 // culls a perfectly visible tile (bottom-of-screen flicker).
                 const uint32_t dataFrame = static_cast<uint32_t>(split.buffer_tileCenter_readback->completedTag());
+                ew::gDebug.holeStats.current.readbackMapped = true;
+                ew::gDebug.holeStats.current.readbackLag    = m_frameCounter - dataFrame;
                 std::memcpy(split.tileCenters.data(), pData, sizeof(float4) * numTiles);
                 split.buffer_tileCenter_readback->unmap(_renderContext);
                 for (auto& tile : m_used)
                 {
+                    // Hole detector: which tiles kept a stale bounding sphere,
+                    // and why (no GPU centre yet vs. age-gated by bornFrame).
+                    if (split.tileCenters[tile->index].x <= 0)
+                        ew::gDebug.holeStats.current.nonPositiveX++;
+                    else if (tile->bornFrame >= dataFrame)
+                        ew::gDebug.holeStats.current.bornGuardSkips++;
+
                     if (split.tileCenters[tile->index].x > 0 && tile->bornFrame < dataFrame)
                     {
                         tile->origin.y = split.tileCenters[tile->index].x;           // THIS is very wrong, .x contains the middl;em but i also think its unused
                         tile->boundingSphere.y = split.tileCenters[tile->index].x;
+                        tile->heightPatched = true;
                     }
                 }
             }
@@ -1848,7 +1940,8 @@ bool terrainManager::update(ew::GpuContext* _renderContext)
 
     }
 
-
+    // Hole detector: commit the record for this frame (no-op unless armed).
+    ew::gDebug.holeStats.endTerrainFrame((uint32_t)m_used.size());
 
 
     if (hasChanged) {
@@ -2143,6 +2236,7 @@ void terrainManager::splitOne(ew::GpuContext* _renderContext)
                     }
                 }
                 ew::gDebug.live.splitsPerformed++;
+                ew::gDebug.holeStats.current.splits++;
                 return;
             }
 

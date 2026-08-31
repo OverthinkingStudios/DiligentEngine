@@ -232,7 +232,8 @@ float4 solveColor(const TF_material _mat, const _uv uv, const float alpha)
         float3 A = lerp(albedo, 0.5, saturate(_mat.albedoBlend));
         float3 B = lerp(albedoDetail, 0.5, saturate(-_mat.albedoBlend));
 
-        colour.rgb = clamp(0.04, 0.9, A * B * 4 * _mat.albedoScale);		// 0.04, 0.9 charcoal to fresh snow
+        // clamp args were swapped (bounds first) - UB; see materials.hlsli solveElevationColour.
+        colour.rgb = clamp(A * B * 4 * _mat.albedoScale, 0.04, 0.9);		// 0.04, 0.9 charcoal to fresh snow
         colour.a = alpha;
     }
 
@@ -252,10 +253,6 @@ float4 solveColor(const TF_material _mat, const _uv uv, const float alpha)
 
 float4 psMain(splineVSOut vIn) : SV_TARGET0
 {
-#if TF_DEBUG_FORCE_OUTPUT
-    // Bisection (see materials.hlsli): overlay splines solid BLUE, no material reads.
-    return float4(0, 0, 1, 1);
-#endif
 	float4 colour = vIn.colour;
 	uint material = vIn.flags.y;
     TF_material MAT = materials[material];

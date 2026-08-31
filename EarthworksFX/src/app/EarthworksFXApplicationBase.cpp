@@ -59,6 +59,12 @@ EarthworksFXApplicationBase::EarthworksFXApplicationBase(const std::string& Titl
 
 EarthworksFXApplicationBase::~EarthworksFXApplicationBase()
 {
+    // A testflight writes holes.txt into its run folder and disarms the hole
+    // detector in Finalize(); if it is still armed here this was an interactive
+    // session - dump the trace so a manual repro (rotate until tiles vanish,
+    // quit) leaves the same hard data.
+    TestFlightController::DumpInteractiveHoleStats();
+
     // Tear the Earthworks scene down (and its GPU resources) while the device is
     // still alive, before the swap chain / device are released below.
     if (m_Initialized)
@@ -583,6 +589,11 @@ void EarthworksFXApplicationBase::InitializeScene()
     }
 
     m_Initialized = true;
+
+    // Arm the hole detector for interactive sessions from the start (cost is
+    // one read-only pass over the used tiles per terrain update). A testflight
+    // re-arms it under the flight's name when its run folder is created.
+    ew::gDebug.holeStats.start("interactive");
 }
 
 void EarthworksFXApplicationBase::InitializeGraphicsResources()

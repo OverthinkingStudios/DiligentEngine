@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // EarthworksFX runtime debug instrumentation.
@@ -259,12 +261,178 @@ struct DebugMetrics
     }
 };
 
+// ---------------------------------------------------------------------------
+// Hole detector - per-frame trace of quadtree churn and "marginally culled"
+// surface tiles.
+//
+// Symptom being chased: rectangular terrain tiles intermittently disappear
+// (skybox shows through). A tile is only drawn as surface when it passes the
+// per-view frustum test on quadtree_tile::boundingSphere AND its parent wants
+// to split. The sphere's Y comes from an async GPU readback (tileCenters) with
+// a few frames of latency, and a fresh tile inherits its parent's Y - so a
+// wrong Y makes an on-screen tile fail the frustum test and leaves a
+// tile-shaped hole. Eyeballing screenshots cannot tell that apart from a
+// shading bug; this collects the hard numbers instead.
+//
+// Armed by the application at startup ("interactive") and re-armed by a
+// testflight under the flight's name. A flight writes holes.txt into its run
+// folder; an interactive session dumps holes_interactive_<ts>.txt at shutdown
+// ONLY when it saw a pathology (see DumpInteractiveHoleStats). terrainManager
+// fills the scratch record unconditionally (a few counters) but only commits
+// frames while enabled.
+// ---------------------------------------------------------------------------
+
+/// One tile that looks like a hole this frame.
+struct HoleTileInfo
+{
+    uint32_t index     = 0;
+    uint32_t lod       = 0;
+    float    sphereY   = 0.f;   // quadtree_tile::boundingSphere.y - the suspect value
+    float    size      = 0.f;
+    float    readbackY = 0.f;   // GPU-baked centre height (tileCenters .x; <= 0 means none yet)
+};
+
+/// One terrainManager::update() frame.
+struct HoleFrame
+{
+    uint32_t frame          = 0;   // terrainManager::m_frameCounter
+    uint32_t tilesUsed      = 0;
+    uint32_t holeCandidates = 0;   // may exceed the number of detail entries kept
+    uint32_t yMismatch      = 0;   // hole candidates whose sphere Y provably disagrees
+                                   // with the GPU-baked centre height - the true verdict
+    uint32_t splits         = 0;   // splits performed this frame
+    uint32_t merges         = 0;   // tiles returned to the free list this frame
+    uint32_t readbackLag    = 0;   // m_frameCounter - dataFrame (only if readbackMapped)
+    uint32_t bornGuardSkips = 0;   // used tiles rejected by the bornFrame < dataFrame guard
+    uint32_t nonPositiveX   = 0;   // used tiles whose tileCenters[index].x was <= 0
+    uint32_t detailFirst    = 0;   // range into HoleStats::details
+    uint32_t detailCount    = 0;
+    bool     readbackMapped = false;
+};
+
+/// One testflight screenshot, tied to the last collected frame record.
+struct HoleCapture
+{
+    uint32_t captureIndex   = 0;   // == the cell index in grid.jpg
+    int      shotIndex      = 0;   // camera index in the flight definition
+    uint32_t frame          = 0;
+    uint32_t holeCandidates = 0;
+    uint32_t yMismatch      = 0;
+};
+
+struct HoleStats
+{
+    /// Detail entries kept per frame; holeCandidates still counts them all.
+    static constexpr uint32_t kMaxDetailPerFrame = 8;
+    /// Hard caps - collection simply stops rather than growing without bound.
+    static constexpr size_t kMaxFrames  = 200000;
+    static constexpr size_t kMaxDetails = 65536;
+
+    bool        enabled = false;
+    std::string flightName;
+
+    HoleFrame    current{};                            // scratch for the frame in flight
+    HoleTileInfo currentDetail[kMaxDetailPerFrame]{};
+
+    std::vector<HoleFrame>    frames;
+    std::vector<HoleTileInfo> details;
+    std::vector<HoleCapture>  captures;
+
+    void start(const std::string& _flightName)
+    {
+        frames.clear();
+        details.clear();
+        captures.clear();
+        frames.reserve(16384);
+        details.reserve(4096);
+        flightName = _flightName;
+        current    = HoleFrame{};
+        enabled    = true;
+    }
+
+    void stop() { enabled = false; }
+
+    /// Top of terrainManager::update() - starts a new (uncommitted) frame record.
+    void beginTerrainFrame(uint32_t _frame)
+    {
+        current       = HoleFrame{};
+        current.frame = _frame;
+    }
+
+    /// Sphere-vs-baked-centre disagreement below this is measurement noise.
+    static constexpr float kYMismatchThreshold = 50.f;
+
+    void addHoleTile(uint32_t _index, uint32_t _lod, float _sphereY, float _size, float _readbackY)
+    {
+        ++current.holeCandidates;
+
+        const float d        = _sphereY - _readbackY;
+        const bool  mismatch = _readbackY > 0.f && (d > kYMismatchThreshold || d < -kYMismatchThreshold);
+        if (mismatch)
+            ++current.yMismatch;
+
+        // Detail slots are scarce - keep them for the SUSPECT tiles (provably
+        // stale sphere, or no baked centre yet), not the settled baseline.
+        const bool suspect = mismatch || _readbackY <= 0.f;
+        if (suspect && current.detailCount < kMaxDetailPerFrame)
+        {
+            HoleTileInfo& t = currentDetail[current.detailCount];
+            t.index     = _index;
+            t.lod       = _lod;
+            t.sphereY   = _sphereY;
+            t.size      = _size;
+            t.readbackY = _readbackY;
+            ++current.detailCount;
+        }
+    }
+
+    /// End of terrainManager::update() - commits the frame record.
+    void endTerrainFrame(uint32_t _tilesUsed)
+    {
+        if (!enabled || frames.size() >= kMaxFrames)
+            return;
+
+        current.tilesUsed = _tilesUsed;
+
+        // addHoleTile keeps detailCount as the number of filled currentDetail
+        // slots (suspect tiles only).
+        const uint32_t n = current.detailCount;
+        if (n > 0 && details.size() + n <= kMaxDetails)
+        {
+            current.detailFirst = static_cast<uint32_t>(details.size());
+            details.insert(details.end(), currentDetail, currentDetail + n);
+        }
+        else
+        {
+            current.detailFirst = 0;
+            current.detailCount = 0;
+        }
+        frames.push_back(current);
+    }
+
+    /// A testflight screenshot landed - snapshot the freshest frame record.
+    void markCapture(int _shotIndex)
+    {
+        if (!enabled)
+            return;
+
+        HoleCapture c;
+        c.captureIndex   = static_cast<uint32_t>(captures.size());
+        c.shotIndex      = _shotIndex;
+        c.frame          = frames.empty() ? 0 : frames.back().frame;
+        c.holeCandidates = frames.empty() ? 0 : frames.back().holeCandidates;
+        c.yMismatch      = frames.empty() ? 0 : frames.back().yMismatch;
+        captures.push_back(c);
+    }
+};
+
 struct DebugState
 {
     DebugToggles toggles;
     DebugLoadOptions loadOptions;   // sampled during terrain load, not live
     DebugMetrics live;  // accumulated during the current frame
     DebugMetrics shown; // snapshot of the last completed frame (stable for the UI)
+    HoleStats    holeStats; // testflight-only hole/churn trace (see above)
 
     void beginFrame() { live.resetCounters(); }
     void endFrame() { shown = live; }

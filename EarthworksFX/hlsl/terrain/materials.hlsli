@@ -113,17 +113,6 @@ struct _uv
 
 #if defined(CALLEDFROMHLSL)
 
-// ============================ BISECTION SWITCH ==============================
-// 1: every terrafector/road pixel shader outputs a solid colour at psMain
-// entry, bypassing materials, textures and the fixedMaterials path entirely
-// (splineTerrafector GREEN, meshTerrafector RED, spline overlay BLUE).
-//  - colours show where roads/terrafectors are white today -> raster + blend +
-//    composite are fine, the bug is in material data / textures / gates.
-//  - still white -> the bug is downstream: FBO, blend state, or composite.
-// REVERT TO 0 AFTER THE TEST RUN.
-#define TF_DEBUG_FORCE_OUTPUT 1
-// ============================================================================
-
 // Every gmyTextures_T index below comes from a per-layer TF_material read, so
 // it varies PER PIXEL within a wave. Indexing a descriptor array with a
 // non-uniform index without NonUniformResourceIndex() is undefined behaviour:
@@ -255,7 +244,9 @@ void solveElevationColour(inout PS_OUTPUT_Terrafector output, const TF_material 
         float3 A = lerp(albedo, 0.5, saturate(MAT.albedoBlend));
         float3 B = lerp(albedoDetail, 0.5, saturate(-MAT.albedoBlend));
 
-        output.Albedo.rgb = clamp(0.04, 0.9, A * B * 4 * MAT.albedoScale);		// 0.04, 0.9 charcoal to fresh snow
+        // clamp args were swapped (bounds first) - UB; DXIL happened to return the
+        // value, SPIR-V/NV returned the 0.9 bound (flat cream on Vulkan).
+        output.Albedo.rgb = clamp(A * B * 4 * MAT.albedoScale, 0.04, 0.9);		// 0.04, 0.9 charcoal to fresh snow
         output.Albedo.a = alpha;
 
 

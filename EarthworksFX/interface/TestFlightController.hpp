@@ -9,6 +9,7 @@
 //   NN.png        - optional lossless per-shot captures (--tf_lossless)
 //   <flight>.json - verbatim copy of the flight definition used
 //   metrics.json  - run + per-shot timing and ew::gDebug metrics
+//   holes.txt     - terrain hole/quadtree-churn trace (ew::gDebug.holeStats)
 //   run.log       - copy of the application log
 //
 // Owned and driven by EarthworksFXApplicationBase when --testflight is on the
@@ -79,6 +80,17 @@ public:
 
     /// Sets one ew::gDebug toggle by json field name. Returns false for unknown names.
     static bool ApplyDebugToggle(const std::string& Name, bool Value);
+
+    /// Summary + per-frame dump of the ew::gDebug.holeStats trace. Static so a
+    /// flight run (holes.txt in its run folder) and an interactive session can
+    /// share it.
+    static void WriteHolesTxt(const std::filesystem::path& FilePath, const std::string& Timestamp);
+
+    /// If the hole detector is still armed with collected frames (i.e. no
+    /// flight wrote/disarmed it), dump holes_interactive_<timestamp>.txt into
+    /// the testflights folder and disarm. Called at application shutdown so a
+    /// manual repro (rotate until tiles vanish, quit) leaves a trace.
+    static void DumpInteractiveHoleStats();
 
     explicit TestFlightController(const Options& Opts);
     ~TestFlightController();

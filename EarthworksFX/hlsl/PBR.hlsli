@@ -163,7 +163,9 @@ void lightIBL( in SH_Attributes Attr, in layer_material mat, inout float3 diff, 
 	
 	float CRV = Attr.CURVATURE.z ;
 	CRV = pow(CRV, 1.5) * 2;
-	float cube_mip = clamp(0, 6, CRV * 6 + mipScale);
+	// clamp args were swapped (bounds first) - UB; DXIL happened to compute min(6, v),
+	// SPIR-V/NV returned the bound 6 (env cube stuck at blurriest mip on Vulkan).
+	float cube_mip = clamp(CRV * 6 + mipScale, 0, 6);
 	
 	//float cube_mip = clamp(0, 6, Attr.CURVATURE.z * 0.5 + mipScale);
 	

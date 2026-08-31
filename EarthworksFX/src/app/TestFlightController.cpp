@@ -40,6 +40,9 @@ constexpr int kStableFramesRequired = 8;
 constexpr int kWarmupFrames = 10;
 // Give up waiting for a GPU capture readback after this long.
 constexpr double kCaptureTimeoutSec = 5.0;
+// Per-frame detail lines written to holes.txt (the summary block above them
+// always covers the whole run).
+constexpr int kHoleDetailLines = 500;
 
 bool WriteBlobToFile(const std::filesystem::path& Path, const IDataBlob* pBlob)
 {
@@ -354,6 +357,10 @@ void TestFlightController::Update(double CurrTime, double ElapsedTime, FirstPers
             }
             spdlog::info("[testflight] run folder: {}", m_RunDir.string());
 
+            // Arm the terrain hole detector for the duration of the flight;
+            // Finalize() dumps it to holes.txt and disarms it again.
+            ew::gDebug.holeStats.start(m_Flight.name);
+
             m_State = State::ApplyShot;
             BeginShot(CurrTime, Camera, pSceneCamera);
             break;
@@ -407,6 +414,7 @@ void TestFlightController::Update(double CurrTime, double ElapsedTime, FirstPers
             {
                 Run.captureSec     = CurrTime - m_RunStartSec;
                 Run.debugAtCapture = ew::gDebug.shown;
+                ew::gDebug.holeStats.markCapture(Run.index);
                 spdlog::info("[testflight] cam {} '{}': captured ({}x{}, settle {:.2f}s [{}], avg {:.1f} fps)",
                              Run.index, Run.name, Run.width, Run.height,
                              Run.settleSec, Run.settleReason,
@@ -676,6 +684,198 @@ void TestFlightController::WriteMetricsJson(double TotalRunSec) const
         spdlog::error("[testflight] failed to write '{}'", Path.string());
 }
 
+void TestFlightController::WriteHolesTxt(const std::filesystem::path& FilePath, const std::string& Timestamp)
+{
+    // Verdict first: the reader wants to know "were there holes, how many, and
+    // was the quadtree churning at the time" from the first five lines.
+    const ew::HoleStats& H = ew::gDebug.holeStats;
+
+    const std::filesystem::path& Path = FilePath;
+    std::ofstream                os{Path};
+    if (!os)
+    {
+        spdlog::error("[testflight] failed to write '{}'", Path.string());
+        return;
+    }
+
+    const size_t N = H.frames.size();
+
+    size_t   FramesWithHoles = 0;
+    uint32_t MaxHoles        = 0;
+    uint32_t MaxHolesFrame   = 0;
+    size_t   FramesWithMism  = 0;
+    uint64_t MismTotal       = 0;
+    uint32_t MaxMism         = 0;
+    uint32_t MaxMismFrame    = 0;
+    uint64_t SplitsTotal     = 0;
+    uint64_t MergesTotal     = 0;
+    size_t   ChurnFrames     = 0;
+    size_t   MappedFrames    = 0;
+    uint64_t BornSkips       = 0;
+    uint64_t NonPositive     = 0;
+
+    std::vector<uint32_t> Lags;
+    Lags.reserve(N);
+
+    for (const ew::HoleFrame& F : H.frames)
+    {
+        if (F.holeCandidates > 0)
+        {
+            ++FramesWithHoles;
+            if (F.holeCandidates > MaxHoles)
+            {
+                MaxHoles      = F.holeCandidates;
+                MaxHolesFrame = F.frame;
+            }
+        }
+        if (F.yMismatch > 0)
+        {
+            ++FramesWithMism;
+            MismTotal += F.yMismatch;
+            if (F.yMismatch > MaxMism)
+            {
+                MaxMism      = F.yMismatch;
+                MaxMismFrame = F.frame;
+            }
+        }
+        SplitsTotal += F.splits;
+        MergesTotal += F.merges;
+        if (F.splits + F.merges > 0)
+            ++ChurnFrames;
+        if (F.readbackMapped)
+        {
+            ++MappedFrames;
+            Lags.push_back(F.readbackLag);
+        }
+        BornSkips   += F.bornGuardSkips;
+        NonPositive += F.nonPositiveX;
+    }
+
+    uint32_t LagMin = 0, LagMed = 0, LagMax = 0;
+    if (!Lags.empty())
+    {
+        std::sort(Lags.begin(), Lags.end());
+        LagMin = Lags.front();
+        LagMed = Lags[Lags.size() / 2];
+        LagMax = Lags.back();
+    }
+
+    char Line[1024];
+
+    os << "HOLE DETECTOR v3  flight=" << H.flightName << "  " << Timestamp << "\n";
+
+    // VERDICT = y_mismatch: culled-but-column-visible tiles whose sphere height
+    // provably disagrees with the GPU-baked centre. holes counts the wider
+    // "culled although some height would be visible" band, which includes
+    // legitimately culled tiles (correct height outside the frustum).
+    std::snprintf(Line, sizeof(Line),
+                  "VERDICT y_mismatch: total=%llu  frames=%zu (%.1f%%)  max_in_frame=%u @frame %u\n",
+                  static_cast<unsigned long long>(MismTotal), FramesWithMism,
+                  N > 0 ? 100.0 * static_cast<double>(FramesWithMism) / static_cast<double>(N) : 0.0,
+                  MaxMism, MaxMismFrame);
+    os << Line;
+
+    std::snprintf(Line, sizeof(Line),
+                  "frames=%zu  frames_with_holes=%zu (%.1f%%)  max_holes_in_frame=%u @frame %u\n",
+                  N, FramesWithHoles, N > 0 ? 100.0 * static_cast<double>(FramesWithHoles) / static_cast<double>(N) : 0.0,
+                  MaxHoles, MaxHolesFrame);
+    os << Line;
+
+    std::snprintf(Line, sizeof(Line), "splits_total=%llu  merges_total=%llu  churn_frames=%zu\n",
+                  static_cast<unsigned long long>(SplitsTotal),
+                  static_cast<unsigned long long>(MergesTotal), ChurnFrames);
+    os << Line;
+
+    std::snprintf(Line, sizeof(Line),
+                  "readback: mapped %zu/%zu frames, lag min/med/max=%u/%u/%u, born_guard_skips=%llu, nonpositive_x=%llu\n",
+                  MappedFrames, N, LagMin, LagMed, LagMax,
+                  static_cast<unsigned long long>(BornSkips),
+                  static_cast<unsigned long long>(NonPositive));
+    os << Line;
+
+    os << "captures:";
+    if (H.captures.empty())
+    {
+        os << " (none)";
+    }
+    for (const ew::HoleCapture& C : H.captures)
+    {
+        std::snprintf(Line, sizeof(Line), "%s c%u(cam%d)@f%u holes=%u mm=%u",
+                      C.captureIndex == 0 ? "" : " |", C.captureIndex, C.shotIndex, C.frame, C.holeCandidates, C.yMismatch);
+        os << Line;
+    }
+    os << "\n";
+
+    std::snprintf(Line, sizeof(Line),
+                  "--- per-frame detail (only frames with y_mismatch>0; capped at %d lines; tiles are idx/lod/size y=sphere->baked) ---\n",
+                  kHoleDetailLines);
+    os << Line;
+
+    size_t Printed = 0;
+    for (const ew::HoleFrame& F : H.frames)
+    {
+        if (F.yMismatch == 0)
+            continue;
+        if (Printed >= static_cast<size_t>(kHoleDetailLines))
+        {
+            std::snprintf(Line, sizeof(Line), "... %zu more frames with y_mismatch omitted\n", FramesWithMism - Printed);
+            os << Line;
+            break;
+        }
+        ++Printed;
+
+        std::snprintf(Line, sizeof(Line), "f%u: mm=%u holes=%u tiles=[", F.frame, F.yMismatch, F.holeCandidates);
+        os << Line;
+        for (uint32_t d = 0; d < F.detailCount; ++d)
+        {
+            const ew::HoleTileInfo& T = H.details[F.detailFirst + d];
+            std::snprintf(Line, sizeof(Line), "%s%u/%u/%.0f y=%.1f->%.1f", d == 0 ? "" : ", ", T.index, T.lod, T.size, T.sphereY, T.readbackY);
+            os << Line;
+        }
+
+        char Lag[16];
+        if (F.readbackMapped)
+            std::snprintf(Lag, sizeof(Lag), "%u", F.readbackLag);
+        else
+            std::snprintf(Lag, sizeof(Lag), "none");
+
+        std::snprintf(Line, sizeof(Line), "] splits=%u merges=%u lag=%s used=%u\n",
+                      F.splits, F.merges, Lag, F.tilesUsed);
+        os << Line;
+    }
+
+    if (!os)
+        spdlog::error("[testflight] failed to write '{}'", Path.string());
+}
+
+void TestFlightController::DumpInteractiveHoleStats()
+{
+    ew::HoleStats& H = ew::gDebug.holeStats;
+    if (!H.enabled || H.frames.empty())
+        return;
+    H.stop();
+
+    // Only leave a file when the session actually shows a pathology: a culled
+    // on-screen tile (y_mismatch), or a starved tileCenters readback (the
+    // known open issue - healthy sessions map nearly every frame). A clean
+    // session writes nothing.
+    uint64_t MismTotal = 0;
+    size_t   Mapped    = 0;
+    for (const ew::HoleFrame& F : H.frames)
+    {
+        MismTotal += F.yMismatch;
+        if (F.readbackMapped)
+            ++Mapped;
+    }
+    if (MismTotal == 0 && Mapped * 4 >= H.frames.size() * 3)   // healthy: >= 75% mapped
+        return;
+
+    const std::string           Ts   = ots::formatUtcTimestamp();
+    const std::filesystem::path Path = GetRunsDir() / ("holes_interactive_" + Ts + ".txt");
+    WriteHolesTxt(Path, Ts);
+    spdlog::info("[holes] interactive hole-detector trace written to '{}'", Path.string());
+}
+
 void TestFlightController::CopyFlightJsonAndLog() const
 {
     std::error_code ec;
@@ -703,8 +903,10 @@ void TestFlightController::Finalize(double CurrTime)
     {
         WriteGridJpg();
         WriteMetricsJson(TotalRunSec);
+        WriteHolesTxt(m_RunDir / "holes.txt", m_RunTimestamp);
         CopyFlightJsonAndLog();
     }
+    ew::gDebug.holeStats.stop();
 
     m_ExitCode = m_NumTimeouts + m_NumFailures;
 
@@ -716,6 +918,7 @@ void TestFlightController::Finalize(double CurrTime)
     spdlog::info("[testflight] output folder: {}", m_RunDir.string());
     spdlog::info("[testflight]   grid.jpg     - contact sheet of all cameras");
     spdlog::info("[testflight]   metrics.json - per-camera timing + renderer metrics");
+    spdlog::info("[testflight]   holes.txt    - terrain hole / quadtree churn trace");
     if (m_Opts.Lossless)
         spdlog::info("[testflight]   NN.png       - lossless per-camera captures");
     spdlog::info("[testflight]   {} - flight definition used", m_FlightPath.filename().string());

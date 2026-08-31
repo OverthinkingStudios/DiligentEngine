@@ -289,6 +289,11 @@ public:
     // readback against patching a fresh tile's bounding sphere with the height
     // of the slot's PREVIOUS occupant.
     uint32_t bornFrame = 0;
+    // False until the tileCenters readback patched boundingSphere.y with this
+    // tile's own baked centre height. While false the frustum tests treat the
+    // tile as a column over the whole terrain elevation range (see
+    // tileInFrustum) - its inherited height must never cull it.
+    bool heightPatched = false;
     quadtree_tile* parent;
     quadtree_tile* child[4];
 

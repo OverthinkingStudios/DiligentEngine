@@ -1,0 +1,25 @@
+{
+    "cameras": [
+        {
+            "far": 40000.0,
+            "fovYDeg": 60.0,
+            "name": "cam_0",
+            "near": 0.10000000149011612,
+            "pitch": -0.5607975125312805,
+            "pos": [
+                -7653.6015625,
+                947.4515380859375,
+                -10541.3828125
+            ],
+            "yaw": 3.2263402938842773
+        }
+    ],
+    "name": "albedo_testing_steg_closeup",
+    "settleMs": 3500,
+    "settleTimeoutMs": 15000,
+    "terrain": "switserland_steg",
+    "window": [
+        2560,
+        1017
+    ]
+}
