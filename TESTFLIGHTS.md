@@ -67,6 +67,7 @@ EarthworksFX/testflights/<flight>.json      committed flight definitions
   <flight>/<timestamp>/          one folder per run; latest = greatest timestamp
     grid.jpg                     ALL cameras tiled row-major - read this first
     metrics.json                 per-camera fps/settle/renderer metrics - read this second
+    holes.txt                    terrain hole / quadtree churn trace (summary in the first 5 lines)
     NN.png                       only with --tf_lossless (NN = camera index)
     <flight>.json                verbatim copy of the flight that was flown
     run.log                      application log copy
