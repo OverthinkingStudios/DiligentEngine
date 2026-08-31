@@ -123,6 +123,40 @@ All entries developer-verified unless marked otherwise.
   (terrain.cpp onLoad). Rule: any extract code that string-compares paths
   assumes forward slashes — normalize at the source, not per call site.
 
+- **P16 — swapped-argument clamp() is UB that only detonates on Vulkan (found 2026-08-30, developer-verified on both APIs; the step-5 "VK-only solid-white terrafectors")**:
+  `materials.hlsli::solveElevationColour` and `render_spline.hlsl::solveColor`
+  called `clamp(0.04, 0.9, x)` — bounds first, value last → contradictory
+  bounds (min 0.9 > max) = undefined behaviour. DXIL's lowering returned the
+  value (looked correct on D3D12 forever); SPIR-V FClamp on NVIDIA returns the
+  bound → every terrafector/road albedo pegged flat cream on Vulkan. Latent
+  original bug, detonated by the API switch; proven by bisection (all inputs
+  pixel-identical cross-API, only this line diverged). Fix = 2 lines
+  (argument reorder); same-class UB also fixed in PBR.hlsli (cube_mip,
+  2026-08-31). The earlier NonUniformResourceIndex theory and a
+  "name-cursed gSmpLinear" sampler-rename workaround were both DISPROVEN
+  (rename removed after an end-of-session revert test — the failure did not
+  return). Full history + a decision tree if the transient sampler gremlin
+  ever returns: `port_effort_3/vulkan_flat_sampling_handoff.md`. Rule: when
+  every INPUT to an expression is proven identical cross-API and the OUTPUT
+  differs, hunt UB inside the expression — and run the revert test before
+  believing a fix.
+
+- **P17 — starved tileCenters readback → stale sphere heights culled on-screen tiles (found 2026-08-31, developer-verified; the interactive terrain-hole bug)**:
+  `ReadbackBuffer::mapCompleted()` returns data on ~89-99% of testflight
+  frames but only 4-50% of interactive frames (binary starvation, not a
+  growing queue; a GPU drain — title-bar click, screenshot capture — un-stuck
+  it, which is why holes healed on click and never showed in flights). Under
+  starvation, freshly split tiles kept parent-inherited bounding-sphere
+  heights for seconds, and `calculateSurfaceFlags`' frustum test culled
+  on-screen tiles → tile-shaped holes. Fix (conservative, culling-side):
+  `quadtree_tile::heightPatched` + `tileInFrustum()` (terrain.cpp) test
+  unpatched tiles as a column over kTerrainYMin..kTerrainYMax — wrong heights
+  can no longer cull visible tiles. Verified 0 y_mismatches over 7517 frames
+  (pre-fix: up to 37/frame). The starvation itself (WHY the fence-checked map
+  fails interactively) remains OPEN — instrumentation, regression guards
+  (holes.txt VERDICT line) and ranked hypotheses in
+  `port_effort_3/readback_starvation_handoff.md`.
+
 Known open items (not bugs): VK vsync-off doesn't uncap fps (pre-existing; step 6 perf pass);
 `compute PSO unavailable`-style shader failures are non-fatal by design — check the log.
 Resolved in step 3: `gHDRBackbuffer` now gets the real hdrFbo colour; the "texture bound as

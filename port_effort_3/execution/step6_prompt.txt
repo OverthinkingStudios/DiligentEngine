@@ -1,22 +1,24 @@
 You are executing step 6 of the Earthworks port (Path B+) in c:\dev\git\os\DiligentEngine, branch port_effort_3: SALVAGE + PERF PASS. Steps 1-5 are done (terrain, atmosphere, shadows, HDR, vegetation-dormant, terrafectors+roads). This step closes the gap to the S1 goal: "comparable-or-better fps than the original" (remembered reference: ~2k fps first-gen terrain; current baseline recorded in the plan step log).
 
-READ FIRST: port_effort_3\task.md S0 (no commits; developer compiles; zero warnings; no subagents); port_effort_3\execution\plan.md "Step 6 spec" + step log (fps numbers recorded so far); port_effort_3\execution\bringup_notes.md (all P entries); port_effort_3\catalog\conventions_app_wiring.md S4 (perf-critical details) + the perf sections (S4) of the other catalog docs.
+READ FIRST: port_effort_3\task.md S0 (no commits; developer compiles; zero warnings; no subagents); port_effort_3\execution\plan.md "Step 6 spec" + step log (fps numbers recorded so far); port_effort_3\execution\bringup_notes.md (all P entries, especially P16/P17); port_effort_3\readback_starvation_handoff.md (open readback-starvation investigation - overlaps Track B); port_effort_3\catalog\conventions_app_wiring.md S4 (perf-critical details) + the perf sections (S4) of the other catalog docs.
 
 SCOPE - three tracks:
 
 TRACK A - SALVAGE (proven port-side components, from EarthworksFX\legacy\):
 1. buildings.cpp/.h - works very well in the old port and has culling the original lacks (developer-praised). Adapt its GPU surface from the compat shim to ew:: (mechanical); keep its culling; wire load/render/updateShaderConstants/setAtmosphere one-liners into terrain/Earthworks_4 like the legacy integration did; data = rappersville set, loud-and-graceful when absent.
-2. Sprites system if step 5 stubbed it (check plan step log) - port from the extract, not legacy.
+2. Sprites: DROPPED from salvage scope (developer, 2026-08-04: the sprite data files are 0-byte and the system is unused per the original dev) - do not port; leave the step-5 stubs as-is.
 3. debug shaders/tools from legacy that earn their keep (debugGrid already lives; check legacy for anything the developer's debug panel references but is missing).
 
-TRACK B - PERF PASS (measure FIRST, then fix; testflights are the instrument - TESTFLIGHTS.md):
-1. vsync-off must actually uncap on Vulkan (pre-existing bug, bringup_notes "known open items"): check the shell's swap-chain present interval wiring (EarthworksFXApplicationBase, refresh.vsync -> Present(SyncInterval)) on both APIs.
-2. ReadbackBuffer::enqueueCopy EnqueueSignal flushes the command buffer - now called multiple times per frame (tileCenters + GC_feedback + vegetation feedback). Batch: one fence signal per frame after all copies, or per-frame signal values shared across ring users. Measure before/after.
+TRACK B - PERF PASS (RESCOPED 2026-08-31 for pragmatism; measure FIRST, then fix; testflights are the instrument - TESTFLIGHTS.md):
+1. PRIMARY DELIVERABLE: accurate frame timing - a halfway decent CPU+GPU timing measurement with frametime and/or theoretical-fps display in the debug panel, so performance can be judged without uncapped vsync. The VK vsync-off fix (pre-existing bug, bringup_notes "known open items"; shell swap-chain present-interval wiring, EarthworksFXApplicationBase, refresh.vsync -> Present(SyncInterval)) is now OPPORTUNISTIC: take it only if it turns out to be an easy shell-side fix; do NOT chase it deep. Explicitly: NO open-ended bug hunts in this step - the developer just spent weeks on two hard bugs (P16/P17) and wants pragmatic progress.
+2. ReadbackBuffer::enqueueCopy EnqueueSignal flushes the command buffer - now called multiple times per frame (tileCenters + GC_feedback + vegetation feedback). Batch: one fence signal per frame after all copies, or per-frame signal values shared across ring users. Measure before/after. NOTE: read port_effort_3\readback_starvation_handoff.md first - instrumentation (ew::gDebug.holeStats, holes.txt) and a ranked hypothesis list already exist there, and batching interacts with the open starvation issue; any change here must NOT regress the heightPatched hole-culling fix (commit 51953bd; holes.txt VERDICT line must stay 0).
 3. Known allocations flagged in step logs: parabolicFar fog volume ~130 MB allocated-but-dormant (gate behind its toggle); shadowEdges ~270 MB heap arrays (persistent - fine, but confirm no per-solve realloc).
 4. PSO/SRB cache behavior under the full pipeline: log cache sizes once; look for per-frame PSO creation (would show as hitches).
 5. Compare per-pass GPU cost structure against the catalog's perf notes (vegetation pixel-bound with JHFAA; terrain 2 draws + 2 dispatches per view) - flag anything structurally off (e.g. extra barriers per dispatch in the ew layer; Diligent TRANSITION modes per call vs the original's coarse barriers).
 6. Deliverable: a numbers table in the step log - same testflight, both APIs, before/after each fix.
 TRACK C - POLISH: silence remaining cosmetic log noise; sweep all warnings on both APIs' shader compilers; verify zero-warning build.
+
+KNOWN OPEN, NOT STEP-6 SCOPE: (a) the rare both-API hang (VK shows DynamicHeapSize-exhaustion warnings as a symptom when it happens) - note the conditions if seen, do not chase; (b) the tileCenters readback starvation root cause (readback_starvation_handoff.md) - Track B item 2 only touches it where fence batching interacts, no dedicated hunt.
 
 RULES: measure-then-change (no speculative "optimization" of ported algorithm code - the catalog documents why it is fast; ew-layer and app-shell changes only unless a measurement points into core code, then propose in the step log instead of changing); // PORT-REVIEW on anything touched; both APIs; update plan.md step log + bringup_notes.md.
 

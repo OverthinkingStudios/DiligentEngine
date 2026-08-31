@@ -45,8 +45,8 @@ Purpose-built, NOT a Falcor emulator. Contents:
 | 2 | Terrain minimal | quadtree + JP2 streaming + tile bake + flat-shaded tiles. Fix-round root causes in `bringup_notes.md` P1-P8 (GenerateMips view flag, data-path resolution + `-terrain` override, setCamera glm convention, readback age-gate) | **DONE — developer-verified 2026-08-03: full terrain renders on VK + D3D12, ~1-1.2k fps D3D12, bottom-tile flicker fixed** |
 | 3 | Full tile bake + atmosphere + shadowEdges | spec below (`Step 3 spec`); launch prompt: `port_effort_3/execution/step3_prompt.txt` | **DONE — developer-verified 2026-08-03: full bake + atmosphere + shadowEdges + HDR/tonemap path render on VK + D3D12; one fix round (P10)** |
 | 4 | Vegetation | full system ported, running DORMANT (dataset has no plant data — compile/run correctness is the acceptance path). Prompt: `step4_prompt.txt` | **DONE — developer-verified 2026-08-04: dormant-but-healthy on VK + D3D12, zero fix rounds. Visual validation deferred until plant data exists.** |
-| 5 | Terrafectors + roads bake | y=0 checklist enforced in code from day one; **BINDLESS decision point — developer chose faithful arrays at launch (2026-08-04); STEP5-NOTE marks the upgrade path**. Prompt: `step5_prompt.txt` | **DONE — developer-verified 2026-08-04 on D3D12 (terrafectors + roads render correctly, ~850 fps; 3 fix rounds P14/P15). Open: VK-only solid-white terrafectors (NonUniform-indexing suspect) + a rare both-API hang — carried as step-5 follow-ups, see step log** |
-| 6 | Salvage (buildings/debug tools) + measured perf pass (vsync uncap, fence batching, testflight numbers table). **Sprites DROPPED from salvage scope (developer, 2026-08-04: the sprite data files are 0-byte and the system is unused per the original dev)** | Prompt: `step6_prompt.txt` | ready (after 5) |
+| 5 | Terrafectors + roads bake | y=0 checklist enforced in code from day one; **BINDLESS decision point — developer chose faithful arrays at launch (2026-08-04); STEP5-NOTE marks the upgrade path**. Prompt: `step5_prompt.txt` | **DONE — developer-verified 2026-08-04 on D3D12 (terrafectors + roads render correctly, ~850 fps; 3 fix rounds P14/P15). Open: a rare both-API hang (step-5 follow-up, see step log). The VK-only solid-white terrafectors follow-up was RESOLVED 2026-08-31 (clamp argument-order UB, P16 — see step log)** |
+| 6 | Salvage (buildings/debug tools) + measured perf pass (**rescoped 2026-08-31, see prompt**: primary deliverable = CPU+GPU frame-timing display; VK vsync uncap now opportunistic only; fence batching — must not regress the P17 hole-culling fix, see `readback_starvation_handoff.md`; testflight numbers table). **Sprites DROPPED from salvage scope (developer, 2026-08-04: the sprite data files are 0-byte and the system is unused per the original dev)** | Prompt: `step6_prompt.txt` | ready (after 5) |
 | 7 | terrainGenerator subsystem (first-class port, GUI survives with minimal edits) | Prompt: `step7_prompt.txt` | ready (after 6; independent enough to run earlier if desired) |
 | 8 | Parity wrap: STUB/marker sweep, S1-goal parity table, CLAUDE.md truth pass, legacy retirement proposal, backlog handoff | Prompt: `step8_prompt.txt` | ready (last) |
 
@@ -497,7 +497,36 @@ Scope: everything tagged `STEP2-STUB` except vegetation (step 4) and terrafector
      latent UB exists in the step-4 vegetation shaders
      (render_vegetation_ribbons.hlsl, render_tile_sprite.hlsl:
      textures_T[MAT.*]) - dormant today, fix when vegetation goes live.
+     **RESOLVED 2026-08-30/31: root cause was swapped-argument clamp() UB.**
+     `materials.hlsli::solveElevationColour` and `render_spline.hlsl::solveColor`
+     called `clamp(0.04, 0.9, x)` — bounds passed first, value last, giving
+     contradictory bounds = UB. DXIL's lowering tolerated the swapped order and
+     returned the value (looked correct on D3D12 forever); SPIR-V FClamp on NV
+     returned the 0.9 bound → every terrafector/road albedo pegged white on VK.
+     Fix = 2 lines (argument reorder); verified on a cleaned tree, VK == D3D12
+     on both testflights (ROI medians identical, diffs at noise floor).
+     Same-class UB fixed in PBR.hlsli (cube_mip, fixed 2026-08-31). The
+     NonUniformResourceIndex theory above was ultimately DISPROVEN; an interim
+     "name-cursed gSmpLinear" sampler-rename workaround was DISPROVEN by an
+     end-of-session revert test and removed from the tree. Full detail:
+     `port_effort_3/vulkan_flat_sampling_handoff.md` — which also carries two
+     proposed DiligentCore upstream defects (silent null dynamic descriptor set
+     on pool exhaustion; pool sizing ignoring set-layout requirements) as a
+     developer task, not port work. Commits b0f5704 / 51953bd / 87220bd.
   2. **Rare hang on BOTH APIs** (reproduced once on VK after long runs; not
      mode-related per developer). VK side shows DynamicHeapSize-exhaustion
      warnings when it happens (GPU falling behind - symptom, not cause).
      Uninvestigated; panel stage toggles are the bisect tool.
+- 2026-08-31: terrain hole-culling bug FIXED (developer-verified; P17). Root
+  cause: the tileCenters readback starves in interactive sessions (maps on only
+  4-50% of frames vs 89-99% in testflights) → freshly split tiles kept stale
+  parent-inherited bounding-sphere heights for seconds → the frustum test
+  culled on-screen tiles (tile-shaped holes, healed by clicking the title bar).
+  Fix: `quadtree_tile::heightPatched` flag + conservative column test in
+  `tileInFrustum()` — unpatched tiles are tested as a column over
+  kTerrainYMin..kTerrainYMax, so wrong heights can no longer cull visible
+  tiles. Verified: 0 y_mismatches over 7517 frames (pre-fix: sustained up to
+  37/frame). The underlying readback STARVATION remains OPEN — instrumentation
+  (ew::gDebug.holeStats, holes.txt / holes_interactive dumps) and a ranked
+  hypothesis list live in `port_effort_3/readback_starvation_handoff.md`;
+  overlaps step 6 Track B (fence batching must not regress this fix).

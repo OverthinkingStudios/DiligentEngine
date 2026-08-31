@@ -6,8 +6,13 @@ atmosphere + shadows + HDR render on Vulkan AND D3D12 (~900-1.2k fps D3D12), and
 vegetation system is ported and runs DORMANT (the Steg dataset ships no plant data — visual
 validation deferred until it does). Step 5 (terrafectors + roads bake, faithful descriptor
 arrays — bindless deferred by developer choice) is DONE, developer-verified 2026-08-04 on
-D3D12 (~850 fps); open follow-ups: VK-only solid-white terrafectors + a rare both-API hang
-(plan.md step log). Root-cause log in `execution/bringup_notes.md` (P1-P15). Next: step 6.**
+D3D12 (~850 fps). The "VK-only solid-white terrafectors" follow-up is RESOLVED (2026-08-31:
+clamp argument-order UB — see plan.md step log / bringup_notes P16,
+`vulkan_flat_sampling_handoff.md`); the rare both-API hang remains open. New follow-up: the
+visible terrain-hole culling bug is fixed (bringup_notes P17), but the underlying tileCenters
+readback starvation in interactive sessions stays OPEN — handoff:
+`readback_starvation_handoff.md`. Root-cause log in `execution/bringup_notes.md` (P1-P17).
+Next: step 6.**
 
 ## 0. Ground rules (for every agent working on this)
 
@@ -193,7 +198,7 @@ Subsystems (refine during Phase 0.5):
 - **Phase 0.5 — Fresh extract + strip** ✅ (commits `7bae949`…`4872073`): up-to-date extract →
   `source_extract_3/` (inventory: `extract3_inventory.md`), then reviewed per-file surgery
   removing glider/cfd/editor-GUI/PDF/AI code (~38k lines stripped total; details §3).
-- **Phase 1 — Concept Catalog** (§5, running).
+- **Phase 1 — Concept Catalog** ✅ (§5 — all 7 catalog docs exist in `catalog/`).
 - **Phase 2 — Path decision**: with the catalog, estimate each path honestly
   (per-subsystem effort, bring-up order, testability); developer decides.
 - **Phase 3 — Execution plan**: per-subsystem task specs for cold-context agents: inputs
